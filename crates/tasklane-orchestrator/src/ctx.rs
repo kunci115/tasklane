@@ -20,6 +20,8 @@ pub struct Config {
     pub call_timeout: Duration,
     /// Timeout for the development agent run.
     pub dev_timeout: Duration,
+    /// Name of the ticket source in the registry (`services.source`), for example `github`.
+    pub source_name: String,
     /// Where mirrors and worktrees live.
     pub data_dir: PathBuf,
     /// At most this many development runs at once (admission control).
@@ -48,6 +50,7 @@ impl Config {
             lease_secs: 60.0,
             call_timeout: Duration::from_secs(120),
             dev_timeout: Duration::from_secs(1800),
+            source_name: "github".into(),
             data_dir,
             max_dev_parallel: 1,
             ci_poll_secs: 30.0,
@@ -104,6 +107,8 @@ pub(crate) struct Ticket {
     pub last_error: Option<String>,
     pub facts: Value,
     pub agent_profile: Value,
+    /// `watch`, `triage` or `full` (how far the system may go in this repo).
+    pub mode: String,
 }
 
 impl Ticket {
@@ -118,6 +123,9 @@ impl Ticket {
         format!("tasklane/{}", self.id)
     }
 }
+
+/// Hidden marker on every comment tasklane posts, so its own comments are never mistaken for a person's reply.
+pub const MARKER: &str = "<!-- tasklane -->";
 
 pub(crate) type Tx = Transaction<'static, Postgres>;
 
@@ -201,10 +209,10 @@ impl Orchestrator {
 
     pub(crate) async fn load_ticket(&self, ticket_id: i64) -> Result<Ticket, Error> {
         #[allow(clippy::type_complexity)]
-        let r: (String, String, String, Option<i16>, Option<String>, i16, i16, Option<String>, Option<String>, Option<String>, Option<String>, Value, Value) =
+        let r: (String, String, String, Option<i16>, Option<String>, i16, i16, Option<String>, Option<String>, Option<String>, Option<String>, Value, Value, String) =
             sqlx::query_as(
                 "SELECT t.state, t.external_ref, s.external_id, t.level, t.plan_hash, t.ci_runs, t.dev_attempts,
-                        t.head_sha, t.branch, t.pr_ref, t.last_error, s.facts, s.agent_profile
+                        t.head_sha, t.branch, t.pr_ref, t.last_error, s.facts, s.agent_profile, s.mode
                  FROM tickets t JOIN services s ON s.id = t.service_id WHERE t.id = $1",
             )
             .bind(ticket_id)
@@ -229,6 +237,7 @@ impl Orchestrator {
             last_error: r.10,
             facts: r.11,
             agent_profile: r.12,
+            mode: r.13,
         })
     }
 

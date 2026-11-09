@@ -56,7 +56,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
     let level = Level::with_model_suggestion(floor, suggestion);
     let to = if !out.questions.is_empty() {
         State::NeedsInfo
-    } else if level.needs_human() {
+    } else if level.needs_human() || t.mode != "full" {
         State::AwaitingApproval
     } else {
         State::Queued

@@ -133,6 +133,13 @@ pub async fn decide(
         .bind(json!({"decision": if decision == Decision::Approve {"approve"} else {"reject"}, "via": via, "level": u8::from(level), "plan_hash": plan_hash}))
         .execute(&mut *tx)
         .await?;
+    if decision == Decision::Approve {
+        // The first approved ticket wakes a read-only repo for development.
+        sqlx::query("UPDATE services SET mode = 'full' WHERE mode = 'triage' AND id = (SELECT service_id FROM tickets WHERE id = $1)")
+            .bind(ticket_id)
+            .execute(&mut *tx)
+            .await?;
+    }
     if let Some(kind) = kind {
         sqlx::query("INSERT INTO jobs (ticket_id, kind) VALUES ($1, $2)")
             .bind(ticket_id)

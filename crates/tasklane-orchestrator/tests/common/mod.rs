@@ -123,6 +123,7 @@ pub async fn world(pool: PgPool, tweak: impl FnOnce(&mut Config)) -> World {
     ];
     let queue = Queue::new(pool.clone(), 2);
     let mut cfg = Config::new("orch-1", dir.path().join("data"));
+    cfg.source_name = "test".into();
     cfg.lease_secs = 30.0;
     cfg.call_timeout = Duration::from_secs(10);
     cfg.dev_timeout = Duration::from_secs(20);
@@ -136,7 +137,7 @@ pub async fn world(pool: PgPool, tweak: impl FnOnce(&mut Config)) -> World {
         cfg,
     );
     sqlx::query(
-        "INSERT INTO services (kind, source, external_id, facts) VALUES ('repo','test','org/repo', $1)",
+        "INSERT INTO services (kind, source, external_id, mode, facts) VALUES ('repo','test','org/repo','full', $1)",
     )
     .bind(serde_json::json!({"default_branch": "main", "protected_paths": [".github/workflows/"]}))
     .execute(&pool)

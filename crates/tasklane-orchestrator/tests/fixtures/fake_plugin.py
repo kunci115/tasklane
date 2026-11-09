@@ -29,11 +29,19 @@ def remote_head(service, branch):
     return out.stdout.strip()
 
 
+def read_json(name, default):
+    try:
+        return json.load(open(os.path.join(STATE, name)))
+    except FileNotFoundError:
+        return default
+
+
 def item(ref):
+    comments = read_json("comments_" + ref + ".json", [])
     body = "The button colour is wrong."
     if "risky" in ref:
         body = "Needs a database migration and a password reset flow."
-    return {"title": f"Fix {ref}", "body": body, "comments": []}
+    return {"title": f"Fix {ref}", "body": body, "comments": comments}
 
 
 def run(params):
@@ -78,6 +86,13 @@ def handle(op, params):
         return item(params["ref"])
     if op == "run":
         return run(params)
+    if op == "list_services":
+        return {"services": read_json("services.json", [])}
+    if op == "list_changes":
+        items = read_json("changes.json", [])
+        return {"items": items, "cursor": "c" + str(len(items))}
+    if op == "detect_facts":
+        return {"language": "python", "test_command": "pytest", "environments": [], "protected_paths": [".github/workflows/"]}
     if op == "echo":
         time.sleep(params.get("delay", 0))
         return params

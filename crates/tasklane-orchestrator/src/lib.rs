@@ -14,9 +14,10 @@ pub mod approval;
 mod ctx;
 pub mod host;
 mod steps;
+pub mod sync;
 pub mod workspace;
 
-pub use ctx::{Config, Orchestrator, RunResult};
+pub use ctx::{Config, Orchestrator, RunResult, MARKER};
 
 /// Apply every migration in `migrations/` to the database.
 pub async fn migrate(pool: &sqlx::PgPool) -> Result<(), sqlx::migrate::MigrateError> {
