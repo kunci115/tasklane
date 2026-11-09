@@ -83,6 +83,9 @@ pub fn spawn_reaper(
             if tick % 120 == 1 {
                 // hourly housekeeping: leftover checkouts and old bookkeeping rows
                 orch.sweep_workspaces().await;
+                if let Err(e) = orch.close_stale().await {
+                    eprintln!("stale tickets: {e}");
+                }
                 if let Err(e) = orch.prune_old_rows(retention_days).await {
                     eprintln!("housekeeping: {e}");
                 }

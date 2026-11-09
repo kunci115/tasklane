@@ -120,6 +120,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         tx.commit().await?;
     }
 
+    o.check_budget(t.id).await?;
     // The ticket may have been edited, or commented on, since it was triaged and approved.
     // Run the text rules again on what the agent is about to read.
     let item = o.item(&t).await?;
@@ -220,6 +221,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
             return Err(e.into());
         }
     };
+    o.charge(t.id, &out).await?;
     let summary = out
         .get("summary")
         .and_then(Value::as_str)

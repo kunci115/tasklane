@@ -88,6 +88,7 @@ The console covers everything a normal install needs. Environment variables are 
 | `TASKLANE_DATA_DIR` | no | Git mirrors and worktrees, default `./data` (`/data` in the image). Keep it on a volume. |
 | `TASKLANE_JWT_SECRETS` | no | `name:secret,name:secret` (secrets of 16+ characters), one per app that embeds the report button. Without it the report endpoint refuses everyone. |
 | `TASKLANE_WORKERS` | no | Parallel workers, default 2. |
+| `TASKLANE_MAX_TOKENS_PER_TICKET` | no | Model tokens (in and out, cache reads included) one ticket may use across all its runs, default 3000000. Past it the ticket goes to `failed` with that reason and a person decides. |
 | `TASKLANE_MAX_DEV` | no | Development runs at once, default 1. Raise it only after you measure your CI capacity. |
 | `TASKLANE_USER_DAILY_LIMIT` | no | Reports per reporter per day, default 10. |
 | `TASKLANE_SYNC_SECS` | no | Polling interval for the sync backstop, default 60, minimum 5. |

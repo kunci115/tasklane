@@ -612,3 +612,54 @@ async fn plugins_ready_is_true_for_live_plugins_even_if_they_do_not_know_describ
     let w = world(pool, |_| {}).await;
     assert!(w.orch.plugins_ready().await);
 }
+
+#[tokio::test]
+async fn a_ticket_over_its_token_budget_stops_before_another_model_run() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |c| c.max_tokens_per_ticket = 1000).await;
+    let t = ticket(&w, "T-costly").await;
+    drive(&w).await;
+    assert_eq!(state(&w.pool, t).await, "failed");
+    let (used, why): (i64, String) =
+        sqlx::query_as("SELECT tokens_used, last_error FROM tickets WHERE id = $1")
+            .bind(t)
+            .fetch_one(&w.pool)
+            .await
+            .unwrap();
+    assert_eq!(used, 1100);
+    assert!(why.contains("budget"), "{why}");
+    assert_eq!(
+        count(
+            &w.pool,
+            "SELECT count(*) FROM tickets WHERE branch IS NOT NULL"
+        )
+        .await,
+        0,
+        "no development run started"
+    );
+}
+
+#[tokio::test]
+async fn a_ticket_nobody_answers_is_closed_as_stale_but_a_recent_one_is_left_alone() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    let old = ticket(&w, "T-ask-old").await;
+    let fresh = ticket(&w, "T-ask-fresh").await;
+    drive(&w).await;
+    assert_eq!(state(&w.pool, old).await, "needs_info");
+    sqlx::query("UPDATE tickets SET updated_at = now() - interval '15 days' WHERE id = $1")
+        .bind(old)
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    assert_eq!(w.orch.close_stale().await.unwrap(), 1);
+    assert_eq!(state(&w.pool, old).await, "closed_stale");
+    assert_eq!(state(&w.pool, fresh).await, "needs_info");
+    assert!(audit_actions(&w.pool, old)
+        .await
+        .contains(&"ticket.closed_stale".to_string()));
+}

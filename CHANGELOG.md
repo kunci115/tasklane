@@ -2,6 +2,8 @@
 
 ## Unreleased (0.1.0 is planned, not tagged)
 
+- Token budget per ticket (`TASKLANE_MAX_TOKENS_PER_TICKET`, default 3000000): every model run is counted, and a ticket over its budget goes to `failed` before another run starts.
+- Tickets that nobody answers are closed as stale (14 days waiting for the reporter, 30 days waiting for an approval). A timer only closes, it never approves.
 - A second tasklane install on the same repository stays out of the way: repositories are claimed through an atomic ref on GitHub (oldest claim wins), the other install skips them and shows who owns them, and a person can take a repository over.
 - Console: live map in 3D (orbit, zoom, pan) with agents and repositories grouped on tiers; paged, searchable, filterable repository list; one colour meaning per button role (primary, approve, danger, warn, ghost); the agent can sign in with a Claude subscription token instead of an API key; new logo.
 

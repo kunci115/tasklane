@@ -47,6 +47,12 @@ pub struct Config {
     pub max_pending_triage: i64,
     /// Lifetime of the per-run source tokens.
     pub token_ttl_secs: u64,
+    /// Model tokens (in and out) one ticket may use in all its runs before a person must step in.
+    pub max_tokens_per_ticket: i64,
+    /// Days a ticket may wait for the reporter's answer before it is closed as stale.
+    pub stale_needs_info_days: i64,
+    /// Days a ticket may wait for an approval before it is closed as stale (never approved by time).
+    pub stale_approval_days: i64,
 }
 
 impl Config {
@@ -68,6 +74,9 @@ impl Config {
             allow_no_checks: false,
             max_pending_triage: 25,
             token_ttl_secs: 3600,
+            max_tokens_per_ticket: 3_000_000,
+            stale_needs_info_days: 14,
+            stale_approval_days: 30,
         }
     }
 }
@@ -311,6 +320,39 @@ impl Orchestrator {
         }
     }
 
+    /// Refuse another model run on a ticket that used up its token budget.
+    pub(crate) async fn check_budget(&self, ticket_id: i64) -> Result<(), Error> {
+        let used: i64 = sqlx::query_scalar("SELECT tokens_used FROM tickets WHERE id = $1")
+            .bind(ticket_id)
+            .fetch_one(&self.pool)
+            .await?;
+        if used >= self.cfg.max_tokens_per_ticket {
+            return Err(Error::Fatal(format!(
+                "the ticket used {used} model tokens, over its budget of {}",
+                self.cfg.max_tokens_per_ticket
+            )));
+        }
+        Ok(())
+    }
+
+    /// Add the tokens an engine run reported to the ticket's total.
+    pub(crate) async fn charge(&self, ticket_id: i64, out: &Value) -> Result<(), Error> {
+        let n = |k: &str| {
+            out.pointer(&format!("/usage/{k}"))
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
+        };
+        let used = n("tokens_in").saturating_add(n("tokens_out"));
+        if used > 0 {
+            sqlx::query("UPDATE tickets SET tokens_used = tokens_used + $2 WHERE id = $1")
+                .bind(ticket_id)
+                .bind(used)
+                .execute(&self.pool)
+                .await?;
+        }
+        Ok(())
+    }
+
     pub(crate) async fn load_ticket(&self, ticket_id: i64) -> Result<Ticket, Error> {
         #[allow(clippy::type_complexity)]
         let r: (String, String, String, Option<i16>, Option<String>, i16, i16, Option<String>, Option<String>, Option<String>, Option<String>, Value, Value, String) =
@@ -389,6 +431,47 @@ impl Orchestrator {
             });
         }
         Ok(())
+    }
+
+    /// Close tickets that waited too long for a person. A timer may only close a ticket as
+    /// *not done*; it never approves anything. Returns how many were closed.
+    pub async fn close_stale(&self) -> Result<usize, Error> {
+        let rows: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT id, state FROM tickets
+             WHERE (state = 'needs_info' AND updated_at < now() - make_interval(days => $1::int))
+                OR (state = 'awaiting_approval' AND updated_at < now() - make_interval(days => $2::int))",
+        )
+        .bind(self.cfg.stale_needs_info_days as i32)
+        .bind(self.cfg.stale_approval_days as i32)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut closed = 0;
+        for (id, state) in rows {
+            let Some(from) = State::parse(&state) else {
+                continue;
+            };
+            let mut tx = self.pool.begin().await?;
+            match self
+                .set_state(&mut tx, id, from, State::ClosedStale, Actor::Timer)
+                .await
+            {
+                Ok(()) => {}
+                Err(Error::WrongState { .. }) => continue,
+                Err(e) => return Err(e),
+            }
+            self.audit(&mut tx, id, "ticket.closed_stale", json!({"from": state}))
+                .await?;
+            tx.commit().await?;
+            closed += 1;
+            if let Ok(t) = self.load_ticket(id).await {
+                self.say(
+                    &t,
+                    "tasklane closed this ticket because nobody answered in time. Nothing was changed. Reopen the issue or comment to start again.",
+                )
+                .await;
+            }
+        }
+        Ok(closed)
     }
 
     pub(crate) async fn audit(

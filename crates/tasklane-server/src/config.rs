@@ -24,6 +24,7 @@ pub struct Settings {
     pub source_name: String,
     pub secure_cookies: bool,
     pub max_dev_parallel: i64,
+    pub max_tokens_per_ticket: i64,
     pub allow_no_checks: bool,
     pub retention_days: i64,
     pub public_url: Option<String>,
@@ -180,6 +181,8 @@ impl Settings {
             source_name: get(vars, "TASKLANE_SOURCE_NAME").unwrap_or_else(|| "github".into()),
             secure_cookies: public.starts_with("https://"),
             max_dev_parallel: num(vars, "TASKLANE_MAX_DEV", 1i64)?.max(1),
+            max_tokens_per_ticket: num(vars, "TASKLANE_MAX_TOKENS_PER_TICKET", 3_000_000i64)?
+                .max(10_000),
             allow_no_checks: get(vars, "TASKLANE_ALLOW_NO_CHECKS").as_deref() == Some("1"),
             retention_days: num(vars, "TASKLANE_RETENTION_DAYS", 365i64)?.max(7),
             public_url: get(vars, "TASKLANE_PUBLIC_URL")

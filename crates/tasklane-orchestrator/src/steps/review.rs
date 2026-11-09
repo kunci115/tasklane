@@ -79,6 +79,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
             to: State::AwaitingApproval,
         });
     }
+    o.check_budget(t.id).await?;
     let item = o.item(&t).await?;
     let out = o
         .engine
@@ -95,6 +96,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
             o.cfg.call_timeout,
         )
         .await?;
+    o.charge(t.id, &out).await?;
     let verdict = out
         .get("verdict")
         .and_then(Value::as_str)

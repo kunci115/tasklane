@@ -66,7 +66,10 @@ def run(params):
             return {"nonsense": True}
         level = 3 if "l3" in ref else 1
         questions = ["Which page?"] if "ask" in ref else []
-        return {"level": level, "plan": f"plan for {ref}", "questions": questions}
+        out = {"level": level, "plan": f"plan for {ref}", "questions": questions}
+        if "costly" in ref:
+            out["usage"] = {"tokens_in": 900, "tokens_out": 200}
+        return out
     if role == "dev":
         ws = params["workspace"]
         if flag("feedback_log") is False:
