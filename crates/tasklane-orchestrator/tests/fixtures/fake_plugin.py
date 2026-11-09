@@ -86,6 +86,16 @@ def handle(op, params):
         return item(params["ref"])
     if op == "run":
         return run(params)
+    if op == "create_item":
+        n = len(read_json("created.json", [])) + 100
+        made = read_json("created.json", []) + [{"title": params["title"], "body": params["body"], "labels": params.get("labels")}]
+        json.dump(made, open(os.path.join(STATE, "created.json"), "w"))
+        return {"ref": str(n)}
+    if op == "verify_webhook":
+        if params["headers"].get("x-sig") != "good":
+            raise KeyError("bad signature")
+        import base64
+        return {"event": json.loads(base64.b64decode(params["body_b64"]))}
     if op == "list_services":
         return {"services": read_json("services.json", [])}
     if op == "list_changes":

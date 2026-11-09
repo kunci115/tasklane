@@ -150,8 +150,50 @@ impl Orchestrator {
         }
     }
 
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
+    pub fn queue(&self) -> &Queue {
+        &self.queue
+    }
+
+    pub fn config(&self) -> &Config {
+        &self.cfg
+    }
+
+    /// Call an operation on the ticket-source plug-in.
+    pub async fn source_call(&self, op: &str, params: Value) -> Result<Value, Error> {
+        Ok(self.source.call(op, params, self.cfg.call_timeout).await?)
+    }
+
+    /// Call an operation on the agent-engine plug-in with the long (development) timeout.
+    pub async fn engine_call(&self, op: &str, params: Value) -> Result<Value, Error> {
+        Ok(self.engine.call(op, params, self.cfg.dev_timeout).await?)
+    }
+
+    /// The global kill switch: while paused, no job is claimed.
+    pub async fn is_paused(&self) -> Result<bool, Error> {
+        let v: Option<String> =
+            sqlx::query_scalar("SELECT value FROM sync_state WHERE key = 'paused'")
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(v.as_deref() == Some("1"))
+    }
+
+    pub async fn set_paused(&self, paused: bool) -> Result<(), Error> {
+        sqlx::query("INSERT INTO sync_state (key, value) VALUES ('paused', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()")
+            .bind(if paused { "1" } else { "0" })
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     /// Claim and run at most one job.
     pub async fn run_one(&self) -> Result<RunResult, Error> {
+        if self.is_paused().await? {
+            return Ok(RunResult::Idle);
+        }
         let Some(job) = self
             .queue
             .claim(&self.cfg.owner, self.cfg.lease_secs, &KINDS)

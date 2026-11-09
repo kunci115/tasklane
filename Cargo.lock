@@ -1499,8 +1499,20 @@ name = "tasklane-server"
 version = "0.0.1"
 dependencies = [
  "axum",
+ "base64",
+ "hmac",
  "http-body-util",
+ "log",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "subtle",
  "tasklane-core",
+ "tasklane-orchestrator",
+ "tasklane-queue",
+ "tempfile",
+ "thiserror",
  "tokio",
  "tower",
 ]

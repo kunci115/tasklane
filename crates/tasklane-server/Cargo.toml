@@ -1,15 +1,35 @@
 [package]
 name = "tasklane-server"
-description = "HTTP server: gateway, console and health endpoint"
+description = "The tasklane daemon: workers, sync, gateway API, console"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "tasklane"
+path = "src/main.rs"
+
+[lib]
+name = "tasklane_server"
+path = "src/lib.rs"
+
 [dependencies]
 tasklane-core = { path = "../tasklane-core" }
+tasklane-orchestrator = { path = "../tasklane-orchestrator" }
+tasklane-queue = { path = "../tasklane-queue" }
 axum.workspace = true
 tokio.workspace = true
+sqlx.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+sha2.workspace = true
+hmac = "0.12"
+base64 = "0.22"
+subtle = "2"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+tempfile = "3"
+log = "0.4"
