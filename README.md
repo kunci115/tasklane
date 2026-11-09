@@ -11,7 +11,7 @@ Open an issue, get a reviewed pull request. A person approves anything risky.</p
   <a href="https://github.com/kunci115/tasklane/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/kunci115/tasklane/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
   <img alt="Core: Rust" src="https://img.shields.io/badge/core-Rust-orange.svg">
-  <img alt="Status: pre-release" src="https://img.shields.io/badge/status-pre--release-yellow.svg">
+  <a href="https://github.com/kunci115/tasklane/releases"><img alt="Release" src="https://img.shields.io/github/v/release/kunci115/tasklane?include_prereleases&label=release"></a>
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-yes-brightgreen.svg">
 </p>
 
@@ -145,7 +145,7 @@ The agent can run **unsandboxed** only if you explicitly opt in; the default is 
 
 ## Project status
 
-tasklane is **pre-release (0.0.1)**. Nothing is tagged yet.
+tasklane is **pre-release (0.1.0-alpha.1)**. Expect rough edges, and read the next two points before you rely on it.
 
 - **Verified:** the whole pipeline from issue to merge runs in tests against a real Postgres and git. Two supervised runs against live GitHub and live Claude (one-click App creation, subscription token, Docker sandbox) took issues to merged pull requests, and two installs on one repository were run side by side. They found and fixed seven bugs, listed in the [CHANGELOG](CHANGELOG.md).
 - **Not yet run for real:** Telegram (fake API only), GitHub webhooks (polling was used), a Docker network limited to the model API, and more than one approver.

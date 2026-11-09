@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased (0.1.0 is planned, not tagged)
+## Unreleased
+
+## 0.1.0-alpha.1 (2026-11-09)
+
+First pre-release. See the status section of the README for what has and has not run for real.
 
 - README rewritten in the shape of well-kept open-source projects: one-line pitch, how it works, quickstart, safety model, features, FAQ, an honest status section, and where to contribute.
 - Live map: class names are drawn last and only where no chip or node is in the way, so they no longer sit half behind a label.
