@@ -151,6 +151,17 @@ tasklane is **pre-release (0.1.0-alpha.1)**. Expect rough edges, and read the ne
 - **Not yet run for real:** Telegram (fake API only), GitHub webhooks (polling was used), a Docker network limited to the model API, and more than one approver.
 - **Please do your own supervised dry run** on a throwaway repository before you point it at real work. [docs/operations.md](docs/operations.md) lists the limits honestly.
 
+## Built with
+
+| Part | What |
+|---|---|
+| Core | Rust (2021 edition): [tokio](https://tokio.rs) (async runtime), [axum](https://github.com/tokio-rs/axum) 0.8 (HTTP), [sqlx](https://github.com/launchbadge/sqlx) 0.8 (PostgreSQL, embedded migrations), serde and serde_json, thiserror, sha2, hmac, subtle (constant-time comparison), base64, getrandom |
+| Database | PostgreSQL 14+ (the queue, state and audit trail live here; no Redis, no broker) |
+| Plug-ins | Python 3 standard library only (no pip dependencies): `source-github`, `engine-claude`, `chat-telegram` |
+| Agent | [Claude Code](https://docs.claude.com/en/docs/claude-code) CLI, driven by the `engine-claude` plug-in |
+| Console | Server-rendered HTML from the daemon, plain CSS and JavaScript, a canvas-drawn 3D map; no frontend framework and no build step. Fonts bundled: Inter, JetBrains Mono, Chakra Petch ([docs/THIRD_PARTY.md](docs/THIRD_PARTY.md)) |
+| Packaging | One Docker image (Debian bookworm, Node 22 for the CLI) and Docker Compose files |
+
 ## Documentation
 
 | | |
