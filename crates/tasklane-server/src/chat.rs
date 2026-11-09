@@ -180,6 +180,16 @@ impl ChatBridge {
         .await
         {
             Ok(Created::New(r)) => {
+                let _ = sqlx::query(
+                    "UPDATE tickets SET notify_ref = $3 WHERE external_ref = $2
+                       AND service_id = (SELECT id FROM services WHERE source = $4 AND external_id = $1)",
+                )
+                .bind(service)
+                .bind(&r)
+                .bind(format!("{}:{group}", self.channel))
+                .bind(&self.orch.config().source_name)
+                .execute(self.orch.pool())
+                .await;
                 format!("Created ticket #{r} in {service}. It will be triaged now.")
             }
             Ok(Created::Duplicate(r)) => format!("You already reported this: #{r}."),
@@ -296,6 +306,66 @@ impl ChatBridge {
         }
     }
 
+    /// Tell the chat group a ticket was reported from how it ended or what it needs, once per state.
+    pub async fn announce_outcomes(&self) {
+        let rows = sqlx::query(
+            "SELECT t.id, t.external_ref, t.title, t.state, t.last_error, s.external_id, t.notify_ref
+             FROM tickets t JOIN services s ON s.id = t.service_id
+             WHERE t.notify_ref LIKE $1 AND t.notified_state IS DISTINCT FROM t.state
+               AND t.state IN ('needs_info', 'duplicate_proposed', 'merged', 'failed', 'closed_duplicate', 'closed_rejected', 'closed_stale', 'closed_done')
+             ORDER BY t.id LIMIT 20",
+        )
+        .bind(format!("{}:%", self.channel))
+        .fetch_all(self.orch.pool())
+        .await
+        .unwrap_or_default();
+        for r in rows {
+            let (id, ext, state, service): (i64, String, String, String) = (
+                r.get("id"),
+                r.get("external_ref"),
+                r.get("state"),
+                r.get("external_id"),
+            );
+            let title: Option<String> = r.get("title");
+            let err: Option<String> = r.get("last_error");
+            let notify: String = r.get("notify_ref");
+            let group = notify
+                .split_once(':')
+                .map(|x| x.1)
+                .unwrap_or("")
+                .to_string();
+            let what = match state.as_str() {
+                "needs_info" => {
+                    "needs more information from you; the question is on the issue".to_string()
+                }
+                "duplicate_proposed" => "looks like a duplicate; a person will decide".to_string(),
+                "merged" => "was merged into the development branch".to_string(),
+                "failed" => format!(
+                    "stopped and needs a person{}",
+                    err.map(|e| format!(": {}", clip(&e, 160)))
+                        .unwrap_or_default()
+                ),
+                "closed_duplicate" => "was closed as a duplicate".to_string(),
+                "closed_rejected" => "was rejected".to_string(),
+                "closed_stale" => "was closed because nobody answered in time".to_string(),
+                _ => "is done".to_string(),
+            };
+            let text = format!(
+                "{service} #{ext}{} {what}.",
+                title
+                    .map(|t| format!(" ({})", clip(&t, 80)))
+                    .unwrap_or_default()
+            );
+            if self.say(&group, &text, None).await {
+                let _ = sqlx::query("UPDATE tickets SET notified_state = $2 WHERE id = $1")
+                    .bind(id)
+                    .bind(&state)
+                    .execute(self.orch.pool())
+                    .await;
+            }
+        }
+    }
+
     pub async fn run(self: Arc<Self>, mut stop: watch::Receiver<bool>) {
         let asks = Arc::new(tokio::sync::Semaphore::new(2));
         let quick = Arc::new(tokio::sync::Semaphore::new(8));
@@ -304,6 +374,7 @@ impl ChatBridge {
                 return;
             }
             self.announce_approvals().await;
+            self.announce_outcomes().await;
             let got = tokio::select! {
                 r = self.chat.call("receive", json!({"timeout_secs": 20}), Duration::from_secs(40)) => r,
                 _ = stop.changed() => return,

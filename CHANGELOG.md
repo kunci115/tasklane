@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The chat group a ticket was reported from (`/task`) is told how it ended or what it needs: merged, stopped, needs information, possible duplicate, closed. Each outcome is announced once.
+- The orchestrator crate rebuilds when a migration file is added (a stale embedded schema could otherwise hide a new migration).
 - Behaviour change: approving a ticket in a `triage` repository no longer switches the repository to `full`. `triage` now means what it says (every ticket asks); you switch a repository to `full` yourself.
 - New `docs/autonomy.md` and a README section: when the agents act alone, when a person is needed, who may approve what, and every setting that turns the dial.
 - Per-repository notes for the agents, written only by people in the console and added to every agent's instructions for that repository.

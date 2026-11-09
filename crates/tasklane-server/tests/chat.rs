@@ -384,3 +384,46 @@ async fn buttons_with_a_wrong_hash_a_wrong_ticket_or_from_another_groups_service
         1
     );
 }
+
+#[tokio::test]
+async fn the_group_that_reported_a_ticket_is_told_how_it_ended_once_per_outcome() {
+    let Some(e) = env().await else { return };
+    e.bridge
+        .handle_event(&cmd("-100", "555", "task", "Fix the login page"))
+        .await;
+    let sent_before = e.sent().len();
+    // nothing to announce while it is being worked on
+    e.bridge.announce_outcomes().await;
+    assert_eq!(e.sent().len(), sent_before);
+    sqlx::query("UPDATE tickets SET state = 'merged'")
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    e.bridge.announce_outcomes().await;
+    e.bridge.announce_outcomes().await;
+    assert_eq!(e.sent().len(), sent_before + 1, "announced once");
+    assert!(
+        e.last_text().contains("#100")
+            && e.last_text().contains("merged into the development branch"),
+        "{}",
+        e.last_text()
+    );
+    sqlx::query("UPDATE tickets SET state = 'failed', last_error = 'CI failed twice'")
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    e.bridge.announce_outcomes().await;
+    assert!(
+        e.last_text().contains("needs a person") && e.last_text().contains("CI failed twice"),
+        "{}",
+        e.last_text()
+    );
+    // a ticket made some other way (no chat group) is never announced here
+    sqlx::query("UPDATE tickets SET notify_ref = NULL, state = 'closed_done'")
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    let n = e.sent().len();
+    e.bridge.announce_outcomes().await;
+    assert_eq!(e.sent().len(), n);
+}

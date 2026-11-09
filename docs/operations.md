@@ -171,6 +171,7 @@ Set `TASKLANE_CHAT_CMD="python3 -I /opt/tasklane/plugins/chat-telegram/chat_tele
 2. In the console, **Chat groups**, register that id for a repository and set a daily question limit.
 3. In that group, **anyone** can use `/ask <question>` (answered by a read-only agent from the repository's code, capped per group per day) and `/task <title>` (opens a normal ticket; it still goes through triage and approval).
 4. When a ticket needs approval the bot posts it with **Approve / Reject buttons**. A press counts only if the person is in the `principals` table with `channel = 'telegram'`, `ref = <their Telegram user id>` and a role high enough for the level. Typed replies never approve. The button is bound to a hash of the plan, so a stale button is refused.
+5. The group a ticket was reported from with `/task` is also told how it ends: merged, stopped (with the reason), needs information, possible duplicate, or closed. Each outcome is announced once, and tickets made some other way are not announced in chat.
 
 Anyone in a registered group can read what `/ask` can read from that repository. Keep groups private and watch who joins.
 
