@@ -606,7 +606,7 @@ def op_get_item(params):
             "author_trusted": author_trusted(issue),
             "comments": [{"author": (c.get("user") or {}).get("login", ""),
                           "body": c.get("body") or "", "at": c.get("created_at", ""),
-                          "mine": is_own_comment(c)}
+                          "mine": is_own_comment(c), "trusted": author_trusted(c)}
                          for c in comments]}
 
 

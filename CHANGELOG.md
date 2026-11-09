@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Comments are marked by their author's relationship to the repository. A stranger's comment is tagged `trust="untrusted"` for every agent role and is left out of the developer's prompt entirely; the system rules tell the agent never to follow it.
+- The GitHub webhook signature check is tested against the vector GitHub publishes in its documentation.
 ## 0.1.0-alpha.1 (2026-11-09)
 
 First pre-release. See the status section of the README for what has and has not run for real.

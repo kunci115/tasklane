@@ -234,7 +234,7 @@ class Reading(Base):
         self.assertEqual(self.ok("get_item", {"service": "acme/one", "ref": "5"}), {
             "title": "T", "body": "B", "author": "ann", "labels": ["bug", "p1"], "state": "closed",
             "is_pull_request": False, "author_trusted": False,
-            "comments": [{"author": "bob", "body": "hi", "at": "2026-01-01T00:00:00Z", "mine": False}]})
+            "comments": [{"author": "bob", "body": "hi", "at": "2026-01-01T00:00:00Z", "mine": False, "trusted": False}]})
 
     def issue(self, **kw):
         base = {"title": "T", "body": "B", "user": {"login": "ann"}, "state": "open", "labels": []}
@@ -262,6 +262,16 @@ class Reading(Base):
             {"user": {"login": "ann"}, "body": "answer", "created_at": "t2"}])
         got = self.ok("get_item", {"service": "acme/one", "ref": "5"})
         self.assertEqual([c["mine"] for c in got["comments"]], [True, False])
+
+    def test_a_comment_is_trusted_by_its_authors_relationship_to_the_repository(self):
+        self.fake.routes[("GET", "/app")] = (200, {}, {"slug": "tasklane-test"})
+        self.fake.routes[("GET", "/repos/acme/one/issues/5")] = (200, {}, {"title": "T", "body": "B", "user": {"login": "ann"}, "state": "open", "labels": []})
+        self.fake.routes[("GET", "/repos/acme/one/issues/5/comments")] = (200, {}, [
+            {"user": {"login": "maint"}, "author_association": "MEMBER", "body": "a", "created_at": "t1"},
+            {"user": {"login": "stranger"}, "author_association": "NONE", "body": "b", "created_at": "t2"},
+            {"user": {"login": "tasklane-test[bot]"}, "author_association": "NONE", "body": "c", "created_at": "t3"}])
+        got = self.ok("get_item", {"service": "acme/one", "ref": "5"})
+        self.assertEqual([c["trusted"] for c in got["comments"]], [True, False, True])
 
     def test_pull_requests_are_flagged(self):
         self.fake.routes[("GET", "/app")] = (200, {}, {"slug": "t"})
@@ -483,6 +493,16 @@ class Webhooks(Base):
             self.assertTrue(r["ok"], r)
             ref = "9" if kind == "pr" else "3"
             self.assertEqual(r["result"], {"event": {"service": "acme/one", "ref": ref, "kind": kind}})
+
+    def test_github_documented_signature_vector_is_accepted(self):
+        # the test vector from GitHub's "Validating webhook deliveries": secret, payload and signature as published
+        r = self.run1("verify_webhook", {
+            "headers": {"X-Hub-Signature-256": "sha256=757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17",
+                        "X-GitHub-Event": "issues"},
+            "body_b64": base64.b64encode(b"Hello, World!").decode()},
+            env={"GITHUB_WEBHOOK_SECRET": "It's a Secret to Everybody"})
+        # the signature passes; only then is the (not JSON) body refused
+        self.assertEqual(r["error"]["message"], "webhook body is not a JSON object", r)
 
     def test_bad_signatures(self):
         payload = {"issue": {"number": 3}, "repository": {"full_name": "acme/one"}}
