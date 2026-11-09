@@ -164,7 +164,14 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
                 .join("\n")
         })
         .unwrap_or_default();
-    let (text_floor, text_why) = floor_from_text(&format!("{title}\n{body}\n{comment_text}"));
+    // what people asked for on the pull request counts too: it can raise the level above what was approved
+    let pr_words = t
+        .last_error
+        .as_deref()
+        .filter(|e| e.starts_with("People asked for changes on the pull request"))
+        .unwrap_or("");
+    let (text_floor, text_why) =
+        floor_from_text(&format!("{title}\n{body}\n{comment_text}\n{pr_words}"));
     if text_floor.needs_human() && t.level.is_none_or(|l| text_floor > l) {
         let level = text_floor.max(t.level.unwrap_or(Level::L1));
         let mut tx = o.begin(job).await?;

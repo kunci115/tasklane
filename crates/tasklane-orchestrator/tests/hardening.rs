@@ -1059,3 +1059,33 @@ async fn changes_asked_for_on_the_pull_request_send_the_ticket_back_to_the_devel
     assert_eq!(w.orch.sync_pr_feedback().await.unwrap(), 0);
     assert_eq!(state(&w.pool, t).await, "pr_open");
 }
+
+#[tokio::test]
+async fn what_people_ask_for_on_the_pull_request_can_raise_the_level_above_what_was_approved() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    sqlx::query("UPDATE services SET mode = 'full'")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    let t = ticket(&w, "T-plain").await;
+    sqlx::query("UPDATE tickets SET state = 'queued', level = 1, last_error = 'People asked for changes on the pull request:\n- maint (review): also change the refund logic' WHERE id = $1")
+        .bind(t)
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM jobs")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    w.queue.enqueue(t, "develop", 0, 0.0).await.unwrap();
+    drive(&w).await;
+    assert_eq!(state(&w.pool, t).await, "awaiting_approval");
+    assert_eq!(
+        level(&w.pool, t).await,
+        Some(3),
+        "refunds are level 3: an owner must approve"
+    );
+}

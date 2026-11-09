@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Fixes from an independent security review of everything since the alpha:
+  - **The developer never received feedback** (failed checks, the reviewer's notes, people's comments on the pull request): the engine ignored it. It now arrives as marked data in a `<feedback>` block that cannot close itself or change the rules.
+  - `.tasklane.yml` is a protected path, so a change cannot remove a repository's own tightening without a person seeing it.
+  - Comments on a pull request steer the agent only from people with write access (when GitHub can say), and the risk rules read their words too: asking for a change in refund logic needs an owner.
+  - `tl-shot` refuses addresses with control characters (a second line could pass the check), and the preview only starts in a sandbox on the egress-limited network.
+  - The chat no longer repeats failure details (they can carry model or workflow text); it points to the console.
 - The Repositories page shows the model tokens each repository used in the last 30 days.
 - Pull request feedback: a comment or a review asking for changes from a collaborator (never a stranger, never tasklane itself) sends the ticket back to the developer with their words, then through re-score, CI and review again. Checked every two minutes while a pull request is on its way.
 - Optional model-assisted duplicate suggestions (`TASKLANE_DUPLICATE_MODEL=1`): the model can only name one of the 30 most recent tickets, and a person still decides.

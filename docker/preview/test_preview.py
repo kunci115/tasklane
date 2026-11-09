@@ -38,7 +38,8 @@ class Shot(unittest.TestCase):
         for bad in ("https://example.com/", "http://example.com/", "http://10.0.0.5:80/", "http://127.0.0.1.evil.com/",
                     "http://127.0.0.1:80@evil.com/", "http://localhost.evil.com/", "file:///etc/passwd",
                     "http://169.254.169.254/latest/meta-data/", "http://127.0.0.1:3000/; rm -rf /",
-                    "http://127.0.0.1:3000/$(id)", "http://127.0.0.1:3000/ x", "", "ftp://127.0.0.1/"):
+                    "http://127.0.0.1:3000/$(id)", "http://127.0.0.1:3000/ x", "", "ftp://127.0.0.1/",
+                    "http://169.254.169.254/latest/\nhttp://127.0.0.1:3000/", "http://127.0.0.1:3000/\r", "http://127.0.0.1:3000/\tx"):
             r = self.run_shot(bad)
             self.assertEqual(r.returncode, 2, bad)
         self.assertEqual(self.calls(), "", "Obscura was never called for a refused address")

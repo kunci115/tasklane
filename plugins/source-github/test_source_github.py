@@ -528,11 +528,18 @@ class PrFeedback(Base):
         R[("GET", "/repos/acme/one/pulls/8/reviews")] = (200, {}, [
             {"user": {"login": "maint", "type": "User"}, "author_association": "COLLABORATOR", "state": "CHANGES_REQUESTED", "body": "needs work", "submitted_at": "2026-02-01T10:05:00Z"},
             {"user": {"login": "maint", "type": "User"}, "author_association": "COLLABORATOR", "state": "APPROVED", "body": "", "submitted_at": "2026-02-01T10:06:00Z"}])
+        R[("GET", "/repos/acme/one/collaborators/maint/permission")] = (200, {}, {"permission": "write"})
+        R[("GET", "/repos/acme/one/collaborators/owner/permission")] = (200, {}, {"permission": "admin"})
         r = self.ok("list_pr_feedback", {"service": "acme/one", "pr": "8", "since": "2026-01-15T00:00:00Z"})
         self.assertEqual([(i["author"], i["kind"], i["body"]) for i in r["items"]],
                          [("maint", "line", "rename this variable"), ("owner", "comment", "please add a test"),
                           ("maint", "review", "needs work")])
         self.assertEqual(r["cursor"], "2026-02-01T10:05:00Z")
+        # a member who can only read cannot steer, even though the association says MEMBER
+        R[("GET", "/repos/acme/one/collaborators/maint/permission")] = (200, {}, {"permission": "read"})
+        r2 = self.ok("list_pr_feedback", {"service": "acme/one", "pr": "8", "since": "2026-01-15T00:00:00Z"})
+        self.assertEqual([i["author"] for i in r2["items"]], ["owner"])
+        R[("GET", "/repos/acme/one/collaborators/maint/permission")] = (200, {}, {"permission": "write"})
         # nothing new: the same cursor comes back
         again = self.ok("list_pr_feedback", {"service": "acme/one", "pr": "8", "since": r["cursor"]})
         self.assertEqual((again["items"], again["cursor"]), ([], r["cursor"]))

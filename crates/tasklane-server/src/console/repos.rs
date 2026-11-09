@@ -290,7 +290,7 @@ fn human_tokens(n: i64) -> String {
 
 /// The notes the agents are given for one repository, with a form to add one.
 fn notes_html(id: i64, notes: &[(i64, String, String)], csrf: &str, here: &str) -> String {
-    let mut h = String::from("<h3 style=\"margin-top:1.1rem\">Notes for the agents</h3><p class=\"hint\">Short facts every agent is told about this repository, for example &ldquo;the staging branch is develop&rdquo;. Only you write these.</p>");
+    let mut h = String::from("<h3 style=\"margin-top:1.1rem\">Notes for the agents</h3><p class=\"hint\">Short facts every agent is told about this repository, for example &ldquo;the staging branch is develop&rdquo;. Only you write these. Do not put secrets here: the agents can repeat what they are told.</p>");
     for (nid, fact, who) in notes {
         h.push_str(&format!(
             "<form method=\"post\" action=\"/services/{id}/notes/{nid}/delete\" class=\"row tight\" style=\"align-items:flex-start;gap:.5rem;margin:.3rem 0\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"ret\" value=\"{}\"><span style=\"flex:1\">{}<br><span class=\"muted small\">{}</span></span><button class=\"btn small ghost\" data-confirm=\"Remove this note?\">Remove</button></form>",

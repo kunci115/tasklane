@@ -22,6 +22,9 @@ const BUILT_IN: &[&str] = &[
     ".gitmodules",
     ".gitattributes",
     "CODEOWNERS",
+    // the repository's own tightening rules: a change must not be able to remove them unseen
+    ".tasklane.yml",
+    ".tasklane/",
 ];
 
 /// File extensions that hold secrets or keys.
@@ -75,6 +78,12 @@ mod tests {
             &paths.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
             &[],
         )
+    }
+
+    #[test]
+    fn the_repositorys_own_rules_file_is_protected() {
+        assert_eq!(hit(&[".tasklane.yml"]), vec![".tasklane.yml"]);
+        assert_eq!(hit(&["sub/.tasklane.yml", ".tasklane/extra.yml"]).len(), 2);
     }
 
     #[test]

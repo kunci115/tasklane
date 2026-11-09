@@ -327,7 +327,6 @@ impl ChatBridge {
                 r.get("external_id"),
             );
             let title: Option<String> = r.get("title");
-            let err: Option<String> = r.get("last_error");
             let notify: String = r.get("notify_ref");
             let group = notify
                 .split_once(':')
@@ -340,11 +339,7 @@ impl ChatBridge {
                 }
                 "duplicate_proposed" => "looks like a duplicate; a person will decide".to_string(),
                 "merged" => "was merged into the development branch".to_string(),
-                "failed" => format!(
-                    "stopped and needs a person{}",
-                    err.map(|e| format!(": {}", clip(&e, 160)))
-                        .unwrap_or_default()
-                ),
+                "failed" => "stopped and needs a person; the reason is in the console".to_string(),
                 "closed_duplicate" => "was closed as a duplicate".to_string(),
                 "closed_rejected" => "was rejected".to_string(),
                 "closed_stale" => "was closed because nobody answered in time".to_string(),

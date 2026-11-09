@@ -415,7 +415,7 @@ async fn the_group_that_reported_a_ticket_is_told_how_it_ended_once_per_outcome(
         .unwrap();
     e.bridge.announce_outcomes().await;
     assert!(
-        e.last_text().contains("needs a person") && e.last_text().contains("CI failed twice"),
+        e.last_text().contains("needs a person") && !e.last_text().contains("CI failed twice"),
         "{}",
         e.last_text()
     );

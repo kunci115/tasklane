@@ -10,13 +10,16 @@ name="${2:-screen}"
 case "$name" in
   *[!A-Za-z0-9_-]*|"") echo "tl-shot: the name may only use letters, digits, - and _" >&2; exit 2 ;;
 esac
+# a line break would let a second line pass the check below while the first is what Obscura sees
+case "$url" in *[![:print:]]*) echo "tl-shot: that address is not acceptable" >&2; exit 2 ;; esac
 if ! printf '%s' "$url" | grep -Eq '^http://(127\.0\.0\.1|localhost|\[::1\])(:[0-9]{1,5})?(/[A-Za-z0-9._~/?=&%#:+-]*)?$'; then
   echo "tl-shot: only http://127.0.0.1 or http://localhost addresses are allowed" >&2
   exit 2
 fi
 mkdir -p /tmp/shots
 out="/tmp/shots/$name.png"
-# The sandbox has no route to the internet, and Obscura refuses private addresses by default, so
-# the flag below only opens the loopback address the check above has already restricted.
+# Obscura refuses private addresses by default, so the flag below is needed for the local app. It also
+# applies to anything the page itself fetches, which is why the preview is only started in a sandbox on the
+# internal egress network (docker-compose.egress.yml), where no other address can be reached anyway.
 OBSCURA_ALLOW_PRIVATE_NETWORK=1 "${TASKLANE_OBSCURA_BIN:-obscura}" fetch "$url" --screenshot "$out" >/dev/null
 echo "$out"

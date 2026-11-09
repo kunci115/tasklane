@@ -847,10 +847,25 @@ def op_list_pr_feedback(params):
         raise permanent("since must be an ISO time")
     items = []
 
+    can_write_cache = {}
+
+    def can_write(login):
+        """Does this person have write access? MEMBER and COLLABORATOR also cover people who can only read.
+        If GitHub cannot answer, the association alone decides (it was already required)."""
+        if login not in can_write_cache:
+            try:
+                d = app_api("GET", f"/repos/{svc}/collaborators/{q(login)}/permission").data or {}
+                can_write_cache[login] = d.get("permission") in ("admin", "write", "maintain")
+            except PluginError:
+                can_write_cache[login] = True
+        return can_write_cache[login]
+
     def take(author_assoc_user, body, at, kind):
         user = author_assoc_user.get("user") or {}
         trusted = author_assoc_user.get("author_association") in TRUSTED_ASSOCIATIONS
         if not trusted or is_own_comment(author_assoc_user) or user.get("type") == "Bot":
+            return
+        if body and at and at > since and not can_write(user.get("login", "")):
             return
         body = (body or "").strip()
         if body and at and at > since:
