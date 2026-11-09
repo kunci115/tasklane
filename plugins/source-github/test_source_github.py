@@ -340,6 +340,19 @@ class ListChanges(Base):
         last = [r for r in self.fake.log if r["path"] == "/repos/acme/one/issues"][-1]
         self.assertEqual(last["headers"]["if-none-match"], '"e2"')
 
+    def test_a_blocked_repository_does_not_stop_the_others(self):
+        self.fake.routes[("GET", "/installation/repositories")] = (200, {}, {"repositories": [
+            {"full_name": "acme/blocked", "default_branch": "main", "archived": False, "private": False,
+             "owner": {"login": "acme"}},
+            {"full_name": "acme/one", "default_branch": "main", "archived": False, "private": False,
+             "owner": {"login": "acme"}}]})
+        self.fake.routes[("GET", "/repos/acme/blocked/issues")] = (403, {}, {"message": "Repository access blocked"})
+        self.fake.routes[("GET", "/repos/acme/one/issues")] = (200, {}, [
+            {"number": 9, "updated_at": "2030-05-01T10:00:00Z"}])
+        base = self.ok("list_changes", {})
+        r = self.ok("list_changes", {"cursor": base["cursor"]})
+        self.assertEqual([(i["service"], i["ref"]) for i in r["items"]], [("acme/one", "9")])
+
     def test_bad_cursor_is_permanent(self):
         self.assertEqual(self.err("list_changes", {"cursor": "garbage"})["kind"], "permanent")
 

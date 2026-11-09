@@ -530,6 +530,10 @@ def op_list_changes(params):
         except PluginError as e:
             if e.status in (404, 410):  # issues disabled or repo gone
                 continue
+            if e.kind == "unauthorized" and e.status in (403, 451):
+                # blocked or restricted repository: skip it, do not stop the sweep for all the others
+                print(f"list_changes: skipping {name}: {e.message}", file=sys.stderr)
+                continue
             raise
         etag = r.headers.get("etag")
         newest = since
