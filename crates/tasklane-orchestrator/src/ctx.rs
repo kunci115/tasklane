@@ -81,6 +81,46 @@ impl Config {
     }
 }
 
+const MODES: [&str; 3] = ["watch", "triage", "full"];
+
+/// The mode, lowered (never raised) by the repository's `mode_cap`.
+fn capped_mode(mode: &str, overrides: &Value) -> String {
+    let rank = |m: &str| MODES.iter().position(|x| *x == m);
+    match (
+        rank(mode),
+        overrides
+            .get("mode_cap")
+            .and_then(Value::as_str)
+            .and_then(rank),
+    ) {
+        (Some(a), Some(b)) if b < a => MODES[b].to_string(),
+        _ => mode.to_string(),
+    }
+}
+
+/// The facts with the repository's own extra protected paths and smaller diff limit added.
+fn tighten_facts(facts: Value, overrides: &Value) -> Value {
+    let mut f = facts;
+    let extra: Vec<Value> = overrides
+        .get("protected_paths")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if !extra.is_empty() {
+        let mut all: Vec<Value> = f
+            .get("protected_paths")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        all.extend(extra);
+        f["protected_paths"] = Value::Array(all);
+    }
+    if let Some(n) = overrides.get("max_diff_lines").and_then(Value::as_i64) {
+        f["max_diff_lines"] = Value::from(n);
+    }
+    f
+}
+
 pub struct Orchestrator {
     pub(crate) pool: PgPool,
     pub(crate) queue: Queue,
@@ -125,8 +165,11 @@ pub(crate) struct Ticket {
     pub last_error: Option<String>,
     pub facts: Value,
     pub agent_profile: Value,
-    /// `watch`, `triage` or `full` (how far the system may go in this repo).
+    /// `watch`, `triage` or `full` (how far the system may go in this repo), already lowered by
+    /// the repository's own `mode_cap`.
     pub mode: String,
+    /// From `.tasklane.yml` in the repository; it can only tighten (see the source plug-in).
+    pub overrides: Value,
 }
 
 impl Ticket {
@@ -252,7 +295,7 @@ impl Orchestrator {
         };
         // A repository switched to `watch` stops all activity, including tickets already in flight.
         let mode: Option<String> = sqlx::query_scalar(
-            "SELECT s.mode FROM tickets t JOIN services s ON s.id = t.service_id WHERE t.id = $1",
+            "SELECT CASE WHEN s.overrides->>'mode_cap' = 'watch' THEN 'watch' ELSE s.mode END FROM tickets t JOIN services s ON s.id = t.service_id WHERE t.id = $1",
         )
         .bind(job.ticket_id)
         .fetch_optional(&self.pool)
@@ -353,12 +396,71 @@ impl Orchestrator {
         Ok(())
     }
 
+    /// Read the repository's `.tasklane.yml` (once per triage and per development run) and keep
+    /// what it says. Only known keys within their limits are kept, whatever the plug-in returned,
+    /// and a failure leaves the last known overrides in place.
+    pub(crate) async fn refresh_overrides(&self, service: &str) {
+        let Ok(r) = self
+            .source
+            .call(
+                "read_overrides",
+                json!({"service": service}),
+                self.cfg.call_timeout,
+            )
+            .await
+        else {
+            return;
+        };
+        let got = r.get("overrides").cloned().unwrap_or(Value::Null);
+        let mut keep = serde_json::Map::new();
+        if let Some(a) = got.get("protected_paths").and_then(Value::as_array) {
+            let paths: Vec<Value> = a
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|p| !p.is_empty() && p.len() <= 200 && !p.contains('\0'))
+                .take(50)
+                .map(|p| Value::String(p.trim_start_matches('/').to_string()))
+                .collect();
+            if !paths.is_empty() {
+                keep.insert("protected_paths".into(), Value::Array(paths));
+            }
+        }
+        if let Some(n) = got.get("max_diff_lines").and_then(Value::as_i64) {
+            if (10..=100_000).contains(&n) {
+                keep.insert("max_diff_lines".into(), Value::from(n));
+            }
+        }
+        if let Some(m) = got.get("mode_cap").and_then(Value::as_str) {
+            if MODES.contains(&m) {
+                keep.insert("mode_cap".into(), Value::String(m.to_string()));
+            }
+        }
+        if got.get("always_ask").and_then(Value::as_bool) == Some(true) {
+            keep.insert("always_ask".into(), Value::Bool(true));
+        }
+        let _ = sqlx::query(
+            "UPDATE services SET overrides = $3 WHERE source = $1 AND external_id = $2",
+        )
+        .bind(&self.cfg.source_name)
+        .bind(service)
+        .bind(Value::Object(keep))
+        .execute(&self.pool)
+        .await;
+    }
+
+    /// `load_ticket` after refreshing the repository's overrides.
+    pub(crate) async fn load_ticket_fresh(&self, ticket_id: i64) -> Result<Ticket, Error> {
+        let t = self.load_ticket(ticket_id).await?;
+        self.refresh_overrides(&t.service).await;
+        self.load_ticket(ticket_id).await
+    }
+
     pub(crate) async fn load_ticket(&self, ticket_id: i64) -> Result<Ticket, Error> {
         #[allow(clippy::type_complexity)]
-        let r: (String, String, String, Option<i16>, Option<String>, i16, i16, Option<String>, Option<String>, Option<String>, Option<String>, Value, Value, String) =
+        let r: (String, String, String, Option<i16>, Option<String>, i16, i16, Option<String>, Option<String>, Option<String>, Option<String>, Value, Value, String, Value) =
             sqlx::query_as(
                 "SELECT t.state, t.external_ref, s.external_id, t.level, t.plan_hash, t.ci_runs, t.dev_attempts,
-                        t.head_sha, t.branch, t.pr_ref, t.last_error, s.facts, s.agent_profile, s.mode
+                        t.head_sha, t.branch, t.pr_ref, t.last_error, s.facts, s.agent_profile, s.mode, s.overrides
                  FROM tickets t JOIN services s ON s.id = t.service_id WHERE t.id = $1",
             )
             .bind(ticket_id)
@@ -381,9 +483,10 @@ impl Orchestrator {
             branch: r.8,
             pr_ref: r.9,
             last_error: r.10,
-            facts: r.11,
+            facts: tighten_facts(r.11, &r.14),
             agent_profile: r.12,
-            mode: r.13,
+            mode: capped_mode(&r.13, &r.14),
+            overrides: r.14,
         })
     }
 
@@ -693,6 +796,18 @@ impl Orchestrator {
         if let Ok(t) = self.load_ticket(ticket_id).await {
             self.say(&t, text).await;
         }
+    }
+
+    /// The repository's agent profile with its recorded notes added to the instructions.
+    pub(crate) async fn profile_for(&self, t: &Ticket) -> Value {
+        crate::memory::with_notes(
+            &self.pool,
+            &self.cfg.source_name,
+            &t.service,
+            &t.agent_profile,
+        )
+        .await
+        .unwrap_or_else(|_| t.agent_profile.clone())
     }
 
     pub(crate) async fn say(&self, t: &Ticket, text: &str) {

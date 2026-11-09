@@ -49,6 +49,8 @@ async fn run(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
     cfg.source_name = s.source_name.clone();
     cfg.max_dev_parallel = s.max_dev_parallel;
     cfg.max_tokens_per_ticket = s.max_tokens_per_ticket;
+    cfg.dev_timeout = std::time::Duration::from_secs(s.dev_timeout_secs);
+    cfg.ci_timeout_secs = s.ci_timeout_secs;
     cfg.allow_no_checks = s.allow_no_checks;
     // what the console connected (an App, the agent's key and isolation) is added to what the environment says
     let gh: Option<connections::GithubConn> = connections::get(&pool, "github").await;

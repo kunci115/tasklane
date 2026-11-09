@@ -53,6 +53,8 @@ def item(ref):
 
 def run(params):
     role = params.get("role", "triage")
+    with open(os.path.join(STATE, "profile.log"), "a") as f:
+        f.write(json.dumps({"role": role, "system": (params.get("profile") or {}).get("system", "")}) + "\n")
     ref = params["ticket"]["ref"]
     if role == "triage":
         ws = params.get("workspace")
@@ -141,6 +143,8 @@ def handle(op, params):
         return {"installations": read_json("installations.json", []), "owner": "someone", "owner_type": "User"}
     if op == "check":
         return read_json("check.json", {"ok": True, "answer": "ok", "secs": 1.2, "sandbox": "none"})
+    if op == "read_overrides":
+        return {"overrides": read_json("overrides.json", {}), "found": True}
     if op == "get_item":
         return item(params["ref"])
     if op == "run":

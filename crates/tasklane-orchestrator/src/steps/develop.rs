@@ -40,10 +40,15 @@ pub(crate) fn check_diff(
     if !hits.is_empty() {
         reasons.push(format!("touches protected paths: {}", hits.join(", ")));
     }
-    if lines > o.cfg.max_diff_lines {
+    let max_lines = facts
+        .get("max_diff_lines")
+        .and_then(Value::as_u64)
+        .map_or(o.cfg.max_diff_lines, |n| {
+            (n as usize).min(o.cfg.max_diff_lines)
+        });
+    if lines > max_lines {
         reasons.push(format!(
-            "diff has {lines} changed lines (limit {})",
-            o.cfg.max_diff_lines
+            "diff has {lines} changed lines (limit {max_lines})"
         ));
     }
     if diff.len() > o.cfg.max_diff_bytes {
@@ -67,7 +72,12 @@ pub(crate) fn cap(s: &str) -> String {
 /// Runs the development agent in a fresh worktree, commits what it did, scores
 /// the real diff, and either asks for approval of that exact diff or hands over to the PR step.
 pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult, Error> {
-    let t = o.load_ticket(job.ticket_id).await?;
+    let t = o.load_ticket_fresh(job.ticket_id).await?;
+    if t.mode == "watch" {
+        // the repository's own file may have just capped it at watch: hold the work
+        o.queue.defer(job, 120.0).await?;
+        return Ok(RunResult::Waiting);
+    }
     if !matches!(t.state, State::Queued | State::Developing) {
         return Err(Error::WrongState {
             ticket_id: t.id,
@@ -205,7 +215,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
             json!({
                 "role": "dev",
                 "ticket": {"service": t.service, "ref": t.external_ref, "title": title, "body": body, "comments": comments},
-                "profile": t.agent_profile,
+                "profile": o.profile_for(&t).await,
                 "workspace": prepared.worktree,
                 "feedback": t.last_error,
                 "budget": {"max_secs": o.cfg.dev_timeout.as_secs(), "max_tokens": 500000},

@@ -1985,3 +1985,76 @@ async fn a_duplicate_proposal_is_answered_in_the_console_and_needs_csrf() {
         .unwrap();
     assert_eq!(state, "closed_duplicate");
 }
+
+#[tokio::test]
+async fn notes_for_a_repository_are_added_listed_and_removed_with_csrf() {
+    let Some(e) = env().await else { return };
+    let svc: i64 = sqlx::query_scalar("SELECT id FROM services WHERE external_id = 'org/repo'")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    let add = format!("/services/{svc}/notes");
+    assert_eq!(
+        send(
+            &e.app,
+            form(&add, "csrf=bad&fact=x".into(), Some(e.cookie.clone()))
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        send(
+            &e.app,
+            form(
+                &add,
+                format!("csrf={}&fact=Never+touch+%3Cgenerated%3E", e.csrf),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    let (_, _, page) = send(&e.app, get("/services", Some(e.cookie.clone()))).await;
+    assert!(
+        page.contains("Never touch &lt;generated&gt;"),
+        "escaped and listed: {page}"
+    );
+    assert_eq!(
+        send(
+            &e.app,
+            form(
+                &add,
+                format!("csrf={}&fact=", e.csrf),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let nid: i64 = sqlx::query_scalar("SELECT id FROM memory_notes WHERE service_id = $1")
+        .bind(svc)
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        send(
+            &e.app,
+            form(
+                &format!("/services/{svc}/notes/{nid}/delete"),
+                format!("csrf={}", e.csrf),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM memory_notes")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+}

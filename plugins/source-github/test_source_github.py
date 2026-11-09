@@ -475,6 +475,42 @@ class RunTokens(Base):
             self.assertEqual(r, {"merged": False, "reason": reason}, msg)
 
 
+class Overrides(Base):
+    def put(self, text):
+        import base64 as b
+        self.fake.routes[("GET", "/repos/acme/one/contents/.tasklane.yml")] = (200, {}, {
+            "encoding": "base64", "content": b.b64encode(text.encode()).decode()})
+
+    def test_no_file_means_no_overrides(self):
+        r = self.ok("read_overrides", {"service": "acme/one"})
+        self.assertEqual(r, {"overrides": {}, "found": False})
+
+    def test_a_file_can_only_tighten_and_unknown_or_bad_keys_are_ignored(self):
+        self.put("""# comment
+protected_paths:
+  - payments/
+  - "config/*.yml"   # trailing comment
+  - ../escape
+max_diff_lines: 150
+mode_cap: triage
+always_ask: true
+test_command: rm -rf /
+auto_merge: true
+max_diff_lines_extra: 3
+""")
+        r = self.ok("read_overrides", {"service": "acme/one"})
+        self.assertEqual(r["overrides"], {"protected_paths": ["payments/", "config/*.yml"],
+                                          "max_diff_lines": 150, "mode_cap": "triage", "always_ask": True})
+        self.assertIn("test_command", r["ignored"])
+        self.assertIn("auto_merge", r["ignored"])
+
+    def test_values_out_of_range_are_dropped(self):
+        self.put("max_diff_lines: 5\nmode_cap: yolo\nalways_ask: maybe\n")
+        r = self.ok("read_overrides", {"service": "acme/one"})
+        self.assertEqual(r["overrides"], {})
+        self.assertEqual(sorted(r["ignored"]), ["always_ask", "max_diff_lines", "mode_cap"])
+
+
 class Webhooks(Base):
     def send(self, event, payload, secret=WEBHOOK_SECRET, sig=None):
         body = json.dumps(payload).encode()

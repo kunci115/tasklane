@@ -164,6 +164,17 @@ pub async fn page(
         ));
     }
     b.push_str("<div class=\"grid g2\">");
+    let mut notes_by: std::collections::HashMap<i64, Vec<(i64, String, String)>> =
+        Default::default();
+    for r in &rows {
+        let id: i64 = r.get("id");
+        notes_by.insert(
+            id,
+            tasklane_orchestrator::memory::list(st.orch.pool(), id)
+                .await
+                .unwrap_or_default(),
+        );
+    }
     for r in rows {
         let id: i64 = r.get("id");
         let name: String = r.get("external_id");
@@ -210,7 +221,7 @@ pub async fn page(
 <details style=\"margin-top:.7rem\"><summary class=\"btn small\">Settings and protected paths</summary><h3 style=\"margin-top:.9rem\">Protected paths</h3><div>{}</div><p class=\"hint\">Changes to these always need approval of the exact diff, on top of the built-in list (CI config, Dockerfiles, migrations, keys).</p><form method=\"post\" action=\"/services/{id}/profile\" style=\"margin-top:.8rem\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"ret\" value=\"{here}\">\
 <div class=\"field\"><label for=\"s{id}\">Instructions for the agent</label><textarea id=\"s{id}\" name=\"system\" maxlength=\"4000\" placeholder=\"For example: follow the existing code style; never change generated files.\">{}</textarea></div>\
 <div class=\"field\"><label for=\"t{id}\">Test command the agent may run</label><input id=\"t{id}\" type=\"text\" name=\"test_command\" maxlength=\"200\" value=\"{}\" placeholder=\"pytest -q\"><div class=\"hint\">One command, no parentheses or line breaks.</div></div>\
-<button class=\"btn primary small\">Save</button></form></details></div>",
+<button class=\"btn primary small\">Save</button></form>{}</details></div>",
             if link.is_empty() { esc(&name) } else { format!("<a href=\"{}\" target=\"_blank\" rel=\"noopener\">{} {}</a>", esc(&link), esc(&name), icon("external")) },
             if archived { "<span class=\"pill\">archived</span>" } else { "" },
             if private { "<span class=\"pill\">private</span>" } else { "<span class=\"pill warn\" title=\"Anyone can open issues on a public repository\">public</span>" },
@@ -231,7 +242,8 @@ pub async fn page(
             if protected.is_empty() { "<span class=\"muted small\">none detected</span>".to_string() } else { protected },
             sess.csrf,
             esc(sys),
-            esc(testc)
+            esc(testc),
+            notes_html(id, notes_by.get(&id).map(Vec::as_slice).unwrap_or(&[]), &sess.csrf, &here)
         ));
     }
     b.push_str("</div>");
@@ -248,6 +260,71 @@ pub async fn page(
     render(&st, &sess.csrf, "repos", "Repositories", &b)
         .await
         .into_response()
+}
+
+/// The notes the agents are given for one repository, with a form to add one.
+fn notes_html(id: i64, notes: &[(i64, String, String)], csrf: &str, here: &str) -> String {
+    let mut h = String::from("<h3 style=\"margin-top:1.1rem\">Notes for the agents</h3><p class=\"hint\">Short facts every agent is told about this repository, for example &ldquo;the staging branch is develop&rdquo;. Only you write these.</p>");
+    for (nid, fact, who) in notes {
+        h.push_str(&format!(
+            "<form method=\"post\" action=\"/services/{id}/notes/{nid}/delete\" class=\"row tight\" style=\"align-items:flex-start;gap:.5rem;margin:.3rem 0\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"ret\" value=\"{}\"><span style=\"flex:1\">{}<br><span class=\"muted small\">{}</span></span><button class=\"btn small ghost\" data-confirm=\"Remove this note?\">Remove</button></form>",
+            esc(csrf),
+            esc(here),
+            esc(fact),
+            esc(who)
+        ));
+    }
+    h.push_str(&format!(
+        "<form method=\"post\" action=\"/services/{id}/notes\" style=\"margin-top:.5rem\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"ret\" value=\"{}\"><div class=\"field\"><label for=\"n{id}\">New note</label><input id=\"n{id}\" type=\"text\" name=\"fact\" maxlength=\"1000\" placeholder=\"The staging branch is develop\"></div><button class=\"btn small\">Add note</button></form>",
+        esc(csrf),
+        esc(here)
+    ));
+    h
+}
+
+#[derive(Deserialize)]
+pub struct NoteIn {
+    csrf: String,
+    fact: String,
+    ret: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct NoteDeleteIn {
+    csrf: String,
+    ret: Option<String>,
+}
+
+pub async fn add_note(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Form(f): Form<NoteIn>,
+) -> Response {
+    if !csrf_ok(&st, &headers, &f.csrf).await {
+        return forbidden();
+    }
+    match tasklane_orchestrator::memory::add(st.orch.pool(), id, &f.fact, "console:admin").await {
+        Ok(_) => back(f.ret.as_deref()),
+        Err(_) => (
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "a note needs 1 to 1000 characters",
+        )
+            .into_response(),
+    }
+}
+
+pub async fn delete_note(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((id, nid)): Path<(i64, i64)>,
+    Form(f): Form<NoteDeleteIn>,
+) -> Response {
+    if !csrf_ok(&st, &headers, &f.csrf).await {
+        return forbidden();
+    }
+    let _ = tasklane_orchestrator::memory::delete(st.orch.pool(), id, nid).await;
+    back(f.ret.as_deref())
 }
 
 #[derive(Deserialize)]

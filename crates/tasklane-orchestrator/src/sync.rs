@@ -134,7 +134,7 @@ impl Orchestrator {
     /// time; resume it if it was waiting for the reporter and a person answered.
     pub async fn note_issue(&self, service: &str, reference: &str) -> Result<Noted, Error> {
         let svc: Option<(i64, String, bool)> = sqlx::query_as(
-            "SELECT id, mode, archived FROM services WHERE source = $1 AND external_id = $2",
+            "SELECT id, CASE WHEN overrides->>'mode_cap' = 'watch' THEN 'watch' ELSE mode END, archived FROM services WHERE source = $1 AND external_id = $2",
         )
         .bind(&self.cfg.source_name)
         .bind(service)

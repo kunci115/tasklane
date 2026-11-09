@@ -16,7 +16,12 @@ struct TriageOutput {
 }
 
 pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult, Error> {
-    let t = o.load_ticket(job.ticket_id).await?;
+    let t = o.load_ticket_fresh(job.ticket_id).await?;
+    if t.mode == "watch" {
+        // the repository's own file may have just capped it at watch: hold the work
+        o.queue.defer(job, 120.0).await?;
+        return Ok(RunResult::Waiting);
+    }
     if t.state != State::New {
         return Err(Error::WrongState {
             ticket_id: t.id,
@@ -51,7 +56,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
                 "role": "triage",
                 "ticket": {"service": t.service, "ref": t.external_ref, "title": title, "body": body,
                            "comments": item.get("comments").cloned().unwrap_or(Value::Array(vec![]))},
-                "profile": t.agent_profile,
+                "profile": o.profile_for(&t).await,
                 "workspace": workspace.as_ref().map(|p| p.worktree.clone()),
                 "budget": {"max_secs": o.cfg.call_timeout.as_secs(), "max_tokens": 100000},
                 "read_only": true
@@ -78,10 +83,14 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
     if untrusted {
         why.push("author is not a collaborator");
     }
+    let always_ask = t.overrides.get("always_ask").and_then(Value::as_bool) == Some(true);
+    if always_ask {
+        why.push("this repository asks for approval on every ticket");
+    }
     let level = Level::with_model_suggestion(floor, suggestion);
     let to = if !out.questions.is_empty() {
         State::NeedsInfo
-    } else if level.needs_human() || t.mode != "full" || untrusted {
+    } else if level.needs_human() || t.mode != "full" || untrusted || always_ask {
         State::AwaitingApproval
     } else {
         State::Queued

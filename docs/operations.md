@@ -9,6 +9,29 @@ tasklane is a single daemon plus Postgres. It reads tickets from a ticket source
 - An Anthropic API key (or a Claude Code OAuth token) for the agent.
 - A TLS reverse proxy in front of port 8080 if the console or the webhook is reachable from outside.
 
+## Rules a repository can set for itself
+
+A repository may carry a `.tasklane.yml` on its default branch. It can only make tasklane **stricter** in that repository, so a contributor cannot loosen anything by editing it:
+
+```yaml
+protected_paths:        # extra paths that always need approval of the exact diff
+  - payments/
+  - config/*.yml
+max_diff_lines: 200     # a smaller diff limit than the install's (never a larger one)
+mode_cap: triage        # the most this repository may be set to: watch, triage or full
+always_ask: true        # every ticket waits for a person's approval
+```
+
+Other keys (a test command, auto-merge, instructions for the agent) are ignored on purpose: they would let repository content steer or loosen the pipeline. The file is read before each triage and each development run; if it cannot be read, the last known rules stay. Instructions for the agent and recorded notes are set in the console (**Repositories**), not in the repository.
+
+## Notes for the agents
+
+On **Repositories**, open a repository's settings to record short notes ("the staging branch is develop", "never touch `generated/`"). Every agent working on that repository is given them with its instructions. Only people write notes: nothing a model or a ticket says is ever stored there. Up to 20 notes of 1000 characters are used, newest first.
+
+## Duplicates
+
+When a new ticket's title closely matches an earlier ticket of the same repository (the same significant words, not a similar topic), it is held as **Possible duplicate** before any model run. A person answers on the ticket page: close it as a duplicate, or handle it as a new ticket (it is then never proposed again). The model never decides this.
+
 ## Two installs on one repository
 
 Two tasklane installs on the same repository would both triage every issue, comment twice and open duplicate pull requests. tasklane prevents this without any extra server:
@@ -89,6 +112,8 @@ The console covers everything a normal install needs. Environment variables are 
 | `TASKLANE_JWT_SECRETS` | no | `name:secret,name:secret` (secrets of 16+ characters), one per app that embeds the report button. Without it the report endpoint refuses everyone. |
 | `TASKLANE_WORKERS` | no | Parallel workers, default 2. |
 | `TASKLANE_MAX_TOKENS_PER_TICKET` | no | Model tokens (in and out, cache reads included) one ticket may use across all its runs, default 3000000. Past it the ticket goes to `failed` with that reason and a person decides. |
+| `TASKLANE_DEV_TIMEOUT_SECS` | no | Wall time one development run may take, default 1800 (limits 60 to 86400). A run that exceeds it is stopped and counts as an attempt. |
+| `TASKLANE_CI_TIMEOUT_SECS` | no | How long a pull request's checks may stay pending before the ticket fails, default 3600. |
 | `TASKLANE_MAX_DEV` | no | Development runs at once, default 1. Raise it only after you measure your CI capacity. |
 | `TASKLANE_USER_DAILY_LIMIT` | no | Reports per reporter per day, default 10. |
 | `TASKLANE_SYNC_SECS` | no | Polling interval for the sync backstop, default 60, minimum 5. |

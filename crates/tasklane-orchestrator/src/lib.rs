@@ -15,6 +15,7 @@ mod ask;
 mod ctx;
 mod duplicates;
 pub mod host;
+pub mod memory;
 mod ownership;
 mod steps;
 pub mod sync;

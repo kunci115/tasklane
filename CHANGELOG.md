@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Per-repository notes for the agents, written only by people in the console and added to every agent's instructions for that repository.
+- `.tasklane.yml` in a repository: extra protected paths, a smaller diff limit, a mode cap and `always_ask`. It can only tighten; every other key is ignored.
+- `TASKLANE_DEV_TIMEOUT_SECS` and `TASKLANE_CI_TIMEOUT_SECS` set the wall time of a development run and the wait for checks.
 - Duplicate proposals: a new ticket whose title closely matches an earlier ticket of the same repository is held as `duplicate_proposed` before any model run. A person confirms (closed as a duplicate) or rejects (triaged as usual, never proposed again) in the console. The match is plain word overlap, so it is predictable; the model never decides this.
 - GitHub webhooks verified with real deliveries (issue opened, comment created) through a temporary tunnel that forwarded only the webhook path.
 - Agent sandbox network limit: `docker-compose.egress.yml` adds an internal Docker network and a small allowlist proxy (`docker/egress-proxy/proxy.py`) so the agent container can reach only the model API. Checked with the real CLI inside the sandbox.

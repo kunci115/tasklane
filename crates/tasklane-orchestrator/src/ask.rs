@@ -58,7 +58,7 @@ impl Orchestrator {
                     "role": "ask",
                     "ticket": {"service": service, "ref": "", "title": "", "body": "", "comments": []},
                     "question": question,
-                    "profile": profile,
+                    "profile": crate::memory::with_notes(&self.pool, &self.cfg.source_name, service, &profile).await.unwrap_or(profile.clone()),
                     "workspace": prepared.worktree,
                     "budget": {"max_secs": self.cfg.call_timeout.as_secs(), "max_tokens": 100000},
                     "read_only": true

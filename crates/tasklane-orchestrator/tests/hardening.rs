@@ -772,3 +772,107 @@ async fn a_ticket_that_looks_like_an_earlier_one_is_proposed_as_a_duplicate_and_
         Err(ApprovalError::WrongState(_))
     ));
 }
+
+#[tokio::test]
+async fn notes_recorded_for_a_repository_reach_the_agents_of_that_repository() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    let (svc,): (i64,) = sqlx::query_as("SELECT id FROM services LIMIT 1")
+        .fetch_one(&w.pool)
+        .await
+        .unwrap();
+    assert!(
+        tasklane_orchestrator::memory::add(&w.pool, svc, "   ", "console:admin")
+            .await
+            .is_err()
+    );
+    tasklane_orchestrator::memory::add(
+        &w.pool,
+        svc,
+        "The staging branch is develop",
+        "console:admin",
+    )
+    .await
+    .unwrap();
+    ticket(&w, "T-plain").await;
+    drive(&w).await;
+    let seen = w.read_state("profile.log");
+    assert!(
+        seen.contains("Notes the team recorded about this repository")
+            && seen.contains("The staging branch is develop"),
+        "{seen}"
+    );
+    let notes = tasklane_orchestrator::memory::list(&w.pool, svc)
+        .await
+        .unwrap();
+    assert_eq!(notes.len(), 1);
+    tasklane_orchestrator::memory::delete(&w.pool, svc, notes[0].0)
+        .await
+        .unwrap();
+    assert!(tasklane_orchestrator::memory::list(&w.pool, svc)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn a_repository_file_can_only_tighten_what_tasklane_allows() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    sqlx::query("UPDATE services SET mode = 'full'")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    // always_ask: even a harmless level-1 ticket waits for a person
+    std::fs::write(
+        w.state_dir().join("overrides.json"),
+        r#"{"always_ask": true, "protected_paths": ["fix.txt"], "max_diff_lines": 10, "test_command": "rm -rf /", "mode_cap": "full"}"#,
+    )
+    .unwrap();
+    let t = ticket(&w, "T-plain").await;
+    drive(&w).await;
+    assert_eq!(state(&w.pool, t).await, "awaiting_approval");
+    let kept: serde_json::Value = sqlx::query_scalar("SELECT overrides FROM services LIMIT 1")
+        .fetch_one(&w.pool)
+        .await
+        .unwrap();
+    assert!(
+        kept.get("test_command").is_none(),
+        "keys that could loosen anything are never kept: {kept}"
+    );
+    assert_eq!(kept["max_diff_lines"], 10);
+    // mode_cap can lower the mode but never raise it
+    sqlx::query("UPDATE services SET mode = 'triage'")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    std::fs::write(
+        w.state_dir().join("overrides.json"),
+        r#"{"mode_cap": "full"}"#,
+    )
+    .unwrap();
+    let t2 = ticket(&w, "T-plain-2").await;
+    drive(&w).await;
+    assert_eq!(
+        state(&w.pool, t2).await,
+        "awaiting_approval",
+        "still triage-only: a cap cannot raise the mode"
+    );
+    // watch stops all work on the repository
+    std::fs::write(
+        w.state_dir().join("overrides.json"),
+        r#"{"mode_cap": "watch"}"#,
+    )
+    .unwrap();
+    let t3 = ticket(&w, "T-plain-3").await;
+    drive(&w).await;
+    assert_eq!(
+        state(&w.pool, t3).await,
+        "new",
+        "mode_cap watch holds the work"
+    );
+}

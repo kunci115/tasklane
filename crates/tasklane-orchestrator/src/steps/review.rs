@@ -88,7 +88,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
             json!({
                 "role": "reviewer",
                 "ticket": {"service": t.service, "ref": t.external_ref, "title": text_of(&item, "title"), "body": text_of(&item, "body"), "comments": []},
-                "profile": t.agent_profile,
+                "profile": o.profile_for(&t).await,
                 "diff": diff,
                 "budget": {"max_secs": o.cfg.call_timeout.as_secs(), "max_tokens": 100000},
                 "read_only": true

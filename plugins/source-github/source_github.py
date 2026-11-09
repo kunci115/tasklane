@@ -655,6 +655,57 @@ def get_file(svc, path):
         return None
 
 
+OVERRIDE_FILE = ".tasklane.yml"
+MODE_ORDER = ("watch", "triage", "full")
+
+
+def parse_overrides(text):
+    """Read the small subset of YAML `.tasklane.yml` uses: `key: value` lines and `- item` lists.
+    The file can only make tasklane STRICTER in that repository; anything else is ignored:
+      protected_paths: [list]   extra paths that always need approval of the exact diff
+      max_diff_lines: 200       a smaller diff limit than the install's
+      mode_cap: triage          the most this repository may be set to (watch, triage or full)
+      always_ask: true          every ticket needs a person's approval"""
+    out, ignored, key = {}, [], None
+    for raw in (text or "").splitlines()[:500]:
+        line = raw.split(" #")[0].rstrip() if not raw.lstrip().startswith("#") else ""
+        if not line.strip():
+            continue
+        item = line.strip()
+        if item.startswith("- ") and key == "protected_paths":
+            v = item[2:].strip().strip("\"'")
+            if v and len(v) <= 200 and "\x00" not in v and ".." not in v.split("/"):
+                out.setdefault("protected_paths", [])
+                if len(out["protected_paths"]) < 50:
+                    out["protected_paths"].append(v.lstrip("/"))
+            continue
+        k, sep, v = line.partition(":")
+        k, v = k.strip(), v.strip().strip("\"'")
+        if not sep or line[0] in " \t":
+            continue
+        key = k
+        if k == "protected_paths":
+            continue
+        if k == "max_diff_lines" and v.isdigit() and 10 <= int(v) <= 100000:
+            out[k] = int(v)
+        elif k == "mode_cap" and v in MODE_ORDER:
+            out[k] = v
+        elif k == "always_ask" and v.lower() in ("true", "false"):
+            out[k] = v.lower() == "true"
+        else:
+            ignored.append(k)
+    return out, ignored
+
+
+def op_read_overrides(params):
+    svc = p_service(params)
+    text = get_file(svc, OVERRIDE_FILE)
+    if text is None:
+        return {"overrides": {}, "found": False}
+    out, ignored = parse_overrides(text)
+    return {"overrides": out, "found": True, "ignored": ignored}
+
+
 def op_detect_facts(params):
     svc = p_service(params)
     langs = app_api("GET", f"/repos/{svc}/languages").data or {}
@@ -877,7 +928,7 @@ OPS = {
     "describe": op_describe, "list_services": op_list_services,
     "list_changes": op_list_changes, "get_item": op_get_item,
     "create_item": op_create_item, "comment": op_comment,
-    "set_labels": op_set_labels, "detect_facts": op_detect_facts,
+    "set_labels": op_set_labels, "detect_facts": op_detect_facts, "read_overrides": op_read_overrides,
     "repo_url": op_repo_url, "mint_run_token": op_mint_run_token,
     "open_pr": op_open_pr, "get_checks": op_get_checks,
     "merge_pr": op_merge_pr, "verify_webhook": op_verify_webhook,
