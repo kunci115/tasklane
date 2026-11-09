@@ -2,39 +2,128 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Form, Path, State};
+use axum::extract::{Form, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
 
-use super::ui::{ago, empty, head, icon, render, repo_link};
+use super::ui::{ago, empty, head, icon, pager, render, repo_link, url_encode};
 use super::{csrf_ok, forbidden, guard, redirect, AppState};
 use crate::esc;
 
-pub async fn page(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+#[derive(Deserialize, Default)]
+pub struct ListQuery {
+    q: Option<String>,
+    mode: Option<String>,
+    page: Option<u32>,
+    per: Option<u32>,
+}
+
+/// `%`, `_` and `\` mean something in a LIKE pattern; the search text is meant literally.
+fn like_literal(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+pub async fn page(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(lq): Query<ListQuery>,
+) -> Response {
     let sess = match guard(&st, &headers).await {
         Ok(s) => s,
         Err(r) => return r,
     };
     let source = st.orch.config().source_name.clone();
+    let q: String =
+        lq.q.as_deref()
+            .unwrap_or("")
+            .trim()
+            .chars()
+            .take(100)
+            .collect();
+    let mode_f = lq
+        .mode
+        .as_deref()
+        .filter(|m| matches!(*m, "watch" | "triage" | "full"))
+        .unwrap_or("all");
+    let per = lq.per.filter(|p| matches!(*p, 12 | 24 | 48)).unwrap_or(12);
+    let pattern = format!("%{}%", like_literal(&q));
+    // how many repositories each mode has, for the filter tabs (they follow the search text)
+    let mut counts = std::collections::HashMap::new();
+    for r in sqlx::query("SELECT mode, count(*) AS n FROM services WHERE external_id ILIKE $1 ESCAPE '\\' GROUP BY mode")
+        .bind(&pattern)
+        .fetch_all(st.orch.pool())
+        .await
+        .unwrap_or_default()
+    {
+        counts.insert(r.get::<String, _>("mode"), r.get::<i64, _>("n"));
+    }
+    let all_n: i64 = counts.values().sum();
+    let total: i64 = if mode_f == "all" {
+        all_n
+    } else {
+        *counts.get(mode_f).unwrap_or(&0)
+    };
+    let pages = ((total + per as i64 - 1) / per as i64).max(1) as u32;
+    let page = lq.page.unwrap_or(1).clamp(1, pages);
     let rows = sqlx::query(
         "SELECT s.id, s.external_id, s.mode, s.archived, s.facts, s.agent_profile,
                 (SELECT count(*) FROM tickets t WHERE t.service_id = s.id AND t.state NOT LIKE 'closed_%' AND t.state <> 'merged') AS open,
                 (SELECT count(*) FROM tickets t WHERE t.service_id = s.id AND t.state = 'merged') AS merged,
                 (SELECT count(*) FROM tickets t WHERE t.service_id = s.id AND t.state IN ('awaiting_approval','failed')) AS attention,
                 (SELECT extract(epoch FROM now() - max(t.updated_at))::bigint FROM tickets t WHERE t.service_id = s.id) AS last
-         FROM services s ORDER BY s.archived, s.external_id",
+         FROM services s
+         WHERE s.external_id ILIKE $1 ESCAPE '\\' AND ($2 = 'all' OR s.mode = $2)
+         ORDER BY s.archived, s.external_id LIMIT $3 OFFSET $4",
     )
+    .bind(&pattern)
+    .bind(mode_f)
+    .bind(per as i64)
+    .bind((page as i64 - 1) * per as i64)
     .fetch_all(st.orch.pool())
     .await
     .unwrap_or_default();
+    // the query string without the page number: used by the tabs, the pager and the return link
+    let base_qs = |m: &str| {
+        let mut v = Vec::new();
+        if !q.is_empty() {
+            v.push(format!("q={}", url_encode(&q)));
+        }
+        if m != "all" {
+            v.push(format!("mode={m}"));
+        }
+        if per != 12 {
+            v.push(format!("per={per}"));
+        }
+        v.join("&")
+    };
+    let here = {
+        let b = base_qs(mode_f);
+        if page > 1 {
+            if b.is_empty() {
+                format!("page={page}")
+            } else {
+                format!("{b}&page={page}")
+            }
+        } else {
+            b
+        }
+    };
 
     let mut b = head(
         "Repositories",
         "Choose how far tasklane may go in each one. New repositories start in <strong>triage</strong>.",
-        "<input type=\"text\" placeholder=\"Filter repositories\" data-filter=\".repo-card\" style=\"width:16rem\" aria-label=\"Filter repositories\">",
+        &format!(
+            "<form method=\"get\" action=\"/services\" class=\"row tight\" role=\"search\"><input type=\"search\" name=\"q\" value=\"{}\" placeholder=\"Search repositories\" style=\"width:16rem\" aria-label=\"Search repositories\" maxlength=\"100\">{}{}<button class=\"btn\">Search</button>{}</form>",
+            esc(&q),
+            if mode_f != "all" { format!("<input type=\"hidden\" name=\"mode\" value=\"{mode_f}\">") } else { String::new() },
+            if per != 12 { format!("<input type=\"hidden\" name=\"per\" value=\"{per}\">") } else { String::new() },
+            if q.is_empty() { String::new() } else { "<a class=\"btn ghost\" href=\"/services\">Clear</a>".to_string() }
+        ),
     );
     b.push_str(
         "<div class=\"card\" style=\"margin-bottom:1rem\"><div class=\"grid g3\">\
@@ -42,8 +131,31 @@ pub async fn page(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Respon
 <div><span class=\"pill info\">triage</span><p class=\"small muted\">New issues are read and planned. A person must approve before anything changes. The first approval switches the repository to full.</p></div>\
 <div><span class=\"pill ok\">full</span><p class=\"small muted\">Small, safe changes by collaborators run to a merge on their own. Anything riskier, or from a stranger, waits for approval.</p></div></div></div>",
     );
+    let tab = |key: &str, label: &str, n: i64| {
+        let qs = base_qs(key);
+        format!(
+            "<a class=\"tab\" href=\"/services{}{}\" aria-current=\"{}\">{label} <span class=\"n\">{n}</span></a>",
+            if qs.is_empty() { "" } else { "?" },
+            qs,
+            if mode_f == key { "true" } else { "false" }
+        )
+    };
+    b.push_str(&format!(
+        "<div class=\"tabs\" role=\"navigation\" aria-label=\"Filter by mode\">{}{}{}{}</div>",
+        tab("all", "All", all_n),
+        tab("full", "Full", *counts.get("full").unwrap_or(&0)),
+        tab("triage", "Triage", *counts.get("triage").unwrap_or(&0)),
+        tab("watch", "Watch", *counts.get("watch").unwrap_or(&0)),
+    ));
     if rows.is_empty() {
-        b.push_str(&format!("<div class=\"card\">{}</div>", empty("repo", "No repositories yet. Install your GitHub App on a repository; it shows up here within a minute.")));
+        b.push_str(&format!(
+            "<div class=\"card\">{}</div>",
+            if all_n == 0 && q.is_empty() {
+                empty("repo", "No repositories yet. Install your GitHub App on a repository; it shows up here within a minute.")
+            } else {
+                empty("repo", "No repository matches. Clear the search or pick another mode.")
+            }
+        ));
     }
     b.push_str("<div class=\"grid g2\">");
     for r in rows {
@@ -85,10 +197,9 @@ pub async fn page(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Respon
             .unwrap_or("");
         b.push_str(&format!(
             "<div class=\"card repo-card\"><div class=\"row tight\" style=\"align-items:center;gap:.5rem\"><h2 style=\"margin:0\">{}</h2>{}{}{}{}</div>\
-<form method=\"post\" action=\"/services/{id}/mode\" style=\"margin:.8rem 0\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><div class=\"seg\" role=\"group\" aria-label=\"Mode\">{}{}{}</div></form>\
+<form method=\"post\" action=\"/services/{id}/mode\" style=\"margin:.8rem 0\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"ret\" value=\"{here}\"><div class=\"seg\" role=\"group\" aria-label=\"Mode\">{}{}{}</div></form>\
 <div class=\"row tight muted small\" style=\"gap:1rem;margin-bottom:.6rem\"><span>{open} open</span><span>{merged} merged</span>{}<span>{}</span></div>\
-<h3>Protected paths</h3><div>{}</div><p class=\"hint\">Changes to these always need approval of the exact diff, on top of the built-in list (CI config, Dockerfiles, migrations, keys).</p>\
-<details style=\"margin-top:.7rem\"><summary class=\"btn small\">Agent settings</summary><form method=\"post\" action=\"/services/{id}/profile\" style=\"margin-top:.8rem\"><input type=\"hidden\" name=\"csrf\" value=\"{}\">\
+<details style=\"margin-top:.7rem\"><summary class=\"btn small\">Settings and protected paths</summary><h3 style=\"margin-top:.9rem\">Protected paths</h3><div>{}</div><p class=\"hint\">Changes to these always need approval of the exact diff, on top of the built-in list (CI config, Dockerfiles, migrations, keys).</p><form method=\"post\" action=\"/services/{id}/profile\" style=\"margin-top:.8rem\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"ret\" value=\"{here}\">\
 <div class=\"field\"><label for=\"s{id}\">Instructions for the agent</label><textarea id=\"s{id}\" name=\"system\" maxlength=\"4000\" placeholder=\"For example: follow the existing code style; never change generated files.\">{}</textarea></div>\
 <div class=\"field\"><label for=\"t{id}\">Test command the agent may run</label><input id=\"t{id}\" type=\"text\" name=\"test_command\" maxlength=\"200\" value=\"{}\" placeholder=\"pytest -q\"><div class=\"hint\">One command, no parentheses or line breaks.</div></div>\
 <button class=\"btn primary small\">Save</button></form></details></div>",
@@ -110,6 +221,16 @@ pub async fn page(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Respon
         ));
     }
     b.push_str("</div>");
+    if total > 0 {
+        let qs = base_qs(mode_f);
+        b.push_str(&pager(
+            &format!("/services{}{}", if qs.is_empty() { "" } else { "?" }, qs),
+            page,
+            pages,
+            total,
+            per,
+        ));
+    }
     render(&st, &sess.csrf, "repos", "Repositories", &b)
         .await
         .into_response()
@@ -119,6 +240,19 @@ pub async fn page(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Respon
 pub struct ModeIn {
     csrf: String,
     mode: String,
+    ret: Option<String>,
+}
+
+/// Back to the same filtered page after a change. Only a plain query string is accepted.
+fn back(ret: Option<&str>) -> Response {
+    match ret.filter(|r| {
+        r.len() <= 300
+            && r.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"=&%+-_.~".contains(&b))
+    }) {
+        Some(r) if !r.is_empty() => redirect(&format!("/services?{r}")),
+        _ => redirect("/services"),
+    }
 }
 
 pub async fn set_mode(
@@ -142,7 +276,7 @@ pub async fn set_mode(
         .bind(json!({"service_id": id, "mode": f.mode}))
         .execute(st.orch.pool())
         .await;
-    redirect("/services")
+    back(f.ret.as_deref())
 }
 
 #[derive(Deserialize)]
@@ -150,6 +284,7 @@ pub struct ProfileIn {
     csrf: String,
     system: String,
     test_command: String,
+    ret: Option<String>,
 }
 
 pub async fn set_profile(
@@ -185,5 +320,5 @@ pub async fn set_profile(
         .bind(json!({"service_id": id}))
         .execute(st.orch.pool())
         .await;
-    redirect("/services")
+    back(f.ret.as_deref())
 }

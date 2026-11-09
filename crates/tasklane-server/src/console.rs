@@ -25,7 +25,7 @@ use sqlx::Row;
 
 use crate::auth::ct_eq;
 use crate::{esc, AppState};
-use ui::{empty, head, icon, render};
+use ui::{empty, head, icon, render, MARK_SVG};
 
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
@@ -147,7 +147,7 @@ fn login_page(message: &str) -> Html<String> {
     Html(format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Sign in - tasklane</title>\
 <meta name=\"theme-color\" content=\"#03040a\"><link rel=\"icon\" href=\"/static/icon.svg\"><link rel=\"manifest\" href=\"/manifest.webmanifest\"><link rel=\"stylesheet\" href=\"/static/app.css\"></head>\
-<body><div class=\"login\"><div class=\"card\"><div class=\"logo\"><svg viewBox=\"0 0 24 24\" width=\"26\" height=\"26\"><path d=\"M4 7h10M4 12h16M4 17h7\" stroke=\"#fff\" stroke-width=\"2.4\" stroke-linecap=\"round\" fill=\"none\"/></svg></div>\
+<body><div class=\"login\"><div class=\"card\"><div class=\"logo\">{MARK_SVG}</div>\
 <h1>tasklane</h1><p class=\"muted\">Issues in, reviewed changes out. Sign in to manage it.</p>{message}\
 <form method=\"post\" action=\"/login\"><div class=\"field\"><label for=\"token\">Admin token</label><input id=\"token\" type=\"password\" name=\"token\" autocomplete=\"current-password\" autofocus required></div>\
 <button class=\"btn primary\" style=\"width:100%\">Sign in</button><p class=\"hint\">The token is the value of TASKLANE_ADMIN_TOKEN on the server.</p></form></div></div><script src=\"/static/app.js\" defer></script></body></html>"

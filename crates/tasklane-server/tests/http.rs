@@ -1806,3 +1806,55 @@ async fn the_agent_test_button_reports_success_and_failure_in_plain_words() {
         "the message is escaped"
     );
 }
+
+#[tokio::test]
+async fn the_repository_list_is_paged_searchable_filterable_and_returns_to_the_same_view() {
+    let Some(e) = env().await else { return };
+    for i in 0..30 {
+        sqlx::query("INSERT INTO services (kind, source, external_id, mode, facts) VALUES ('repo','test',$1,$2,'{}')")
+            .bind(format!("paged/repo-{i:02}"))
+            .bind(if i % 3 == 0 { "full" } else { "triage" })
+            .execute(&e.pool)
+            .await
+            .unwrap();
+    }
+    let page = |q: &str| get(&format!("/services{q}"), Some(e.cookie.clone()));
+    let (_, _, first) = send(&e.app, page("?q=paged%2F")).await;
+    assert!(first.contains("Showing 1\u{2013}12 of 30"), "{first}");
+    assert!(first.contains("repo-00") && !first.contains("repo-12"));
+    let (_, _, third) = send(&e.app, page("?q=paged%2F&page=3")).await;
+    assert!(third.contains("Showing 25\u{2013}30 of 30"));
+    let (_, _, beyond) = send(&e.app, page("?q=paged%2F&page=99")).await;
+    assert!(
+        beyond.contains("Showing 25\u{2013}30 of 30"),
+        "an out-of-range page falls back to the last"
+    );
+    let (_, _, full) = send(&e.app, page("?q=paged%2F&mode=full")).await;
+    assert!(full.contains("Showing 1\u{2013}10 of 10"));
+    let (_, _, per) = send(&e.app, page("?q=paged%2F&per=24")).await;
+    assert!(per.contains("Showing 1\u{2013}24 of 30"));
+    // a LIKE wildcard in the search text is meant literally
+    let (_, _, wild) = send(&e.app, page("?q=%25")).await;
+    assert!(wild.contains("No repository matches"), "{wild}");
+    // a mode change goes back to the view it came from, and only a plain query string is accepted
+    let id: i64 = sqlx::query_scalar("SELECT id FROM services WHERE external_id = 'paged/repo-01'")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    let post = |ret: &str| {
+        form(
+            &format!("/services/{id}/mode"),
+            format!("csrf={}&mode=watch&ret={ret}", e.csrf),
+            Some(e.cookie.clone()),
+        )
+    };
+    let (st, h, _) = send(&e.app, post("q%3Dpaged%252F%26page%3D2")).await;
+    assert_eq!(st, StatusCode::SEE_OTHER);
+    assert_eq!(h[header::LOCATION], "/services?q=paged%2F&page=2");
+    let (_, h, _) = send(&e.app, post("%2F%2Fevil.example")).await;
+    assert_eq!(
+        h[header::LOCATION],
+        "/services",
+        "a return value that is not a plain query string is ignored"
+    );
+}

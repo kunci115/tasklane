@@ -71,7 +71,9 @@ pub fn asset_js() -> Response {
         .into_response()
 }
 
-const ICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00e5ff"/><stop offset="0.55" stop-color="#8b5cff"/><stop offset="1" stop-color="#ff2e93"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="url(#g)"/><path d="M14 22h22M14 32h36M14 42h16" stroke="#fff" stroke-width="5" stroke-linecap="round" fill="none"/><circle cx="46" cy="22" r="4" fill="#fff"/></svg>"##;
+const ICON_SVG: &str = include_str!("../../assets/brand/app-icon.svg");
+/// The mark alone, for the sidebar and the sign-in page.
+pub const MARK_SVG: &str = r##"<svg viewBox="0 0 256 256" width="100%" height="100%" aria-hidden="true"><path d="M104 40V168a28 28 0 0 0 28 28H150" fill="none" stroke="#00e5ff" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/><path d="M44 92H70M138 92H212" fill="none" stroke="#ff2e93" stroke-width="22" stroke-linecap="round"/><circle cx="208" cy="196" r="18" fill="#ff2e93"/></svg>"##;
 
 pub fn asset_icon() -> Response {
     (
@@ -242,18 +244,19 @@ pub async fn render(
 <link rel=\"stylesheet\" href=\"/static/app.css?v={v}\"></head><body><div class=\"app\">\
 <aside class=\"side\"><div class=\"brand\"><span class=\"logo\">{logo}</span>tasklane</div><nav class=\"nav\" aria-label=\"Main\">{nav}</nav><div class=\"grow\"></div>\
 <div class=\"foot\"><form method=\"post\" action=\"{pa}\"><input type=\"hidden\" name=\"csrf\" value=\"{c}\">\
-<button class=\"btn small\" style=\"width:100%\" {confirm}>{pi} {pl}</button></form>\
+<button class=\"btn small {pb}\" style=\"width:100%\" {confirm}>{pi} {pl}</button></form>\
 <div class=\"runstate\"><span class=\"dot{pc}\"></span>{rs}</div>\
 <div class=\"row tight\" style=\"gap:.4rem\"><button class=\"btn small\" data-theme-toggle type=\"button\" title=\"Light or dark\">{moon}</button>\
 <form method=\"post\" action=\"/logout\"><input type=\"hidden\" name=\"csrf\" value=\"{c}\"><button class=\"btn small\" title=\"Sign out\">{lo}</button></form></div></div></aside>\
 <main class=\"main\">{body}</main></div><script src=\"/static/app.js?v={v}\" defer></script></body></html>",
         t = esc(title),
         v = VERSION,
-        logo = "<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\"><path d=\"M4 7h10M4 12h16M4 17h7\" stroke=\"#fff\" stroke-width=\"2.4\" stroke-linecap=\"round\" fill=\"none\"/></svg>",
+        logo = MARK_SVG,
         nav = nav,
         pa = if paused { "/resume" } else { "/pause" },
         c = csrf,
         confirm = if paused { String::new() } else { "data-confirm=\"Stop all work? Running steps finish, nothing new starts.\"".to_string() },
+        pb = if paused { "ok" } else { "warn" },
         pi = icon(if paused { "play" } else { "pause" }),
         pl = if paused { "Resume work" } else { "Pause all work" },
         pc = if paused { " paused" } else { "" },
@@ -278,10 +281,97 @@ pub fn head(title: &str, lead: &str, actions: &str) -> String {
     )
 }
 
+/// Percent-encode a value for a query string.
+pub fn url_encode(s: &str) -> String {
+    let mut o = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+            o.push(b as char);
+        } else {
+            o.push_str(&format!("%{b:02X}"));
+        }
+    }
+    o
+}
+
+/// Page numbers to show: the first, the last, and a window around the current page, with gaps as `None`.
+pub fn page_window(page: u32, pages: u32) -> Vec<Option<u32>> {
+    let mut out = Vec::new();
+    let mut last = 0;
+    for p in 1..=pages {
+        if p == 1 || p == pages || p.abs_diff(page) <= 1 {
+            if last != 0 && p > last + 1 {
+                out.push(None);
+            }
+            out.push(Some(p));
+            last = p;
+        }
+    }
+    out
+}
+
+/// Previous / numbered / next links. `base` is the path plus the query without `page`, for example
+/// `/services?mode=full`; the links add `page=N` to it.
+pub fn pager(base: &str, page: u32, pages: u32, total: i64, per: u32) -> String {
+    let sep = if base.contains('?') { '&' } else { '?' };
+    let link = |p: u32| format!("{base}{sep}page={p}");
+    let from = (page as i64 - 1) * per as i64 + 1;
+    let to = (page as i64 * per as i64).min(total);
+    let mut h = format!(
+        "<nav class=\"pager\" aria-label=\"Pages\"><span class=\"muted small\">{}</span><div class=\"pages\">",
+        if total == 0 { "Nothing to show".to_string() } else { format!("Showing {from}\u{2013}{to} of {total}") }
+    );
+    if pages > 1 {
+        if page > 1 {
+            h.push_str(&format!(
+                "<a class=\"btn small ghost\" rel=\"prev\" href=\"{}\">Previous</a>",
+                link(page - 1)
+            ));
+        }
+        for p in page_window(page, pages) {
+            match p {
+                None => h.push_str("<span class=\"gap\">\u{2026}</span>"),
+                Some(n) if n == page => h.push_str(&format!(
+                    "<span class=\"cur\" aria-current=\"page\">{n}</span>"
+                )),
+                Some(n) => h.push_str(&format!("<a class=\"num\" href=\"{}\">{n}</a>", link(n))),
+            }
+        }
+        if page < pages {
+            h.push_str(&format!(
+                "<a class=\"btn small ghost\" rel=\"next\" href=\"{}\">Next</a>",
+                link(page + 1)
+            ));
+        }
+    }
+    h.push_str("</div></nav>");
+    h
+}
+
 pub fn empty(icon_name: &str, text: &str) -> String {
     format!(
         "<div class=\"empty\">{}<div>{}</div></div>",
         icon(icon_name),
         text
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_page_window_keeps_the_ends_and_the_neighbours() {
+        assert_eq!(page_window(1, 3), vec![Some(1), Some(2), Some(3)]);
+        assert_eq!(
+            page_window(5, 10),
+            vec![Some(1), None, Some(4), Some(5), Some(6), None, Some(10)]
+        );
+        assert_eq!(page_window(2, 4), vec![Some(1), Some(2), Some(3), Some(4)]);
+    }
+
+    #[test]
+    fn query_values_are_percent_encoded() {
+        assert_eq!(url_encode("a b&c=d/é"), "a%20b%26c%3Dd%2F%C3%A9");
+    }
 }

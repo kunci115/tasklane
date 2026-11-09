@@ -128,7 +128,7 @@ pub async fn live(st: &AppState) -> String {
                 esc(&t.service),
                 what,
                 ago(t.secs),
-                if t.state == "failed" { "danger" } else { "primary" },
+                "",
                 cta
             ));
         }

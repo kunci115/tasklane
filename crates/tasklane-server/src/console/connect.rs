@@ -223,7 +223,7 @@ pub async fn github_form(State(st): State<Arc<AppState>>, headers: HeaderMap) ->
     let mut b = head(
         "Connect GitHub",
         "tasklane works through a GitHub App that only you own.",
-        "<a class=\"btn\" href=\"/connections\">Back</a>",
+        "<a class=\"btn ghost\" href=\"/connections\">Back</a>",
     );
     b.push_str(&format!(
         "<div class=\"grid g2\"><div class=\"card\"><form method=\"post\" action=\"/connect/github/start\"><input type=\"hidden\" name=\"csrf\" value=\"{}\">\
@@ -320,7 +320,7 @@ async fn page_message(
     back: &str,
 ) -> Response {
     let b = format!(
-        "{}<div class=\"card\"><p>{}</p><a class=\"btn\" href=\"{}\">Back</a></div>",
+        "{}<div class=\"card\"><p>{}</p><a class=\"btn ghost\" href=\"{}\">Back</a></div>",
         head(title, "", ""),
         esc(text),
         esc(back)
@@ -591,7 +591,7 @@ pub async fn agent_form(
     let mut b = head(
         "Connect the agent",
         "The credential tasklane's agent uses, and how it is kept away from your server.",
-        "<a class=\"btn\" href=\"/connections\">Back</a>",
+        "<a class=\"btn ghost\" href=\"/connections\">Back</a>",
     );
     b.push_str(&flash(q.msg.as_deref()));
     b.push_str(&format!(
@@ -799,7 +799,7 @@ pub async fn agent_test(
         Err(e) => (false, format!("The agent program did not answer: {e}")),
     };
     let b = format!(
-        "{}<div class=\"card\"><span class=\"pill {}\">{}</span><p style=\"margin-top:.8rem\">{}</p><div class=\"row tight\"><a class=\"btn\" href=\"/connect/agent\">Back</a><a class=\"btn\" href=\"/connections\">Connections</a></div></div>",
+        "{}<div class=\"card\"><span class=\"pill {}\">{}</span><p style=\"margin-top:.8rem\">{}</p><div class=\"row tight\"><a class=\"btn ghost\" href=\"/connect/agent\">Back</a><a class=\"btn\" href=\"/connections\">Connections</a></div></div>",
         head("Agent test", "", ""),
         if ok { "ok" } else { "bad" },
         if ok { "passed" } else { "failed" },

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256"><title>tasklane</title>
+<path d="M104 40V168a28 28 0 0 0 28 28H150" fill="none" stroke="#00e5ff" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M44 92H70M138 92H212" fill="none" stroke="#ff2e93" stroke-width="22" stroke-linecap="round"/>
+<circle cx="208" cy="196" r="18" fill="#ff2e93"/>
+</svg>

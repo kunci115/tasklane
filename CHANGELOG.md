@@ -2,6 +2,8 @@
 
 ## Unreleased (0.1.0 is planned, not tagged)
 
+- Console: live map in 3D (orbit, zoom, pan) with agents and repositories grouped on tiers; paged, searchable, filterable repository list; one colour meaning per button role (primary, approve, danger, warn, ghost); the agent can sign in with a Claude subscription token instead of an API key; new logo.
+
 A pre-release for supervised use. It will be tagged when the owner says so.
 
 Guided setup in the console: Connections page, one-click GitHub App creation (GitHub's manifest flow), agent key, isolation choice and a test button; a plain install needs only a database password, and the admin token is generated on first start. New console: live map with replay (agents glow while working), overview with live board, ticket page with stepper, timeline and colour diff, repositories with agent settings, people and roles, health and setup checklist, activity feed, light and dark, mobile layout, installable as an app.

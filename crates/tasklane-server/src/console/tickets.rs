@@ -844,7 +844,7 @@ async fn message(
     back: &str,
 ) -> Response {
     let b = format!(
-        "{}<div class=\"card\"><p>{}</p><a class=\"btn\" href=\"{}\">Back</a></div>",
+        "{}<div class=\"card\"><p>{}</p><a class=\"btn ghost\" href=\"{}\">Back</a></div>",
         head(title, "", ""),
         esc(text),
         esc(back)
