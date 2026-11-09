@@ -4,6 +4,7 @@
 //! The pages work without JavaScript; the script only adds live updates and comfort.
 
 mod dashboard;
+mod map;
 mod people;
 mod repos;
 mod system;
@@ -44,12 +45,16 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/chat", get(chat_page))
         .route("/chat/groups", post(add_group))
         .route("/chat/groups/{id}/delete", post(delete_group))
+        .route("/map", get(map::page))
+        .route("/map/data", get(map::snapshot))
+        .route("/map/replay", get(map::replay))
         .route("/activity", get(system::activity))
         .route("/health", get(system::health))
         .route("/pause", post(pause))
         .route("/resume", post(resume))
         .route("/static/app.css", get(|| async { ui::asset_css() }))
         .route("/static/app.js", get(|| async { ui::asset_js() }))
+        .route("/static/map.js", get(|| async { ui::asset_map_js() }))
         .route("/static/icon.svg", get(|| async { ui::asset_icon() }))
         .route(
             "/manifest.webmanifest",

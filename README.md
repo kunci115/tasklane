@@ -19,6 +19,8 @@ A web console ships inside the daemon (no separate frontend, no JavaScript build
 |---|---|
 | ![Overview](docs/screenshots/overview.png) | ![Approve a change](docs/screenshots/approve-a-change.png) |
 | **Overview:** what needs you, what is moving, a live pipeline board. | **A decision:** the exact diff, why a person is needed, approve or reject. |
+| ![Live map](docs/screenshots/live-map.png) | ![Replay](docs/screenshots/replay.png) |
+| **Live map:** repositories, tickets and agents as a graph. Agents glow while they work and a line shows which ticket each one has. | **Replay:** play back the last hours at up to 1200x and watch what the agents did. Idle time is skipped. |
 | ![Repositories](docs/screenshots/repositories.png) | ![Health and setup](docs/screenshots/health-and-setup.png) |
 | **Repositories:** choose how far tasklane may go in each, and give the agent instructions. | **Health and setup:** a checklist that tells a new user what to do next. |
 

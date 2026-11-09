@@ -1057,3 +1057,135 @@ async fn static_assets_and_the_app_manifest_are_served_without_signing_in() {
     let (_, _, page) = send(&e.app, get("/", Some(e.cookie.clone()))).await;
     assert!(page.contains("<meta name=\"viewport\"") && page.contains("aria-label=\"Main\""));
 }
+
+// ---- the live map ----
+
+#[tokio::test]
+async fn the_map_page_and_its_script_are_served_and_need_a_session() {
+    let Some(e) = env().await else { return };
+    assert_eq!(
+        send(&e.app, get("/map", None)).await.0,
+        StatusCode::SEE_OTHER
+    );
+    let (st, _, page) = send(&e.app, get("/map", Some(e.cookie.clone()))).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(
+        page.contains("<canvas id=\"map\"")
+            && page.contains("data-map-mode=\"replay\"")
+            && page.contains("/static/map.js")
+            && page.contains("Working now")
+    );
+    let (st, h, js) = send(&e.app, get("/static/map.js", None)).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(
+        h[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("application/javascript")
+            && js.contains("textContent")
+    );
+}
+
+#[tokio::test]
+async fn the_map_snapshot_lists_repositories_tickets_and_the_agents_that_are_busy() {
+    let Some(e) = env().await else { return };
+    let t = seed_ticket(&e, "1", "Fix <b>footer</b>", "developing", 1).await;
+    seed_ticket(&e, "2", "Old merged", "merged", 1).await;
+    sqlx::query("INSERT INTO jobs (ticket_id, kind, status, lease_owner, lease_until, fence, attempts) VALUES ($1, 'develop', 'running', 'w', now() + interval '1 minute', 1, 1)").bind(t).execute(&e.pool).await.unwrap();
+    sqlx::query("INSERT INTO jobs (ticket_id, kind, status) VALUES ($1, 'review', 'queued')")
+        .bind(t)
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO audit_events (actor, action, ticket_id, detail) VALUES ('orchestrator','ticket.developing',$1,'{}')").bind(t).execute(&e.pool).await.unwrap();
+    assert_eq!(
+        send(&e.app, get("/map/data", None)).await.0,
+        StatusCode::SEE_OTHER
+    );
+    let (st, h, body) = send(&e.app, get("/map/data", Some(e.cookie.clone()))).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(h[header::CONTENT_TYPE]
+        .to_str()
+        .unwrap()
+        .starts_with("application/json"));
+    let v: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["paused"], false);
+    assert!(v["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["name"] == "org/repo"));
+    assert_eq!(v["tickets"].as_array().unwrap().len(), 2);
+    let busy = v["busy"].as_array().unwrap();
+    assert_eq!(busy.len(), 1, "only running jobs count, not queued ones");
+    assert_eq!(
+        (busy[0]["agent"].as_str(), busy[0]["kind"].as_str()),
+        (Some("develop"), Some("develop"))
+    );
+    assert_eq!(v["recent"].as_array().unwrap().len(), 1);
+    assert!(
+        v["tickets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["title"].as_str().unwrap().contains("<b>")),
+        "JSON carries raw text; the page writes it with textContent"
+    );
+}
+
+#[tokio::test]
+async fn the_replay_returns_ordered_events_with_only_the_few_fields_it_needs_and_never_free_text() {
+    let Some(e) = env().await else { return };
+    let t = seed_ticket(&e, "1", "A ticket", "failed", 1).await;
+    sqlx::query("INSERT INTO audit_events (at, actor, action, ticket_id, detail) VALUES (now() - interval '3 hours','sync','ticket.created',$1,'{}'), (now() - interval '2 hours','orchestrator','ticket.triaged',$1,'{\"to\":\"queued\",\"level\":1,\"reasons\":[\"secret reason\"],\"questions\":[\"private question\"]}'), (now() - interval '10 minutes','orchestrator','ticket.failed',$1,'{\"reason\":\"token ghs_abcdef leaked in a message\"}'), (now() - interval '30 hours','sync','ticket.created',$1,'{}')")
+        .bind(t).execute(&e.pool).await.unwrap();
+    assert_eq!(
+        send(&e.app, get("/map/replay?hours=6", None)).await.0,
+        StatusCode::SEE_OTHER
+    );
+    let (st, _, body) = send(&e.app, get("/map/replay?hours=6", Some(e.cookie.clone()))).await;
+    assert_eq!(st, StatusCode::OK);
+    for secret in ["secret reason", "private question", "ghs_abcdef", "leaked"] {
+        assert!(
+            !body.contains(secret),
+            "{secret} must not be in the replay data"
+        );
+    }
+    let v: Value = serde_json::from_str(&body).unwrap();
+    let ev = v["events"].as_array().unwrap();
+    assert_eq!(
+        ev.len(),
+        3,
+        "the 30-hour-old event is outside a 6-hour range"
+    );
+    let times: Vec<i64> = ev.iter().map(|x| x["t"].as_i64().unwrap()).collect();
+    assert!(times.windows(2).all(|w| w[0] <= w[1]), "time order");
+    assert_eq!(ev[1]["d"]["to"], "queued");
+    assert_eq!(v["tickets"].as_array().unwrap().len(), 1);
+    assert!(v["now"].as_i64().unwrap() > 0);
+    // a huge range is clamped, a missing one defaults
+    assert_eq!(
+        send(
+            &e.app,
+            get("/map/replay?hours=999999", Some(e.cookie.clone()))
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        send(&e.app, get("/map/replay", Some(e.cookie.clone())))
+            .await
+            .0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn the_map_shows_paused_when_work_is_paused() {
+    let Some(e) = env().await else { return };
+    e.orch.set_paused(true).await.unwrap();
+    let (_, _, body) = send(&e.app, get("/map/data", Some(e.cookie.clone()))).await;
+    let v: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["paused"], true);
+}

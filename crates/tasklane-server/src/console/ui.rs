@@ -8,6 +8,7 @@ use crate::{esc, AppState};
 
 const CSS: &str = include_str!("../../assets/app.css");
 const JS: &str = include_str!("../../assets/app.js");
+const MAP_JS: &str = include_str!("../../assets/map.js");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub fn asset_css() -> Response {
@@ -17,6 +18,16 @@ pub fn asset_css() -> Response {
             (CACHE_CONTROL, "public, max-age=3600"),
         ],
         CSS,
+    )
+        .into_response()
+}
+pub fn asset_map_js() -> Response {
+    (
+        [
+            (CONTENT_TYPE, "application/javascript; charset=utf-8"),
+            (CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        MAP_JS,
     )
         .into_response()
 }
@@ -79,6 +90,7 @@ pub fn icon(name: &str) -> String {
         "shield" => "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
         "zap" => "M13 2L3 14h9l-1 8 10-12h-9z",
         "merge" => "M18 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 9v6a3 3 0 0 0 3 3h6",
+        "network" => "M12 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM5 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 22a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM12 8v4M12 12l-6 4M12 12l6 4",
         "search" => "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.35-4.35",
         "plus" => "M12 5v14M5 12h14",
         "trash" => "M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6",
@@ -184,6 +196,7 @@ pub async fn render(
     };
     let nav = [
         item("home", "/", "home", "Overview", Some(needs)),
+        item("map", "/map", "network", "Live map", None),
         item("tickets", "/tickets", "list", "Tickets", None),
         item("repos", "/services", "repo", "Repositories", None),
         item("people", "/people", "users", "People", None),

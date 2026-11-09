@@ -186,3 +186,18 @@ svg.i.sm{width:15px;height:15px}
   .kv{grid-template-columns:7rem 1fr}
 }
 @media (max-width:560px){.g4,.g3,.g2{grid-template-columns:1fr} h1{font-size:1.35rem}}
+
+/* live map */
+.mapwrap{position:relative;border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow);border:1px solid var(--line);background:#080a18}
+.mapwrap canvas{display:block;width:100%}
+.maplegend{position:absolute;left:12px;top:12px;display:flex;flex-wrap:wrap;gap:.35rem .8rem;max-width:62%;font:600 11px ui-monospace,Menlo,Consolas,monospace;color:#c9cde8;background:rgba(10,13,28,.6);padding:.45rem .7rem;border-radius:10px;backdrop-filter:blur(4px)}
+.maplegend .lg{display:inline-flex;align-items:center;gap:.35rem} .maplegend i{width:9px;height:9px;border-radius:50%;display:inline-block}
+.maptip{position:absolute;pointer-events:none;background:rgba(10,13,28,.94);color:#e8eaf6;border:1px solid #2a3052;border-radius:10px;padding:.5rem .7rem;font-size:.85rem;max-width:240px;z-index:3}
+.mapnow{position:absolute;right:12px;top:12px;width:min(300px,42%);background:rgba(10,13,28,.72);color:#e8eaf6;border:1px solid #2a3052;border-radius:12px;padding:.6rem .8rem;backdrop-filter:blur(4px)}
+.mapnow h3{color:#9aa1bd;margin-bottom:.4rem} .nowrow{display:flex;align-items:center;gap:.5rem;padding:.15rem 0;font-size:.82rem}
+.nowrow i{width:8px;height:8px;border-radius:50%;flex:0 0 auto;box-shadow:0 0 8px currentColor} .mapnow #mapnow-list{color:#9aa1bd}.nowrow strong{color:#e8eaf6;font-weight:600}.nowrow span{color:#9aa1bd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mapbar{display:flex;align-items:center;gap:.7rem;background:#0c1028;padding:.6rem .8rem;border-top:1px solid #2a3052}
+.mapbar[hidden]{display:none} .mapbar input[type=range]{flex:1;accent-color:#8b8cf5;min-width:6rem} .mapbar select{width:auto;padding:.25rem .5rem;background:#171b30;color:#e8eaf6;border-color:#2a3052}
+.mapbar .btn{background:#171b30;color:#e8eaf6;border-color:#2a3052}
+.mapbar .mono{min-width:11rem;color:#c9cde8}
+@media (max-width:760px){.mapnow{position:static;width:auto;margin:.6rem;display:block}.maplegend{max-width:90%;position:static;margin:.6rem}.mapbar{flex-wrap:wrap}}
