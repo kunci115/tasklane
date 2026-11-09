@@ -216,6 +216,10 @@ details>summary{list-style:none} details>summary::-webkit-details-marker{display
 /* live map */
 .mapwrap{position:relative;border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow);border:1px solid var(--line2);background:#05070f}
 .mapwrap canvas{display:block;width:100%}
+.mapctl{position:absolute;left:14px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:.35rem;z-index:2}
+.mapctl button{width:34px;height:34px;border-radius:10px;border:1px solid rgba(0,229,255,.28);background:rgba(6,10,20,.78);color:#c8f6ff;font:600 16px var(--mono);cursor:pointer;backdrop-filter:blur(6px);transition:border-color .15s,box-shadow .15s}
+.mapctl button:hover{border-color:#00e5ff;box-shadow:0 0 14px rgba(0,229,255,.35)} .mapctl button:focus-visible{outline:2px solid #00e5ff;outline-offset:2px}
+.mapwrap canvas{cursor:grab}
 .maplegend{position:absolute;left:14px;top:14px;display:flex;flex-wrap:wrap;gap:.4rem .9rem;max-width:62%;font:500 11px var(--mono);color:#c6cdf0;background:rgba(8,11,24,.66);border:1px solid rgba(148,163,255,.16);padding:.5rem .75rem;border-radius:11px;backdrop-filter:blur(6px)}
 .maplegend .lg{display:inline-flex;align-items:center;gap:.4rem} .maplegend i{width:9px;height:9px;border-radius:50%;display:inline-block;box-shadow:0 0 8px currentColor}
 .maptip{position:absolute;pointer-events:none;background:rgba(8,11,24,.95);color:#e9edff;border:1px solid rgba(148,163,255,.3);border-radius:11px;padding:.55rem .75rem;font-size:.84rem;max-width:250px;z-index:3;box-shadow:0 14px 34px -12px #000}
@@ -234,7 +238,7 @@ details>summary{list-style:none} details>summary::-webkit-details-marker{display
   .main{padding:1.2rem 1rem 3rem} .g4,.g3{grid-template-columns:repeat(2,minmax(0,1fr))} .g2{grid-template-columns:1fr}
   .kv{grid-template-columns:7rem 1fr}
 }
-@media (max-width:760px){.mapnow{position:static;width:auto;margin:.6rem;display:block}.maplegend{max-width:90%;position:static;margin:.6rem}.mapbar{flex-wrap:wrap}}
+@media (max-width:760px){.mapctl{top:auto;bottom:70px;transform:none;flex-direction:row;flex-wrap:wrap;left:10px}.mapnow{position:static;width:auto;margin:.6rem;display:block}.maplegend{max-width:90%;position:static;margin:.6rem}.mapbar{flex-wrap:wrap}}
 @media (max-width:560px){.g4,.g3,.g2{grid-template-columns:1fr} h1{font-size:1.4rem}}
 
 /* HUD corner brackets on the main panels */

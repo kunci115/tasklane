@@ -37,13 +37,14 @@ pub async fn page(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Respon
     );
     b.push_str(&format!(
         "<div class=\"mapwrap\"><canvas id=\"map\" aria-label=\"Map of repositories, tickets and agents\" role=\"img\"></canvas>\
-<div class=\"maplegend\" id=\"maplegend\"></div><div class=\"maptip\" id=\"maptip\" hidden></div>\
+<div class=\"maplegend\" id=\"maplegend\"></div>\
+<div class=\"mapctl\" role=\"group\" aria-label=\"View\"><button type=\"button\" data-map-cam=\"in\" aria-label=\"Zoom in\" title=\"Zoom in\">+</button><button type=\"button\" data-map-cam=\"out\" aria-label=\"Zoom out\" title=\"Zoom out\">&minus;</button><button type=\"button\" data-map-cam=\"left\" aria-label=\"Turn left\" title=\"Turn left\">&#8630;</button><button type=\"button\" data-map-cam=\"right\" aria-label=\"Turn right\" title=\"Turn right\">&#8631;</button><button type=\"button\" data-map-cam=\"top\" aria-label=\"Top or tilted view\" title=\"Top / tilted\">&#9783;</button><button type=\"button\" data-map-cam=\"reset\" aria-label=\"Reset the view\" title=\"Reset view\">&#8634;</button></div><div class=\"maptip\" id=\"maptip\" hidden></div>\
 <div class=\"mapnow\" id=\"mapnow\"><h3>Working now</h3><div id=\"mapnow-list\" class=\"small\">Nothing running.</div></div>\
 <div class=\"mapbar\" id=\"mapbar\" hidden><button class=\"btn small\" id=\"mp-play\" type=\"button\">{} <span>Play</span></button>\
 <input id=\"mp-slider\" type=\"range\" min=\"0\" max=\"1000\" value=\"0\" aria-label=\"Time\"><span id=\"mp-clock\" class=\"small muted mono\">--</span>\
 <select id=\"mp-speed\" aria-label=\"Speed\"><option value=\"1\">1x</option><option value=\"10\">10x</option><option value=\"60\" selected>60x</option><option value=\"300\">300x</option><option value=\"1200\">1200x</option></select>\
 <select id=\"mp-range\" aria-label=\"Range\"><option value=\"1\">last hour</option><option value=\"6\">last 6 hours</option><option value=\"24\" selected>last 24 hours</option><option value=\"168\">last 7 days</option></select></div></div>\
-<p class=\"hint\">Click a ticket to open it. Dots are tickets coloured by state; a line from a dot to an agent means that agent has it.</p><script src=\"/static/map.js\" defer></script>",
+<p class=\"hint\">Drag to turn the map, scroll or pinch to zoom, right-drag or Shift-drag to move it, double-click to reset. Click a ticket to open it. Dots are tickets coloured by state; a line from a dot to an agent means that agent has it. Agents sit on the upper tier, repositories on the lower one, grouped by kind.</p><script src=\"/static/map.js\" defer></script>",
         icon("play")
     ));
     render(&st, &sess.csrf, "map", "Live map", &b)
