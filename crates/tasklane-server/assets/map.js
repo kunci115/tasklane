@@ -275,6 +275,7 @@
   function chip(text, x, y, color, strong, alpha) {
     ctx.font = (strong ? "700 " : "500 ") + "12px 'JetBrains Mono', ui-monospace, Menlo, monospace";
     var w = ctx.measureText(text).width + 16, h = 22, r = 11;
+    taken.push([x - w / 2, y - h / 2, x + w / 2, y + h / 2]);
     ctx.globalAlpha = alpha === undefined ? 1 : alpha;
     ctx.fillStyle = "rgba(4,7,14,.86)"; ctx.strokeStyle = color; ctx.lineWidth = 1.2;
     ctx.beginPath(); ctx.moveTo(x - w / 2 + r, y - h / 2); ctx.arcTo(x + w / 2, y - h / 2, x + w / 2, y + h / 2, r); ctx.arcTo(x + w / 2, y + h / 2, x - w / 2, y + h / 2, r);
@@ -282,10 +283,21 @@
     ctx.fillStyle = "#e6f4ff"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(text, x, y + 1);
     ctx.globalAlpha = 1;
   }
-  function tag(text, x, y, color) {
-    ctx.font = "700 10px 'JetBrains Mono', ui-monospace, Menlo, monospace"; ctx.fillStyle = color; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.globalAlpha = .9;
-    if ("letterSpacing" in ctx) { ctx.letterSpacing = "2px"; ctx.fillText(text, x, y); ctx.letterSpacing = "0px"; } else ctx.fillText(text, x, y);
-    ctx.globalAlpha = 1;
+  // Class names are drawn after everything else and only where nothing is in the way, so they
+  // never sit half behind a chip or a node. `taken` holds the boxes the frame has used.
+  var taken = [], pendingTags = [];
+  function tag(text, x, y, color) { pendingTags.push([text, x, y, color]); }
+  function drawTags() {
+    ctx.font = "700 10px 'JetBrains Mono', ui-monospace, Menlo, monospace"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    pendingTags.forEach(function (t) {
+      var w = t[0].length * 8.2 + 8, box = [t[1] - w / 2, t[2] - 8, t[1] + w / 2, t[2] + 8];
+      var clash = taken.some(function (b) { return box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1]; });
+      if (clash) return;
+      taken.push(box);
+      ctx.fillStyle = t[3]; ctx.globalAlpha = .9;
+      if ("letterSpacing" in ctx) { ctx.letterSpacing = "2px"; ctx.fillText(t[0], t[1], t[2]); ctx.letterSpacing = "0px"; } else ctx.fillText(t[0], t[1], t[2]);
+      ctx.globalAlpha = 1;
+    });
   }
   function glow(x, y, r, color, a) {
     var g = ctx.createRadialGradient(x, y, 0, x, y, r); g.addColorStop(0, color + Math.round(Math.max(0, Math.min(1, a)) * 255).toString(16).padStart(2, "0")); g.addColorStop(1, color + "00");
@@ -337,6 +349,7 @@
       var p1 = proj(gi, -G, FLOOR), p2 = proj(gi, G, FLOOR); ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
       p1 = proj(-G, gi, FLOOR); p2 = proj(G, gi, FLOOR); ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
     }
+    taken.length = 0; pendingTags.length = 0;
     // the two tiers: a faint plate, its rim, and an arc and a name for each class
     [["agents", "AGENTS", "#00e5ff"], ["repos", "REPOSITORIES", "#39ffb6"]].forEach(function (td) {
       var T = tiers[td[0]], c = proj(0, 0, T.z);
@@ -418,6 +431,7 @@
         var P = r.P, u = P.s, F = fog(P), col = r.mode === "full" ? "#39ffb6" : (r.mode === "triage" ? "#00e5ff" : "#56677f"), hot = hover && hover.o === r;
         ctx.globalAlpha = F;
         ctx.globalCompositeOperation = "lighter"; glow(P.x, P.y, (hot ? 58 : 44) * u, col, hot ? .4 : .26); ctx.globalCompositeOperation = "source-over";
+        taken.push([P.x - 24 * u, P.y - 24 * u, P.x + 24 * u, P.y + 24 * u]);
         ctx.fillStyle = "#050812"; ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(P.x, P.y, 16 * u, 0, 7); ctx.fill(); ctx.stroke();
         var frac = Math.min(1, (r.open || 0) / 10);
         if (frac > 0) { ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.lineCap = "round"; ctx.beginPath(); ctx.arc(P.x, P.y, 23 * u, -Math.PI / 2, -Math.PI / 2 + frac * 6.283); ctx.stroke(); ctx.lineCap = "butt"; }
@@ -441,6 +455,7 @@
           if (sw) { sw.addColorStop(0, def.color + "00"); sw.addColorStop(.12, def.color + "66"); sw.addColorStop(.13, def.color + "00"); ctx.fillStyle = sw; ctx.beginPath(); ctx.arc(0, 0, 34 * u, 0, 7); ctx.fill(); }
           ctx.restore();
         }
+        taken.push([P.x - 30 * u, P.y - 30 * u, P.x + 30 * u, P.y + 30 * u]);
         ctx.fillStyle = "#050812"; ctx.strokeStyle = def.color; ctx.lineWidth = live ? 3 : 1.8; ctx.beginPath(); ctx.arc(P.x, P.y, 22 * u, 0, 7); ctx.fill(); ctx.stroke();
         ctx.fillStyle = def.color; ctx.font = "700 " + Math.max(10, 16 * u) + "px 'JetBrains Mono', monospace"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(def.letter, P.x, P.y + 1);
         ctx.globalAlpha = 1;
@@ -461,6 +476,7 @@
       } });
     });
     items.sort(function (p, q) { return p.c - q.c; }).forEach(function (it) { it.f(); });
+    drawTags();
 
     // ripples spread over the ground; sparks fly in space
     ctx.globalCompositeOperation = "lighter";

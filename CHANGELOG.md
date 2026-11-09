@@ -2,6 +2,7 @@
 
 ## Unreleased (0.1.0 is planned, not tagged)
 
+- Live map: class names are drawn last and only where no chip or node is in the way, so they no longer sit half behind a label.
 - The Tickets list is paged (25 per page) with the search kept across pages; a `%` or `_` in the search is taken literally.
 - A prompt-injection test set runs against every agent role: crafted ticket, comment, diff and question text cannot close its block or change the tool list.
 - Security fix, found in a real run: pressing Retry on a failed ticket could send a pull request straight to merge even though the reviewer had asked for changes. The reviewed head is now recorded, and a retry merges only a head a reviewer approved; anything else goes back through CI and review.
