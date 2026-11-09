@@ -96,6 +96,9 @@ pub struct GithubConn {
     pub app_id: String,
     pub slug: String,
     pub owner: String,
+    /// `Organization` or `User`, as GitHub reports it; decides which settings page lists the installations.
+    #[serde(default)]
+    pub owner_type: String,
     pub html_url: String,
     pub installation_id: Option<String>,
 }
@@ -308,6 +311,7 @@ mod tests {
             app_id: "42".into(),
             slug: "x".into(),
             owner: "o".into(),
+            owner_type: String::new(),
             html_url: String::new(),
             installation_id: Some("7".into()),
         };

@@ -418,6 +418,7 @@ pub async fn github_callback(
         app_id: field("app_id"),
         slug: field("slug"),
         owner: field("owner"),
+        owner_type: field("owner_type"),
         html_url: field("html_url"),
         installation_id: None,
     };
@@ -445,6 +446,16 @@ pub async fn github_callback(
     redirect("/connect/github/install")
 }
 
+/// The App is private, so GitHub's public `/apps/<slug>/installations/new` page answers 404.
+/// Its owner installs it from the settings page that lists the App's installations.
+fn install_url(gh: &GithubConn) -> String {
+    if gh.owner_type == "Organization" {
+        format!("https://github.com/organizations/{}/settings/apps/{}/installations", gh.owner, gh.slug)
+    } else {
+        format!("https://github.com/settings/apps/{}/installations", gh.slug)
+    }
+}
+
 pub async fn github_install(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     let sess = match guard(&st, &headers).await {
         Ok(s) => s,
@@ -455,11 +466,11 @@ pub async fn github_install(State(st): State<Arc<AppState>>, headers: HeaderMap)
     };
     let b = format!(
         "{}<div class=\"card\"><h2>Install the App</h2><p>The App <strong>{}</strong> exists. Now choose where it works. <strong>Select only the repositories</strong> tasklane should handle, not all repositories.</p>\
-<a class=\"btn primary\" href=\"https://github.com/apps/{}/installations/new\">{} Install on GitHub</a>\
+<a class=\"btn primary\" href=\"{}\">{} Install on GitHub</a>\
 <p class=\"hint\">After installing, GitHub brings you back here. If it does not, open <a href=\"/connections\">Connections</a>; tasklane finds the installation by itself.</p></div>",
         head("Almost there", "One more step on GitHub.", ""),
         esc(&gh.slug),
-        esc(&gh.slug),
+        esc(&install_url(&gh)),
         icon("external")
     );
     render(&st, &sess.csrf, "connections", "Install the App", &b)
@@ -731,6 +742,14 @@ pub async fn agent_test(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_install_link_is_the_owners_settings_page_not_the_404_public_one() {
+        let mut gh = GithubConn { app_id: "1".into(), slug: "my-app".into(), owner: "acme".into(), owner_type: "Organization".into(), html_url: String::new(), installation_id: None };
+        assert_eq!(install_url(&gh), "https://github.com/organizations/acme/settings/apps/my-app/installations");
+        gh.owner_type = "User".into();
+        assert_eq!(install_url(&gh), "https://github.com/settings/apps/my-app/installations");
+    }
 
     #[test]
     fn the_manifest_asks_for_exactly_the_permissions_tasklane_needs_and_no_workflow_access() {

@@ -374,7 +374,8 @@ def op_app_manifest_convert(params):
     if not d.get("id") or not d.get("pem"):
         raise permanent("GitHub did not return the App credentials (the code may have been used already)")
     return {"app_id": str(d["id"]), "slug": d.get("slug", ""), "name": d.get("name", ""),
-            "owner": (d.get("owner") or {}).get("login", ""), "html_url": d.get("html_url", ""),
+            "owner": (d.get("owner") or {}).get("login", ""),
+            "owner_type": (d.get("owner") or {}).get("type", ""), "html_url": d.get("html_url", ""),
             "client_id": d.get("client_id", ""), "pem": d["pem"],
             "webhook_secret": d.get("webhook_secret") or ""}
 
