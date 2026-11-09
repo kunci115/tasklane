@@ -38,6 +38,7 @@ Then tasklane merges **only the reviewed commit** into the development branch. P
 | The reviewer agent answers "escalate" | Waits for a person | team approver or owner |
 | The repository is in `triage` mode, or its `.tasklane.yml` says `always_ask: true` | Every ticket waits | team approver or owner |
 | The ticket text changes after approval and now matches a risk rule | Scored again; asks again if needed | as above |
+| A collaborator comments or asks for changes on the pull request | The developer works on it again (their words are given as feedback), then the change is re-scored, goes through CI and review again, and asks a person if it now touches a protected path | as above |
 
 Level rules are a **floor**. The model may raise a level and never lowers it. Matching is a case-insensitive text search, so it errs on the side of asking.
 

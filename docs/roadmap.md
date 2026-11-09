@@ -14,6 +14,7 @@ Each part of the architecture ([docs/design](design) and the C4 diagrams in [doc
 | Admission control (parallel development, CI queue depth), retry and token budgets, stale tickets | Built |
 | Console: setup, approvals, tickets, repositories, live 3D map, replay, health | Built |
 | Chat bridge (Telegram): `/ask`, `/task`, approvals by button, outcomes announced to the reporter's group | Built; tested against a fake API only |
+| Changes asked for on the pull request by collaborators send the ticket back to the developer | Built; tested against a fake source only |
 | Duplicate proposals (word overlap, optional model suggestion; a person decides) | Built |
 | Per-repository memory (notes written by people) and `.tasklane.yml` that can only tighten | Built |
 | Two installs on one repository (ownership claim) | Built; run for real |

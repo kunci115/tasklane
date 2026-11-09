@@ -837,6 +837,38 @@ def op_get_checks(params):
     return {"head_sha": sha, "state": state, "checks": checks}
 
 
+def op_list_pr_feedback(params):
+    """What people with a real relationship to the repository said on a pull request since `since`
+    (an ISO time): review comments on lines, reviews that ask for changes or comment, and ordinary
+    comments. Strangers and tasklane's own comments are left out: only trusted people can steer."""
+    svc, pr = p_service(params), p_num(params, "pr")
+    since = params.get("since") or ""
+    if since and not isinstance(since, str):
+        raise permanent("since must be an ISO time")
+    items = []
+
+    def take(author_assoc_user, body, at, kind):
+        user = author_assoc_user.get("user") or {}
+        trusted = author_assoc_user.get("author_association") in TRUSTED_ASSOCIATIONS
+        if not trusted or is_own_comment(author_assoc_user) or user.get("type") == "Bot":
+            return
+        body = (body or "").strip()
+        if body and at and at > since:
+            items.append({"author": user.get("login", ""), "body": body[:2000], "at": at, "kind": kind})
+
+    for c in app_paginate(f"/repos/{svc}/pulls/{pr}/comments?per_page=100", key=None) or []:
+        take(c, c.get("body"), c.get("created_at", ""), "line")
+    for c in app_paginate(f"/repos/{svc}/issues/{pr}/comments?per_page=100", key=None) or []:
+        take(c, c.get("body"), c.get("created_at", ""), "comment")
+    for r in app_paginate(f"/repos/{svc}/pulls/{pr}/reviews?per_page=100", key=None) or []:
+        if r.get("state") in ("CHANGES_REQUESTED", "COMMENTED"):
+            take(r, r.get("body"), r.get("submitted_at", ""), "review")
+    items.sort(key=lambda i: i["at"])
+    items = items[-20:]
+    newest = items[-1]["at"] if items else since
+    return {"items": items, "cursor": newest}
+
+
 def op_merge_pr(params):
     svc, pr, tok = p_service(params), p_num(params, "pr"), need_token(params)
     expected = p_str(params, "expected_head_sha")
@@ -933,7 +965,7 @@ OPS = {
     "set_labels": op_set_labels, "detect_facts": op_detect_facts, "read_overrides": op_read_overrides,
     "repo_url": op_repo_url, "mint_run_token": op_mint_run_token,
     "open_pr": op_open_pr, "get_checks": op_get_checks,
-    "merge_pr": op_merge_pr, "verify_webhook": op_verify_webhook,
+    "merge_pr": op_merge_pr, "list_pr_feedback": op_list_pr_feedback, "verify_webhook": op_verify_webhook,
     "app_manifest_convert": op_app_manifest_convert, "list_installations": op_list_installations,
     "claim_repo": op_claim_repo, "release_repo": op_release_repo, "takeover_repo": op_takeover_repo,
 }

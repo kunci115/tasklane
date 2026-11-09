@@ -14,6 +14,7 @@ pub mod approval;
 mod ask;
 mod ctx;
 mod duplicates;
+mod feedback;
 pub mod host;
 pub mod memory;
 mod ownership;

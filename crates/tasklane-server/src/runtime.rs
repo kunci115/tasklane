@@ -80,6 +80,12 @@ pub fn spawn_reaper(
                 Err(e) => eprintln!("reaper: {e}"),
             }
             tick += 1;
+            if tick % 4 == 1 {
+                // every two minutes: changes people asked for on pull requests
+                if let Err(e) = orch.sync_pr_feedback().await {
+                    eprintln!("pr feedback: {e}");
+                }
+            }
             if tick % 120 == 1 {
                 // hourly housekeeping: leftover checkouts and old bookkeeping rows
                 orch.sweep_workspaces().await;

@@ -141,6 +141,9 @@ const EDGES: &[(State, State, &[Actor])] = &[
     (Queued, Rescoring, &[Orchestrator]),
     (Queued, MergeReady, &[Orchestrator]),
     (MergeReady, CiRunning, &[Runner]),
+    // A person with a say asked for changes on the pull request: the developer works on it again.
+    (PrOpen, Developing, &[Orchestrator]),
+    (MergeReady, Developing, &[Orchestrator]),
     (Failed, Queued, &[Approver]),
     (Failed, ClosedRejected, &[Approver]),
 ];

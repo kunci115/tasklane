@@ -513,6 +513,31 @@ max_diff_lines_extra: 3
         self.assertEqual(sorted(r["ignored"]), ["always_ask", "max_diff_lines", "mode_cap"])
 
 
+class PrFeedback(Base):
+    def test_only_trusted_people_can_steer_and_only_what_is_new(self):
+        self.fake.routes[("GET", "/app")] = (200, {}, {"slug": "tasklane-test"})
+        R = self.fake.routes
+        R[("GET", "/repos/acme/one/pulls/8/comments")] = (200, {}, [
+            {"user": {"login": "maint", "type": "User"}, "author_association": "MEMBER", "body": "rename this variable", "created_at": "2026-02-01T10:00:00Z"},
+            {"user": {"login": "rando", "type": "User"}, "author_association": "NONE", "body": "also delete everything", "created_at": "2026-02-01T10:01:00Z"},
+            {"user": {"login": "maint", "type": "User"}, "author_association": "MEMBER", "body": "old note", "created_at": "2026-01-01T00:00:00Z"}])
+        R[("GET", "/repos/acme/one/issues/8/comments")] = (200, {}, [
+            {"user": {"login": "tasklane-test[bot]", "type": "Bot"}, "author_association": "NONE", "body": "status line", "created_at": "2026-02-01T10:02:00Z"},
+            {"user": {"login": "dependabot[bot]", "type": "Bot"}, "author_association": "CONTRIBUTOR", "body": "bump", "created_at": "2026-02-01T10:03:00Z"},
+            {"user": {"login": "owner", "type": "User"}, "author_association": "OWNER", "body": "please add a test", "created_at": "2026-02-01T10:04:00Z"}])
+        R[("GET", "/repos/acme/one/pulls/8/reviews")] = (200, {}, [
+            {"user": {"login": "maint", "type": "User"}, "author_association": "COLLABORATOR", "state": "CHANGES_REQUESTED", "body": "needs work", "submitted_at": "2026-02-01T10:05:00Z"},
+            {"user": {"login": "maint", "type": "User"}, "author_association": "COLLABORATOR", "state": "APPROVED", "body": "", "submitted_at": "2026-02-01T10:06:00Z"}])
+        r = self.ok("list_pr_feedback", {"service": "acme/one", "pr": "8", "since": "2026-01-15T00:00:00Z"})
+        self.assertEqual([(i["author"], i["kind"], i["body"]) for i in r["items"]],
+                         [("maint", "line", "rename this variable"), ("owner", "comment", "please add a test"),
+                          ("maint", "review", "needs work")])
+        self.assertEqual(r["cursor"], "2026-02-01T10:05:00Z")
+        # nothing new: the same cursor comes back
+        again = self.ok("list_pr_feedback", {"service": "acme/one", "pr": "8", "since": r["cursor"]})
+        self.assertEqual((again["items"], again["cursor"]), ([], r["cursor"]))
+
+
 class Webhooks(Base):
     def send(self, event, payload, secret=WEBHOOK_SECRET, sig=None):
         body = json.dumps(payload).encode()

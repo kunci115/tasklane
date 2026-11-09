@@ -996,3 +996,66 @@ async fn the_model_may_propose_a_duplicate_only_when_asked_to_and_only_from_the_
         "a ticket the model invented is never proposed"
     );
 }
+
+#[tokio::test]
+async fn changes_asked_for_on_the_pull_request_send_the_ticket_back_to_the_developer_once() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    let t = ticket(&w, "T-plain").await;
+    sqlx::query("UPDATE tickets SET state = 'ci_running', pr_ref = '7', branch = 'tasklane/1' WHERE id = $1")
+        .bind(t)
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM jobs")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    w.queue.enqueue(t, "ci", 0, 0.0).await.unwrap();
+    // nothing said yet
+    assert_eq!(w.orch.sync_pr_feedback().await.unwrap(), 0);
+    assert_eq!(state(&w.pool, t).await, "ci_running");
+    std::fs::write(
+        w.state_dir().join("feedback.json"),
+        r#"{"items": [{"author": "maint", "kind": "review", "body": "please rename the helper", "at": "2999-01-01T00:00:00Z"}]}"#,
+    )
+    .unwrap();
+    assert_eq!(w.orch.sync_pr_feedback().await.unwrap(), 1);
+    assert_eq!(state(&w.pool, t).await, "developing");
+    let why: String = sqlx::query_scalar("SELECT last_error FROM tickets WHERE id = $1")
+        .bind(t)
+        .fetch_one(&w.pool)
+        .await
+        .unwrap();
+    assert!(
+        why.contains("please rename the helper") && why.contains("maint"),
+        "{why}"
+    );
+    assert_eq!(
+        count(
+            &w.pool,
+            "SELECT count(*) FROM jobs WHERE kind = 'ci' AND status = 'queued'"
+        )
+        .await,
+        0,
+        "waiting work for the old commit is dropped"
+    );
+    assert_eq!(
+        count(
+            &w.pool,
+            "SELECT count(*) FROM jobs WHERE kind = 'develop' AND status = 'queued'"
+        )
+        .await,
+        1
+    );
+    // the same comment is never acted on twice
+    sqlx::query("UPDATE tickets SET state = 'pr_open' WHERE id = $1")
+        .bind(t)
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    assert_eq!(w.orch.sync_pr_feedback().await.unwrap(), 0);
+    assert_eq!(state(&w.pool, t).await, "pr_open");
+}

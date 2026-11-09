@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Pull request feedback: a comment or a review asking for changes from a collaborator (never a stranger, never tasklane itself) sends the ticket back to the developer with their words, then through re-score, CI and review again. Checked every two minutes while a pull request is on its way.
 - Optional model-assisted duplicate suggestions (`TASKLANE_DUPLICATE_MODEL=1`): the model can only name one of the 30 most recent tickets, and a person still decides.
 - `docs/plugins.md`: the plug-in protocol in one page, and `plugins/_template`, a tested ticket-source plug-in (tickets in a JSON file) to copy.
 - `tasklane doctor` checks an installation (database, migrations, git, data directory, plug-ins, Docker, public address) and says what to fix.

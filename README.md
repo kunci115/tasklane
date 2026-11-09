@@ -139,6 +139,7 @@ The agent can run **unsandboxed** only if you explicitly opt in; the default is 
 | Agent engine | Claude, through the Claude Code CLI, with an API key or a subscription token |
 | Isolation | Read-only agents for triage and review; developer in a git worktree, optionally inside a locked-down Docker container whose only way out is an allowlist proxy to the model API |
 | Roles | Owner and team approver, with different levels they may approve |
+| Review loop | Collaborators' comments and change requests on the pull request are given back to the developer agent; the new change is re-scored, tested and reviewed again |
 | Chat | Telegram bot for questions and `/task`, approvals by button, and the outcome of each ticket reported back to the group that raised it |
 | Console | Setup, approvals, tickets (search and paging), repositories, people, activity, live map, replay, health |
 | Per-repository control | Mode (`watch`, `triage`, `full`), protected paths, agent instructions, notes for the agents, and a `.tasklane.yml` that can only tighten the rules |

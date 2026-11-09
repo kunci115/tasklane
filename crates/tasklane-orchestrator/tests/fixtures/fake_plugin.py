@@ -154,6 +154,11 @@ def handle(op, params):
         return {"installations": read_json("installations.json", []), "owner": "someone", "owner_type": "User"}
     if op == "check":
         return read_json("check.json", {"ok": True, "answer": "ok", "secs": 1.2, "sandbox": "none"})
+    if op == "list_pr_feedback":
+        fb = read_json("feedback.json", {"items": []})
+        since = params.get("since") or ""
+        items = [i for i in fb.get("items", []) if i["at"] > since]
+        return {"items": items, "cursor": items[-1]["at"] if items else since}
     if op == "read_overrides":
         return {"overrides": read_json("overrides.json", {}), "found": True}
     if op == "get_item":
