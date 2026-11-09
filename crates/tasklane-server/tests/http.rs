@@ -344,7 +344,7 @@ async fn the_console_needs_the_admin_token() {
     assert_eq!(st, StatusCode::SEE_OTHER);
     let cookie = h[header::SET_COOKIE].to_str().unwrap();
     assert!(
-        cookie.contains("HttpOnly") && cookie.contains("SameSite=Strict"),
+        cookie.contains("HttpOnly") && cookie.contains("SameSite=Lax"),
         "{cookie}"
     );
     assert_eq!(

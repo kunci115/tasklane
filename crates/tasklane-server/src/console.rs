@@ -1,6 +1,6 @@
 //! The admin console: server-rendered pages with a little progressive JavaScript.
 //! Everything that comes from a ticket is escaped. Every state-changing form carries a
-//! per-session CSRF token, and the session cookie is HttpOnly and SameSite=Strict.
+//! per-session CSRF token, and the session cookie is HttpOnly and SameSite=Lax (Lax, not Strict, so the browser still sends it when GitHub redirects back; every state-changing request is a POST that also needs the CSRF token).
 //! The pages work without JavaScript; the script only adds live updates and comfort.
 
 mod connect;
@@ -208,7 +208,7 @@ async fn login(State(st): State<Arc<AppState>>, Form(f): Form<LoginIn>) -> Respo
         [
             (
                 SET_COOKIE,
-                format!("tl={id}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800{secure}"),
+                format!("tl={id}; HttpOnly; SameSite=Lax; Path=/; Max-Age=28800{secure}"),
             ),
             (LOCATION, "/".to_string()),
         ],
@@ -243,7 +243,7 @@ async fn logout(
         [
             (
                 SET_COOKIE,
-                "tl=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0".to_string(),
+                "tl=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0".to_string(),
             ),
             (LOCATION, "/login".to_string()),
         ],
