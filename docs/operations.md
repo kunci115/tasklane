@@ -9,6 +9,23 @@ tasklane is a single daemon plus Postgres. It reads tickets from a ticket source
 - An Anthropic API key (or a Claude Code OAuth token) for the agent.
 - A TLS reverse proxy in front of port 8080 if the console or the webhook is reachable from outside.
 
+## Letting the agent see what it builds (Obscura)
+
+The developer agent can look at the app it is changing, using [Obscura](https://github.com/h4ckf0r0day/obscura), a small headless browser written in Rust (Apache-2.0). It is **off by default** and works only in the Docker sandbox:
+
+1. **Build the sandbox image with Obscura.** Download the release archive yourself, check it, and give the build its SHA-256 (the build fails without it, so nothing unreviewed is installed):
+
+   ```bash
+   curl -LO https://github.com/h4ckf0r0day/obscura/releases/latest/download/obscura-x86_64-linux.tar.gz
+   sha256sum obscura-x86_64-linux.tar.gz
+   docker build -f Dockerfile.sandbox -t tasklane-sandbox \
+     --build-arg INSTALL_OBSCURA=1 --build-arg OBSCURA_SHA256=<that checksum> .
+   ```
+2. **Tell tasklane how to start the app.** On **Repositories**, open a repository's settings and fill **Preview: command** (for example `python3 -m http.server 3000`) and **Preview: port**. You set these, never the repository, because the command runs inside the sandbox.
+3. The sandbox starts that command in the background before the agent, waits for the port, and lets the agent run exactly one extra command, `tl-shot http://127.0.0.1:<port>/<path> <name>`. It writes a PNG that the agent opens with its Read tool. `tl-shot` accepts only `http://127.0.0.1`, `http://localhost` and `http://[::1]` addresses, so it cannot be used to reach anything else, and the sandbox has no route to the internet anyway.
+
+Limits to know about: the app must start inside the sandbox, which has no internet (unless you widened `EGRESS_ALLOW`), so it works for apps that are static or already carry their dependencies; Obscura draws pages with its own engine, and its documentation warns that some CSS, media and font rendering can differ from Chrome; the prebuilt Obscura release must include the rendering feature for screenshots. **Verified here:** the settings, the argument handling, the address checks and the start-up order, all tested with a stand-in for Obscura. **Not verified here:** the real Obscura binary (it was not run in this environment), so do one check before relying on it: `docker run --rm --entrypoint sh tasklane-sandbox -c "node -e \"require('http').createServer((q,r)=>r.end('<h1>hello</h1>')).listen(3000)\" & sleep 2; tl-shot http://127.0.0.1:3000/ check && ls -l /tmp/shots"` (the sandbox image has Node, so a one-line Node server stands in for your app).
+
 ## Rules a repository can set for itself
 
 A repository may carry a `.tasklane.yml` on its default branch. It can only make tasklane **stricter** in that repository, so a contributor cannot loosen anything by editing it:

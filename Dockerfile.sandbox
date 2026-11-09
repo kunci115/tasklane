@@ -9,4 +9,22 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
  && useradd --system --create-home --uid 10001 agent
+# Let the agent look at the app it builds (optional). tl-agent starts the repository's preview server
+# before the agent; tl-shot takes a screenshot of a local address with Obscura. Obscura is only installed
+# when you ask for it AND give the checksum of the release archive you reviewed:
+#   docker build -f Dockerfile.sandbox -t tasklane-sandbox \
+#     --build-arg INSTALL_OBSCURA=1 --build-arg OBSCURA_SHA256=<sha256 of the .tar.gz> .
+ARG INSTALL_OBSCURA=0
+ARG OBSCURA_SHA256=
+ARG OBSCURA_URL=https://github.com/h4ckf0r0day/obscura/releases/latest/download/obscura-x86_64-linux.tar.gz
+COPY docker/preview/tl-shot docker/preview/tl-agent /usr/local/bin/
+RUN chmod 0755 /usr/local/bin/tl-shot /usr/local/bin/tl-agent \
+ && if [ "$INSTALL_OBSCURA" = "1" ]; then \
+      [ -n "$OBSCURA_SHA256" ] || { echo "INSTALL_OBSCURA=1 needs --build-arg OBSCURA_SHA256=<checksum>" >&2; exit 1; }; \
+      apt-get update && apt-get install -y --no-install-recommends curl \
+      && curl -fsSL -o /tmp/obscura.tgz "$OBSCURA_URL" \
+      && echo "$OBSCURA_SHA256  /tmp/obscura.tgz" | sha256sum -c - \
+      && tar xzf /tmp/obscura.tgz -C /usr/local/bin obscura && chmod 0755 /usr/local/bin/obscura \
+      && rm -f /tmp/obscura.tgz && apt-get purge -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*; \
+    fi
 USER agent

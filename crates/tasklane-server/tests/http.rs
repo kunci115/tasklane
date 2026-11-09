@@ -2082,3 +2082,62 @@ async fn drop_dead_test_databases(admin: &mut sqlx::PgConnection) {
         }
     }
 }
+
+#[tokio::test]
+async fn the_preview_settings_are_saved_together_or_not_at_all() {
+    let Some(e) = env().await else { return };
+    let svc: i64 = sqlx::query_scalar("SELECT id FROM services WHERE external_id = 'org/repo'")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    let path = format!("/services/{svc}/profile");
+    let post = |body: String| {
+        let (app, cookie) = (e.app.clone(), e.cookie.clone());
+        let path = path.clone();
+        async move { send(&app, form(&path, body, Some(cookie))).await.0 }
+    };
+    let base = format!("csrf={}&system=&test_command=", e.csrf);
+    // a command without a port, a port below 1024, and a non-number are refused
+    for bad in [
+        "&preview_command=python3+-m+http.server+3000&preview_port=",
+        "&preview_command=&preview_port=3000",
+        "&preview_command=x&preview_port=80",
+        "&preview_command=x&preview_port=abc",
+    ] {
+        assert_eq!(
+            post(format!("{base}{bad}")).await,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        post(format!(
+            "{base}&preview_command=python3+-m+http.server+3000&preview_port=3000"
+        ))
+        .await,
+        StatusCode::SEE_OTHER
+    );
+    let p: serde_json::Value =
+        sqlx::query_scalar("SELECT agent_profile FROM services WHERE id = $1")
+            .bind(svc)
+            .fetch_one(&e.pool)
+            .await
+            .unwrap();
+    assert_eq!(p["preview_command"], "python3 -m http.server 3000");
+    assert_eq!(p["preview_port"], 3000);
+    let (_, _, page) = send(&e.app, get("/services", Some(e.cookie.clone()))).await;
+    assert!(page.contains("python3 -m http.server 3000"), "{page}");
+    // both empty turns it off
+    assert_eq!(
+        post(format!("{base}&preview_command=&preview_port=")).await,
+        StatusCode::SEE_OTHER
+    );
+    let p: serde_json::Value =
+        sqlx::query_scalar("SELECT agent_profile FROM services WHERE id = $1")
+            .bind(svc)
+            .fetch_one(&e.pool)
+            .await
+            .unwrap();
+    assert_eq!(p["preview_command"], "");
+    assert!(p["preview_port"].is_null());
+}

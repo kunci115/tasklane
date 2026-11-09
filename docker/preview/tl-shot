@@ -1,0 +1,22 @@
+#!/bin/sh
+# tl-shot URL [NAME]: take a screenshot of what the agent built, with Obscura, so the agent can look at it.
+#
+# Only this machine's own addresses (the preview server inside the sandbox) are accepted, so the
+# agent cannot use it to reach any other host. The picture is written to /tmp/shots/NAME.png;
+# open it with the Read tool.
+set -eu
+url="${1:-}"
+name="${2:-screen}"
+case "$name" in
+  *[!A-Za-z0-9_-]*|"") echo "tl-shot: the name may only use letters, digits, - and _" >&2; exit 2 ;;
+esac
+if ! printf '%s' "$url" | grep -Eq '^http://(127\.0\.0\.1|localhost|\[::1\])(:[0-9]{1,5})?(/[A-Za-z0-9._~/?=&%#:+-]*)?$'; then
+  echo "tl-shot: only http://127.0.0.1 or http://localhost addresses are allowed" >&2
+  exit 2
+fi
+mkdir -p /tmp/shots
+out="/tmp/shots/$name.png"
+# The sandbox has no route to the internet, and Obscura refuses private addresses by default, so
+# the flag below only opens the loopback address the check above has already restricted.
+OBSCURA_ALLOW_PRIVATE_NETWORK=1 "${TASKLANE_OBSCURA_BIN:-obscura}" fetch "$url" --screenshot "$out" >/dev/null
+echo "$out"

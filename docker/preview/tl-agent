@@ -1,0 +1,14 @@
+#!/bin/bash
+# Entrypoint of the agent sandbox when a repository has a preview command: start the app in the
+# background, wait for its port, then run the agent (the rest of the arguments).
+# TASKLANE_PREVIEW_CMD and TASKLANE_PREVIEW_PORT come from the operator's repository settings.
+set -u
+if [ -n "${TASKLANE_PREVIEW_CMD:-}" ] && [ -n "${TASKLANE_PREVIEW_PORT:-}" ]; then
+  mkdir -p /tmp/preview
+  ( bash -c "$TASKLANE_PREVIEW_CMD" >/tmp/preview/server.log 2>&1 & )
+  for _ in $(seq 1 60); do
+    if (exec 3<>"/dev/tcp/127.0.0.1/${TASKLANE_PREVIEW_PORT}") 2>/dev/null; then break; fi
+    sleep 1
+  done
+fi
+exec "$@"

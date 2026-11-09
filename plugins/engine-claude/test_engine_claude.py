@@ -320,6 +320,35 @@ class Docker(unittest.TestCase):
             with self.assertRaises(m.EngineError, msg=bad):
                 m.docker_command("dev", ["-p"], "/srv/ws", "n", dict(self.ENV, TASKLANE_SANDBOX_PROXY=bad))
 
+    def test_a_preview_starts_the_app_first_and_lets_the_agent_look_at_it(self):
+        m = self.load()
+        profile = {"preview_command": "python3 -m http.server 3000", "preview_port": 3000}
+        flags = m.claude_args("dev", {"profile": profile}, "sys")
+        self.assertIn("Bash(tl-shot:*)", flag(flags, "--allowedTools"))
+        self.assertEqual(flag(flags, "--add-dir"), "/tmp/shots")
+        self.assertIn("http://127.0.0.1:3000", m.build_system("dev", profile))
+        argv = m.docker_command("dev", flags, "/srv/ws", "n", self.ENV, preview=m.preview_of(profile))
+        j = " ".join(argv)
+        self.assertIn("-e TASKLANE_PREVIEW_CMD=python3 -m http.server 3000", j)
+        self.assertIn("-e TASKLANE_PREVIEW_PORT=3000", j)
+        i = argv.index("--entrypoint")
+        self.assertEqual(argv[i + 1], "tl-agent")
+        self.assertEqual(argv[argv.index("img:1") + 1], "claude")
+        # other roles and repositories without a preview are unchanged
+        plain = m.docker_command("dev", flags, "/srv/ws", "n", self.ENV)
+        self.assertEqual(plain[plain.index("--entrypoint") + 1], "claude")
+        self.assertNotIn("tl-shot", flag(m.claude_args("reviewer", {"profile": profile}, "s"), "--allowedTools"))
+        self.assertNotIn("TASKLANE_PREVIEW", " ".join(m.docker_command("reviewer", m.claude_args("reviewer", {"profile": profile, "read_only": True}, "s"), "/srv/ws", "n", self.ENV, preview=m.preview_of(profile))))
+
+    def test_bad_preview_settings_are_refused(self):
+        m = self.load()
+        for bad in ({"preview_command": "x\ny", "preview_port": 3000}, {"preview_command": "x", "preview_port": 80},
+                    {"preview_command": "x", "preview_port": "3000"}, {"preview_command": "", "preview_port": 3000},
+                    {"preview_command": "x" * 301, "preview_port": 3000}, {"preview_port": 3000}):
+            with self.assertRaises(m.EngineError, msg=str(bad)):
+                m.preview_of(bad)
+        self.assertIsNone(m.preview_of({}))
+
     def test_dev_argv(self):
         m = self.load()
         argv = m.docker_command("dev", ["-p", "--model", "x"], "/srv/ws", "tasklane-abc", self.ENV)

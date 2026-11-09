@@ -134,11 +134,28 @@ def build_prompt(role, params):
     return "\n".join(parts) + "\n"
 
 
+def preview_of(profile):
+    """The operator's preview settings for a repository, or None: (command, port).
+    Set in the console (never by the repository itself), so the command is the operator's own."""
+    cmd, port = (profile or {}).get("preview_command"), (profile or {}).get("preview_port")
+    if not cmd and not port:
+        return None
+    if (not isinstance(cmd, str) or not cmd.strip() or len(cmd) > 300 or re.search(r"[\r\n\x00]", cmd)
+            or isinstance(port, bool) or not isinstance(port, int) or not 1024 <= port <= 65535):
+        raise EngineError("permanent", "profile.preview_command and preview_port are not acceptable")
+    return cmd.strip(), port
+
+
 def build_system(role, profile):
     s = SYSTEM_RULES
     extra = (profile or {}).get("system")
     if isinstance(extra, str) and extra.strip():
         s += "\n\nExtra instructions for this service (from the operator):\n" + extra.strip()[:20000]
+    pv = preview_of(profile) if role == "dev" else None
+    if pv:
+        s += ("\n\nThe app for this repository is already running at http://127.0.0.1:%d inside your sandbox. "
+              "To look at what you built, run `tl-shot http://127.0.0.1:%d/<path> <name>` and open the PNG "
+              "file it prints with the Read tool. Check the page after you change it." % (pv[1], pv[1]))
     return s
 
 
@@ -150,6 +167,8 @@ def tool_flags(role, profile, read_only):
             if not isinstance(tc, str) or re.search(r"[\r\n()]", tc):
                 raise EngineError("permanent", "profile.test_command is not acceptable")
             allowed.append("Bash(%s)" % tc.strip())
+        if preview_of(profile):
+            allowed.append("Bash(tl-shot:*)")
         return DEV_TOOLS, allowed, DEV_DENY
     return READ_TOOLS, list(READ_TOOLS), READ_DENY
 
@@ -165,6 +184,8 @@ def claude_args(role, params, system):
             "--append-system-prompt", system,
             "--strict-mcp-config", "--disable-slash-commands",
             "--no-session-persistence"]
+    if role == "dev" and not params.get("read_only") and preview_of(profile):
+        args += ["--add-dir", "/tmp/shots"]  # where tl-shot writes the pictures the agent may look at
     model = profile.get("model")
     if isinstance(model, str) and model.strip():
         if not re.fullmatch(r"[A-Za-z0-9._:\[\]/-]{1,100}", model.strip()):
@@ -205,7 +226,7 @@ def agent_ids(workspace):
     return 10001, 10001
 
 
-def docker_command(role, claude_argv, workspace, name, env=None):
+def docker_command(role, claude_argv, workspace, name, env=None, preview=None):
     """Build the `docker run` argv. Credentials are passed by NAME only (docker
     reads the value from its own environment), never in argv."""
     env = os.environ if env is None else env
@@ -242,9 +263,15 @@ def docker_command(role, claude_argv, workspace, name, env=None):
         argv += ["-v", "%s:/work:%s" % (os.path.abspath(workspace), mode), "-w", "/work"]
     else:
         argv += ["-w", "/tmp"]
+    claude = env.get("TASKLANE_SANDBOX_CLAUDE_BIN", "claude")
+    if preview and role == "dev":
+        # start the operator's preview server first (tl-agent in the sandbox image), then the agent
+        argv += ["-e", "TASKLANE_PREVIEW_CMD=" + preview[0], "-e", "TASKLANE_PREVIEW_PORT=%d" % preview[1],
+                 "--entrypoint", "tl-agent", image, claude] + claude_argv
+        return argv
     # The entrypoint is overridden, so any image that contains the CLI works, even one whose own
     # entrypoint is something else (such as the daemon image).
-    argv += ["--entrypoint", env.get("TASKLANE_SANDBOX_CLAUDE_BIN", "claude"), image] + claude_argv
+    argv += ["--entrypoint", claude, image] + claude_argv
     return argv
 
 
@@ -445,7 +472,8 @@ def run(params):
     try:
         if mode == "docker":
             container = "tasklane-%s" % uuid.uuid4().hex[:12]
-            argv = docker_command(role, cargs, workspace, container)
+            argv = docker_command(role, cargs, workspace, container,
+                                  preview=preview_of(params.get("profile")) if role == "dev" else None)
             cwd = None
             env = {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"), "HOME": home}
             for v in CRED_VARS + ("DOCKER_HOST",):

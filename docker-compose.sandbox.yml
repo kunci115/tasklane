@@ -17,5 +17,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.sandbox
+      args:
+        INSTALL_OBSCURA: ${INSTALL_OBSCURA:-0}
+        OBSCURA_SHA256: ${OBSCURA_SHA256:-}
     entrypoint: ["true"]
     restart: "no"
