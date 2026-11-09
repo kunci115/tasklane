@@ -23,7 +23,17 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         .run_token(&t, &["contents:write", "pull_requests:write"])
         .await?;
     let url = o.repo_url(&t, Some(&token)).await?;
-    o.ws.push(&t.service, &url, &branch).await?;
+    if let Err(e) = o.ws.push(&t.service, &url, &branch).await {
+        let msg = e.to_string();
+        if msg.to_lowercase().contains("workflow") && msg.to_lowercase().contains("permission") {
+            return Err(Error::Fatal(
+                "the ticket source refuses a push that changes CI workflow files without the Workflows permission. \
+                 tasklane does not ask for it by default. Make this change by hand, or grant the App the Workflows permission on purpose."
+                    .into(),
+            ));
+        }
+        return Err(e);
+    }
     o.queue.checkpoint(job, &json!({"stage": "pushed"})).await?;
 
     let pr_ref = match &t.pr_ref {

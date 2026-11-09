@@ -128,11 +128,15 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         .get("comments")
         .cloned()
         .unwrap_or(Value::Array(vec![]));
+    // tasklane's own comments (its plan, its status lines) are not part of what a person asked for,
+    // and they often contain words like "secrets" ("needs no secrets") that would trip the rules.
     let comment_text: String = comments
         .as_array()
         .map(|a| {
             a.iter()
+                .filter(|c| c.get("mine").and_then(Value::as_bool) != Some(true))
                 .filter_map(|c| c.get("body").and_then(Value::as_str))
+                .filter(|b| !b.contains(crate::MARKER))
                 .collect::<Vec<_>>()
                 .join("\n")
         })

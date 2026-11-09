@@ -500,3 +500,68 @@ async fn a_person_can_retry_or_close_a_failed_ticket_and_strangers_cannot() {
         "closed_rejected"
     );
 }
+
+#[tokio::test]
+async fn tasklane_s_own_comments_do_not_trip_the_text_rules_but_a_person_s_do() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    let t = ticket(&w, "T-plain").await;
+    w.orch.run_one().await.unwrap(); // triage: level 1, queued
+                                     // tasklane's own plan comment says "no secrets"; the author is the bot
+    std::fs::write(
+        w.state_dir().join("comments_T-plain.json"),
+        r#"[{"author":"bot","body":"Plan: edit README. It needs no secrets and no permissions.","at":"t","mine":true}]"#,
+    )
+    .unwrap();
+    drive(&w).await;
+    assert_eq!(
+        state(&w.pool, t).await,
+        "merged",
+        "its own words did not stop it"
+    );
+}
+
+#[tokio::test]
+async fn a_push_refused_for_workflow_permission_fails_at_once_with_a_clear_reason() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    // the remote behaves like GitHub does for an App without the Workflows permission
+    let hook = w.remote().join("hooks/pre-receive");
+    std::fs::write(&hook, "#!/bin/sh\necho 'refusing to allow a GitHub App to create or update workflow `.github/workflows/ci.yml` without `workflows` permission' >&2\nexit 1\n").unwrap();
+    std::process::Command::new("chmod")
+        .arg("+x")
+        .arg(&hook)
+        .status()
+        .unwrap();
+    let t = ticket(&w, "T-protected").await; // touches .github/workflows/
+    add_principal(&w.pool, "boss", "owner").await;
+    drive(&w).await; // triage, develop -> asks for approval of the diff
+    let hash = plan_hash(&w, t).await;
+    decide(
+        &w.pool,
+        t,
+        &console("boss"),
+        "console",
+        Decision::Approve,
+        &hash,
+    )
+    .await
+    .unwrap();
+    drive(&w).await;
+    assert_eq!(state(&w.pool, t).await, "failed");
+    let err: String = sqlx::query_scalar("SELECT last_error FROM tickets WHERE id = $1")
+        .bind(t)
+        .fetch_one(&w.pool)
+        .await
+        .unwrap();
+    assert!(err.contains("Workflows permission"), "{err}");
+    let attempts: i16 = sqlx::query_scalar("SELECT attempts FROM jobs WHERE kind = 'pr'")
+        .fetch_one(&w.pool)
+        .await
+        .unwrap();
+    assert_eq!(attempts, 1, "no pointless retries");
+}

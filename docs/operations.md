@@ -31,6 +31,8 @@ GitHub: Settings, Developer settings, GitHub Apps, New. Then:
 - Subscribe to: Issues, Issue comment, Pull request, Check suite.
 - Generate a private key (PEM) and note the App id; install the App on your organization or account and note the installation id (the number in the installation URL).
 
+**Workflows permission is left out on purpose.** GitHub refuses any push that creates or changes files under `.github/workflows/` unless the App has the Workflows permission. With it left out, a ticket that needs a CI change stops with a clear reason and a person makes that change by hand. Grant Workflows (read and write) only if you want tasklane to edit CI configuration, and then keep an approval on those paths (they are protected paths, so every such change already needs approval of its exact diff).
+
 The App never holds write access in the agent's hands: the daemon asks GitHub for a separate token limited to one repository and valid for about an hour each time it pushes or merges.
 
 ## 2. Configuration
