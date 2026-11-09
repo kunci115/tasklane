@@ -383,8 +383,10 @@ def op_app_manifest_convert(params):
 def op_list_installations(params):
     """Where the App is installed (for the setup page): id, account, and whether all or selected repositories."""
     items = paginate("/app/installations?per_page=100", auth=make_jwt())
+    app = api("GET", "/app", auth=make_jwt()).data or {}
     return {"installations": [{"id": str(i["id"]), "account": (i.get("account") or {}).get("login", ""),
-                               "repository_selection": i.get("repository_selection", "")} for i in items]}
+                               "repository_selection": i.get("repository_selection", "")} for i in items],
+            "owner": (app.get("owner") or {}).get("login", ""), "owner_type": (app.get("owner") or {}).get("type", "")}
 
 
 def visible_repos():

@@ -461,9 +461,36 @@ pub async fn github_install(State(st): State<Arc<AppState>>, headers: HeaderMap)
         Ok(s) => s,
         Err(r) => return r,
     };
-    let Some(gh) = connections::get::<GithubConn>(st.orch.pool(), "github").await else {
+    let Some(mut gh) = connections::get::<GithubConn>(st.orch.pool(), "github").await else {
         return redirect("/connect/github");
     };
+    // an App made before the owner type was stored: ask GitHub, remember the answer, and
+    // skip the install step if the App is already installed
+    if gh.owner_type.is_empty() || gh.installation_id.is_none() {
+        if let Ok(v) = st
+            .orch
+            .source_call_with("list_installations", json!({}), Duration::from_secs(20))
+            .await
+        {
+            if let Some(t) = v.get("owner_type").and_then(Value::as_str).filter(|t| !t.is_empty()) {
+                gh.owner_type = t.to_string();
+            }
+            let found = v
+                .get("installations")
+                .and_then(Value::as_array)
+                .and_then(|a| a.first())
+                .and_then(|i| i.get("id"))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            if gh.installation_id.is_none() && found.is_some() {
+                gh.installation_id = found;
+                let _ = connections::put(st.orch.pool(), "github", &gh).await;
+                let _ = connections::apply(&st).await;
+                return redirect("/connections");
+            }
+            let _ = connections::put(st.orch.pool(), "github", &gh).await;
+        }
+    }
     let b = format!(
         "{}<div class=\"card\"><h2>Install the App</h2><p>The App <strong>{}</strong> exists. Now choose where it works. <strong>Select only the repositories</strong> tasklane should handle, not all repositories.</p>\
 <a class=\"btn primary\" href=\"{}\">{} Install on GitHub</a>\

@@ -116,11 +116,11 @@ def handle(op, params):
     if op == "app_manifest_convert":
         if params["code"].startswith("bad"):
             raise ValueError("code refused")
-        return {"app_id": "4242", "slug": "tasklane-test", "name": "tasklane-test", "owner": "someone",
+        return {"app_id": "4242", "slug": "tasklane-test", "name": "tasklane-test", "owner": "someone", "owner_type": "User",
                 "html_url": "https://github.com/apps/tasklane-test", "client_id": "Iv1.fake",
                 "pem": "-----BEGIN RSA PRIVATE KEY-----\nFAKEPEMDATA\n-----END RSA PRIVATE KEY-----\n", "webhook_secret": "fake-webhook-secret-value"}
     if op == "list_installations":
-        return {"installations": read_json("installations.json", [])}
+        return {"installations": read_json("installations.json", []), "owner": "someone", "owner_type": "User"}
     if op == "check":
         return read_json("check.json", {"ok": True, "answer": "ok", "secs": 1.2, "sandbox": "none"})
     if op == "get_item":

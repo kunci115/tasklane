@@ -520,8 +520,10 @@ class ConnectingAnApp(Base):
     def test_installations_are_listed_for_the_setup_page(self):
         self.fake.routes[("GET", "/app/installations")] = (200, {}, [
             {"id": 180094190, "account": {"login": "someone"}, "repository_selection": "selected"}])
+        self.fake.routes[("GET", "/app")] = (200, {}, {"owner": {"login": "someone", "type": "Organization"}})
         r = self.ok("list_installations")
         self.assertEqual(r["installations"], [{"id": "180094190", "account": "someone", "repository_selection": "selected"}])
+        self.assertEqual((r["owner"], r["owner_type"]), ("someone", "Organization"))
 
 
 class WebhookPullRequests(Webhooks):

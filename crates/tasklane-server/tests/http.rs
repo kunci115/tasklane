@@ -1502,7 +1502,7 @@ async fn the_callback_stores_the_credentials_privately_once_and_only_for_the_ses
         get("/connect/github/install", Some(e.cookie.clone())),
     )
     .await;
-    assert!(page.contains("https://github.com/apps/tasklane-test/installations/new"));
+    assert!(page.contains("https://github.com/settings/apps/tasklane-test/installations"));
     // no page ever shows the credentials
     for path in ["/connections", "/connect/github/install", "/health", "/"] {
         let (_, _, body) = send(&e.app, get(path, Some(e.cookie.clone()))).await;
