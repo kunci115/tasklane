@@ -30,6 +30,8 @@ pub struct AppState {
     pub base_engine: tasklane_orchestrator::host::PluginSpec,
     /// Public address of the console as the operator set it (the browser's own address is used when unset).
     pub public_url: Option<String>,
+    /// `/metrics` is served only when this is set, and only to a caller that sends it as a bearer token.
+    pub metrics_token: Option<String>,
 }
 
 pub fn now_unix() -> i64 {

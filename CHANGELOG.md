@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `/metrics` (Prometheus format) for tickets, the queue, repositories and model usage; off unless `TASKLANE_METRICS_TOKEN` is set.
 - Housekeeping removes sandbox containers a crashed daemon left running (only containers this engine named, older than the longest run).
 - The developer agent can look at the app it builds: an optional preview command and port per repository start the app inside the Docker sandbox, and `tl-shot` takes a screenshot of a local address with Obscura (installed only when you pass its checksum) for the agent to read. Tested with a stand-in for Obscura; the real binary has not been run here.
 - Every model run is recorded in the `runs` table (who, how long, tokens), and the ticket page shows the tokens it used.

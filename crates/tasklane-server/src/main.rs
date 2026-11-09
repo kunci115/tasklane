@@ -92,6 +92,7 @@ async fn run(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
         base_source: s.source.clone(),
         base_engine: s.engine.clone(),
         public_url: s.public_url.clone(),
+        metrics_token: s.metrics_token.clone(),
     });
     let app = api::routes().merge(console::routes()).with_state(state);
     let listener = tokio::net::TcpListener::bind(&s.bind).await?;

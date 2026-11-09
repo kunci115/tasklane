@@ -106,6 +106,7 @@ async fn env() -> Option<Env> {
         base_source: spec(),
         base_engine: spec(),
         public_url: None,
+        metrics_token: Some("metrics-token-for-tests-1234".into()),
     });
     let app = api::routes().merge(console::routes()).with_state(state);
     let (st, h, _) = send(&app, form("/login", format!("token={ADMIN}"), None)).await;
@@ -2140,4 +2141,35 @@ async fn the_preview_settings_are_saved_together_or_not_at_all() {
             .unwrap();
     assert_eq!(p["preview_command"], "");
     assert!(p["preview_port"].is_null());
+}
+
+#[tokio::test]
+async fn metrics_need_their_own_bearer_token_and_show_the_queue_and_the_tickets() {
+    let Some(e) = env().await else { return };
+    seed_ticket(&e, "41", "Metrics", "merged", 1).await;
+    let ask = |token: Option<&str>| {
+        let mut r = Request::get("/metrics");
+        if let Some(t) = token {
+            r = r.header(header::AUTHORIZATION, format!("Bearer {t}"));
+        }
+        r.body(Body::empty()).unwrap()
+    };
+    assert_eq!(send(&e.app, ask(None)).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        send(&e.app, ask(Some("wrong"))).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    // the admin token is not the metrics token
+    assert_eq!(
+        send(&e.app, ask(Some(ADMIN))).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (st, _, body) = send(&e.app, ask(Some("metrics-token-for-tests-1234"))).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(body.contains("tasklane_up 1"), "{body}");
+    assert!(
+        body.contains("tasklane_tickets{state=\"merged\"} 1"),
+        "{body}"
+    );
+    assert!(body.contains("tasklane_model_tokens_total"), "{body}");
 }

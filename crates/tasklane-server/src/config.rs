@@ -25,6 +25,7 @@ pub struct Settings {
     pub secure_cookies: bool,
     pub max_dev_parallel: i64,
     pub max_tokens_per_ticket: i64,
+    pub metrics_token: Option<String>,
     pub max_in_ci: i64,
     pub dev_timeout_secs: u64,
     pub ci_timeout_secs: i64,
@@ -186,6 +187,7 @@ impl Settings {
             max_dev_parallel: num(vars, "TASKLANE_MAX_DEV", 1i64)?.max(1),
             max_tokens_per_ticket: num(vars, "TASKLANE_MAX_TOKENS_PER_TICKET", 3_000_000i64)?
                 .max(10_000),
+            metrics_token: get(vars, "TASKLANE_METRICS_TOKEN").filter(|t| t.len() >= 16),
             max_in_ci: num(vars, "TASKLANE_MAX_IN_CI", 5i64)?.max(1),
             dev_timeout_secs: num(vars, "TASKLANE_DEV_TIMEOUT_SECS", 1800u64)?.clamp(60, 86_400),
             ci_timeout_secs: num(vars, "TASKLANE_CI_TIMEOUT_SECS", 3600i64)?.clamp(60, 172_800),

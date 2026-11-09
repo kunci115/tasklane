@@ -19,6 +19,7 @@ pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/readyz", get(ready))
+        .route("/metrics", get(metrics))
         .route(
             "/api/v1/report",
             post(report).layer(DefaultBodyLimit::max(64 * 1024)),
@@ -27,6 +28,73 @@ pub fn routes() -> Router<Arc<AppState>> {
             "/api/v1/webhook/source",
             post(webhook).layer(DefaultBodyLimit::max(1024 * 1024)),
         )
+}
+
+/// Prometheus text metrics. Off unless `TASKLANE_METRICS_TOKEN` is set (16 characters or more);
+/// then the caller sends it as `Authorization: Bearer <token>`.
+async fn metrics(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    use subtle::ConstantTimeEq;
+    let Some(want) = st.metrics_token.as_deref() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let got = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .unwrap_or("");
+    let same: bool = got.as_bytes().ct_eq(want.as_bytes()).into();
+    if !same {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let pool = st.orch.pool();
+    let mut out = String::new();
+    let rows = |sql: &'static str| async move {
+        sqlx::query_as::<_, (String, i64)>(sql)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default()
+    };
+    out.push_str(
+        "# HELP tasklane_up Is the daemon answering.\n# TYPE tasklane_up gauge\ntasklane_up 1\n",
+    );
+    out.push_str("# HELP tasklane_tickets Tickets by state.\n# TYPE tasklane_tickets gauge\n");
+    for (state, n) in rows("SELECT state, count(*) FROM tickets GROUP BY state").await {
+        out.push_str(&format!("tasklane_tickets{{state=\"{state}\"}} {n}\n"));
+    }
+    out.push_str("# HELP tasklane_jobs Queue jobs by status.\n# TYPE tasklane_jobs gauge\n");
+    for (status, n) in rows("SELECT status, count(*) FROM jobs GROUP BY status").await {
+        out.push_str(&format!("tasklane_jobs{{status=\"{status}\"}} {n}\n"));
+    }
+    out.push_str(
+        "# HELP tasklane_repositories Repositories by mode.\n# TYPE tasklane_repositories gauge\n",
+    );
+    for (mode, n) in
+        rows("SELECT mode, count(*) FROM services WHERE NOT archived GROUP BY mode").await
+    {
+        out.push_str(&format!("tasklane_repositories{{mode=\"{mode}\"}} {n}\n"));
+    }
+    let (tokens, runs): (i64, i64) = (
+        sqlx::query_scalar("SELECT coalesce(sum(tokens_used), 0)::bigint FROM tickets")
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0),
+        sqlx::query_scalar("SELECT count(*) FROM runs")
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0),
+    );
+    out.push_str(&format!(
+        "# HELP tasklane_model_tokens_total Model tokens used by all tickets.\n# TYPE tasklane_model_tokens_total counter\ntasklane_model_tokens_total {tokens}\n\
+# HELP tasklane_model_runs_total Model runs recorded.\n# TYPE tasklane_model_runs_total counter\ntasklane_model_runs_total {runs}\n"
+    ));
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4",
+        )],
+        out,
+    )
+        .into_response()
 }
 
 async fn ready(State(st): State<Arc<AppState>>) -> Response {
