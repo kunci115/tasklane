@@ -803,6 +803,16 @@ impl Orchestrator {
     /// Remove checkouts left behind by crashed runs.
     pub async fn sweep_workspaces(&self) {
         self.ws.sweep(Duration::from_secs(3600)).await;
+        // sandbox containers a crashed daemon left running (the engine only touches its own names)
+        let longest = self.cfg.dev_timeout.as_secs() + 600;
+        let _ = self
+            .engine
+            .call(
+                "sweep",
+                json!({"older_than_secs": longest}),
+                Duration::from_secs(60),
+            )
+            .await;
     }
 
     /// Old bookkeeping rows: finished jobs, audit events, console sessions, chat hints.

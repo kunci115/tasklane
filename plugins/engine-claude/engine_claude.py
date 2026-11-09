@@ -536,6 +536,38 @@ def capabilities():
     return {"tool_use": True, "structured_output": True, "read_only_mode": True}
 
 
+SANDBOX_NAME = re.compile(r"^tasklane-[0-9a-f]{12}$")
+
+
+def sweep(older_than_secs):
+    """Remove sandbox containers a crashed daemon left running. Only containers named by this plug-in
+    (`tasklane-` and 12 hex digits) and older than `older_than_secs` are touched."""
+    if sandbox_mode() != "docker":
+        return {"removed": 0}
+    docker = os.environ.get("TASKLANE_DOCKER_BIN", "docker")
+    try:
+        p = subprocess.run([docker, "ps", "--no-trunc", "--filter", "name=tasklane-", "--format",
+                            "{{.Names}}\t{{.RunningFor}}"],
+                           capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return {"removed": 0}
+    removed = 0
+    for line in p.stdout.splitlines():
+        name, _, age = line.partition("\t")
+        m = re.match(r"^(?:About )?(\d+|an?) (second|minute|hour|day|week|month)s?", age.strip())
+        if not SANDBOX_NAME.match(name.strip()) or not m:
+            continue
+        n = 1 if m.group(1) in ("a", "an") else int(m.group(1))
+        secs = n * {"second": 1, "minute": 60, "hour": 3600, "day": 86400, "week": 604800, "month": 2592000}[m.group(2)]
+        if secs >= older_than_secs:
+            try:
+                subprocess.run([docker, "rm", "-f", name.strip()], capture_output=True, timeout=30)
+                removed += 1
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+    return {"removed": removed}
+
+
 def handle(req):
     rid = req.get("id") if isinstance(req, dict) else None
     try:
@@ -552,6 +584,9 @@ def handle(req):
             res = capabilities()
         elif op == "check":
             res = check()
+        elif op == "sweep":
+            older = (req.get("params") or {}).get("older_than_secs", 7200) if isinstance(req.get("params"), dict) else 7200
+            res = sweep(older if isinstance(older, int) and not isinstance(older, bool) and older >= 60 else 7200)
         elif op == "run":
             params = req.get("params")
             if not isinstance(params, dict):

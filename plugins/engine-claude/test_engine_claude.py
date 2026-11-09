@@ -396,6 +396,38 @@ class Docker(unittest.TestCase):
         self.assertNotIn("NOT sandboxed", talk.stderr)
 
 
+class Sweep(unittest.TestCase):
+    def test_only_old_containers_with_our_names_are_removed(self):
+        with tempfile.TemporaryDirectory() as d:
+            fake = os.path.join(d, "docker")
+            log = os.path.join(d, "calls.log")
+            with open(fake, "w") as f:
+                f.write("#!/bin/sh\n"
+                        "echo \"$@\" >> %s\n"
+                        "if [ \"$1\" = ps ]; then\n"
+                        "printf 'tasklane-0123456789ab\\t3 hours ago\\n'\n"
+                        "printf 'tasklane-ba9876543210\\t12 minutes ago\\n'\n"
+                        "printf 'tasklane-tasklane-1\\t5 days ago\\n'\n"
+                        "printf 'tasklane\\t2 weeks ago\\n'\n"
+                        "printf 'tasklane-0123456789cd\\tAbout an hour ago\\n'\n"
+                        "fi\n" % log)
+            os.chmod(fake, 0o755)
+            env = {"TASKLANE_SANDBOX": "docker", "TASKLANE_SANDBOX_IMAGE": "i", "TASKLANE_SANDBOX_NETWORK": "n",
+                   "TASKLANE_DOCKER_BIN": fake}
+            (r,) = talk({"id": 1, "op": "sweep", "params": {"older_than_secs": 7200}}, env=env)
+            self.assertTrue(r["ok"], r)
+            self.assertEqual(r["result"], {"removed": 1})
+            with open(log) as f:
+                calls = f.read()
+            self.assertIn("rm -f tasklane-0123456789ab", calls)
+            for kept in ("tasklane-ba9876543210", "tasklane-0123456789cd", "tasklane-tasklane-1"):
+                self.assertNotIn("rm -f " + kept, calls)
+            self.assertNotIn("rm -f tasklane\n", calls)
+            # without the Docker sandbox there is nothing to sweep
+            (r,) = talk({"id": 2, "op": "sweep", "params": {}}, env={"TASKLANE_ALLOW_UNSANDBOXED": "1"})
+            self.assertEqual(r["result"], {"removed": 0})
+
+
 if __name__ == "__main__":
     unittest.main()
 
