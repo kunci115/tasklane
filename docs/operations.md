@@ -9,6 +9,36 @@ tasklane is a single daemon plus Postgres. It reads tickets from a ticket source
 - An Anthropic API key (or a Claude Code OAuth token) for the agent.
 - A TLS reverse proxy in front of port 8080 if the console or the webhook is reachable from outside.
 
+## Using another coding agent (Codex, Gemini CLI, Aider, ...)
+
+Claude is built in, but `plugins/engine-cli` runs **any command-line coding agent** as the agent engine. It keeps the same rules as the Claude engine (the Docker sandbox is required, the read-only roles get a read-only mount, the egress allowlist applies, secrets are passed by name and scrubbed from output, and the agent's answers are checked before tasklane uses them). You supply the command and an image that contains the agent:
+
+```bash
+# 1. an image with your agent (the sandbox image is the base)
+cat > Dockerfile.myagent <<'EOD'
+FROM tasklane-sandbox
+USER root
+RUN npm install -g @openai/codex        # or the agent you use
+USER agent
+EOD
+docker build -f Dockerfile.myagent -t tasklane-codex .
+
+# 2. start tasklane with the generic engine
+export TASKLANE_ENGINE_CMD="python3 -I /opt/tasklane/plugins/engine-cli/engine_cli.py"
+export TASKLANE_ENGINE_ENV=TASKLANE_CLI_COMMAND,TASKLANE_CLI_COMMAND_READONLY,TASKLANE_CLI_NAME,TASKLANE_CLI_CREDENTIALS,OPENAI_API_KEY,TASKLANE_SANDBOX,TASKLANE_SANDBOX_IMAGE,TASKLANE_SANDBOX_NETWORK,TASKLANE_SANDBOX_PROXY
+export TASKLANE_CLI_NAME="Codex"
+export TASKLANE_CLI_COMMAND="codex exec --full-auto -"          # the prompt arrives on stdin
+export TASKLANE_CLI_CREDENTIALS=OPENAI_API_KEY                   # passed to the container by name
+export TASKLANE_SANDBOX=docker TASKLANE_SANDBOX_IMAGE=tasklane-codex TASKLANE_SANDBOX_NETWORK=tasklane-agent
+export EGRESS_ALLOW=api.openai.com                               # the model API this agent talks to
+```
+
+- `{prompt}` as one whole argument passes the prompt as an argument instead of on stdin (for agents that take it that way).
+- `TASKLANE_CLI_COMMAND_READONLY` is an optional command for triage, review and questions, for example with the agent's own read-only flag.
+- Run `tasklane doctor`, then the console's agent test, before real work.
+
+What you give up compared with the Claude engine: tasklane cannot restrict the agent's own tool list (the read-only roles are protected by the read-only mount in the Docker sandbox, which is enforced), and the agent's token use is not reported, so the per-ticket token budget does not apply. The example commands above are the agents' documented non-interactive modes; flags change between versions, so check your agent's documentation. **Verified here:** the plug-in's behaviour with a stand-in agent (prompt on stdin and as an argument, JSON and edit roles, credentials by name, scrubbing, timeouts, the Docker command). **Not verified here:** a real Codex, Gemini or Aider run.
+
 ## Letting the agent see what it builds (Obscura)
 
 The developer agent can look at the app it is changing, using [Obscura](https://github.com/h4ckf0r0day/obscura), a small headless browser written in Rust (Apache-2.0). It is **off by default** and works only in the Docker sandbox:

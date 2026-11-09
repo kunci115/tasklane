@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Generic agent engine (`plugins/engine-cli`): run any command-line coding agent (Codex, Gemini CLI, Aider, ...) with the same Docker sandbox, read-only roles, egress allowlist, secret handling and answer checks as the Claude engine. Tested with a stand-in agent.
 - Fixes from an independent security review of everything since the alpha:
   - **The developer never received feedback** (failed checks, the reviewer's notes, people's comments on the pull request): the engine ignored it. It now arrives as marked data in a `<feedback>` block that cannot close itself or change the rules.
   - `.tasklane.yml` is a protected path, so a change cannot remove a repository's own tightening without a person seeing it.

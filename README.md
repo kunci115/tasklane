@@ -136,7 +136,7 @@ The agent can run **unsandboxed** only if you explicitly opt in; the default is 
 | | |
 |---|---|
 | Ticket source | GitHub Issues through a GitHub App |
-| Agent engine | Claude, through the Claude Code CLI, with an API key or a subscription token |
+| Agent engine | Claude through the Claude Code CLI (API key or subscription token), or **any command-line coding agent** (Codex, Gemini CLI, Aider, ...) through the generic engine plug-in |
 | Isolation | Read-only agents for triage and review; developer in a git worktree, optionally inside a locked-down Docker container whose only way out is an allowlist proxy to the model API |
 | Roles | Owner and team approver, with different levels they may approve |
 | Review loop | Collaborators' comments and change requests on the pull request are given back to the developer agent; the new change is re-scored, tested and reviewed again |
