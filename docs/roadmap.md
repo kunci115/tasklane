@@ -19,6 +19,7 @@ Each part of the architecture ([docs/design](design) and the C4 diagrams in [doc
 | Per-repository memory (notes written by people) and `.tasklane.yml` that can only tighten | Built |
 | Two installs on one repository (ownership claim) | Built; run for real |
 | Agent sandbox: Docker container, egress allowlist proxy, optional screenshots with Obscura | Built; Obscura tested with a stand-in only |
+| A GitLab ticket source (issues and merge requests) | Built; tested against a fake GitLab only |
 | A generic engine plug-in for any command-line coding agent (same sandbox and checks) | Built; tested with a stand-in agent, not yet with Codex, Gemini or Aider |
 | Plug-in protocol with protocol version check; source, engine and chat plug-ins; a plug-in guide and a tested template | Built |
 | Operations: `tasklane doctor`, Prometheus `/metrics` (opt-in), a `runs` record of every model run, cleanup of stale tickets and orphaned containers | Built |
@@ -28,7 +29,7 @@ Each part of the architecture ([docs/design](design) and the C4 diagrams in [doc
 
 | Part | Notes |
 |---|---|
-| A second ticket source (GitLab or Gitea) | Proves the source interface; the best way to contribute |
+| More ticket sources (Gitea, Jira) | GitLab exists; others are the best way to contribute |
 | Reviewer agent that looks at screenshots of the change | Needs a runner step that starts the preview at the pull request's head |
 | Merge queue support (drive GitHub's native queue instead of refusing) | Today a repository with a merge queue fails the ticket with a clear message |
 | Update with rollback, Kubernetes manifests, a public container image | Operations |
@@ -39,4 +40,4 @@ Some parts of the original design (the ticket gateway's attachments and push not
 
 ## Not yet run for real
 
-Telegram, more than one approver, the generic engine with a real non-Claude agent, the real Obscura binary, a repository that uses GitHub's merge queue.
+Telegram, more than one approver, the generic engine with a real non-Claude agent, a real GitLab, the real Obscura binary, a repository that uses GitHub's merge queue.

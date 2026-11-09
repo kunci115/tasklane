@@ -9,6 +9,24 @@ tasklane is a single daemon plus Postgres. It reads tickets from a ticket source
 - An Anthropic API key (or a Claude Code OAuth token) for the agent.
 - A TLS reverse proxy in front of port 8080 if the console or the webhook is reachable from outside.
 
+## Using GitLab instead of GitHub (experimental)
+
+`plugins/source-gitlab` is a ticket source for GitLab (gitlab.com or your own server): issues are tickets, merge requests are pull requests, checks come from the merge request's pipeline, and an author is trusted when they have the Developer role or higher. It supports everything the GitHub source does (webhooks, the repository rules file, feedback from people on the merge request, and the two-installs ownership claim, done with a branch named `tasklane-owner-<time>-<install>`).
+
+```bash
+export TASKLANE_SOURCE_CMD="python3 -I /opt/tasklane/plugins/source-gitlab/source_gitlab.py"
+export TASKLANE_SOURCE_ENV=GITLAB_URL,GITLAB_TOKEN,GITLAB_WEBHOOK_SECRET,GITLAB_GROUP
+export TASKLANE_SOURCE_NAME=gitlab
+export GITLAB_URL=https://gitlab.com                  # or your server
+export GITLAB_TOKEN=...                                # a dedicated bot's access token: scope api, role Developer
+export GITLAB_WEBHOOK_SECRET=...                       # the secret token you set on the webhook
+export GITLAB_GROUP=your-group                         # optional: only projects under this group
+```
+
+Add a webhook on the group or project that points to `https://<your host>/api/v1/webhook/source`, with that secret token and the triggers Issues events, Comments, Merge request events and Pipeline events. Run `tasklane doctor` to check the plug-in answers.
+
+Differences you should know about: **GitLab cannot mint a token that lives only minutes**, so the per-run token tasklane hands to git is the bot's own token. Keep that bot's reach small (one group, Developer role) and rotate its token. The GitHub-App one-click connection in the console does not apply; the settings above are the setup. Links from the console to issues and merge requests are not shown for GitLab yet. **Verified here:** the plug-in against a fake GitLab (every operation, trust, webhooks, ownership, error handling). **Not verified here:** a real GitLab, so do a supervised dry run on a throwaway project first.
+
 ## Using another coding agent (Codex, Gemini CLI, Aider, ...)
 
 Claude is built in, but `plugins/engine-cli` runs **any command-line coding agent** as the agent engine. It keeps the same rules as the Claude engine (the Docker sandbox is required, the read-only roles get a read-only mount, the egress allowlist applies, secrets are passed by name and scrubbed from output, and the agent's answers are checked before tasklane uses them). You supply the command and an image that contains the agent:
