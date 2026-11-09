@@ -26,6 +26,10 @@ The developer agent can look at the app it is changing, using [Obscura](https://
 
 Limits to know about: the app must start inside the sandbox, which has no internet (unless you widened `EGRESS_ALLOW`), so it works for apps that are static or already carry their dependencies; Obscura draws pages with its own engine, and its documentation warns that some CSS, media and font rendering can differ from Chrome; the prebuilt Obscura release must include the rendering feature for screenshots. **Verified here:** the settings, the argument handling, the address checks and the start-up order, all tested with a stand-in for Obscura. **Not verified here:** the real Obscura binary (it was not run in this environment), so do one check before relying on it: `docker run --rm --entrypoint sh tasklane-sandbox -c "node -e \"require('http').createServer((q,r)=>r.end('<h1>hello</h1>')).listen(3000)\" & sleep 2; tl-shot http://127.0.0.1:3000/ check && ls -l /tmp/shots"` (the sandbox image has Node, so a one-line Node server stands in for your app).
 
+## Checking an installation
+
+`tasklane doctor` checks an installation without starting it: the database and migrations, `git`, the data directory, that the ticket source and agent engine plug-ins start and answer, Docker when the Docker sandbox is chosen, and the public address. Each line says what is wrong and what to do; it exits with an error if something that stops tasklane from working fails. With Docker Compose: `docker compose -f docker-compose.prod.yml run --rm tasklane tasklane doctor`.
+
 ## Rules a repository can set for itself
 
 A repository may carry a `.tasklane.yml` on its default branch. It can only make tasklane **stricter** in that repository, so a contributor cannot loosen anything by editing it:

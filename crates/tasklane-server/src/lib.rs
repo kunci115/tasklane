@@ -6,6 +6,7 @@ pub mod chat;
 pub mod config;
 pub mod connections;
 pub mod console;
+pub mod doctor;
 pub mod runtime;
 pub mod tickets;
 

@@ -83,7 +83,7 @@ Open <http://localhost:8080>, sign in with that token, and follow the **Getting 
 3. **Choose repositories.** New ones start in *triage*: every ticket's plan waits for your approval before any code is written. Switch one to *full* when you trust it.
 4. Open an issue. It appears on the Overview within a minute.
 
-Put a TLS reverse proxy in front of port 8080 if the console is reachable from outside. Full setup, environment variables, backups and upgrade notes: [docs/operations.md](docs/operations.md).
+Run `tasklane doctor` to check an installation (database, plug-ins, git, Docker). Put a TLS reverse proxy in front of port 8080 if the console is reachable from outside. Full setup, environment variables, backups and upgrade notes: [docs/operations.md](docs/operations.md).
 
 | | | |
 |---|---|---|

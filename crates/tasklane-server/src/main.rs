@@ -13,7 +13,7 @@ use tokio::sync::watch;
 async fn main() {
     let cmd = std::env::args().nth(1).unwrap_or_else(|| "serve".into());
     if cmd == "--help" || cmd == "help" {
-        println!("tasklane serve     run the daemon (default)\ntasklane migrate   apply database migrations and exit\n\nConfiguration is read from environment variables; see docs/operations.md.");
+        println!("tasklane serve     run the daemon (default)\ntasklane migrate   apply database migrations and exit\ntasklane doctor    check the installation (database, plug-ins, git, Docker) and exit\n\nConfiguration is read from environment variables; see docs/operations.md.");
         return;
     }
     if let Err(e) = run(&cmd).await {
@@ -24,6 +24,22 @@ async fn main() {
 
 async fn run(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
     let s = Settings::from_env()?;
+    if cmd == "doctor" {
+        let (pool, err) = match PgPoolOptions::new()
+            .max_connections(2)
+            .acquire_timeout(std::time::Duration::from_secs(8))
+            .connect(&s.database_url)
+            .await
+        {
+            Ok(p) => (Some(p), None),
+            Err(e) => (None, Some(e.to_string())),
+        };
+        let checks = tasklane_server::doctor::run(&s, pool.as_ref(), err).await;
+        if !tasklane_server::doctor::print(&checks) {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     std::fs::create_dir_all(&s.data_dir)?;
     let secrets = Secrets::new(&s.data_dir)?;
     let (admin_token, fresh) = connections::admin_token(s.admin_token.clone(), &secrets)?;
