@@ -148,7 +148,7 @@ The agent can run **unsandboxed** only if you explicitly opt in; the default is 
 tasklane is **pre-release (0.1.0-alpha.1)**. Expect rough edges, and read the next two points before you rely on it.
 
 - **Verified:** the whole pipeline from issue to merge runs in tests against a real Postgres and git. Two supervised runs against live GitHub and live Claude (one-click App creation, subscription token, Docker sandbox) took issues to merged pull requests, and two installs on one repository were run side by side. They found and fixed seven bugs, listed in the [CHANGELOG](CHANGELOG.md).
-- **Not yet run for real:** Telegram (fake API only), GitHub webhooks (polling was used; the signature check is tested against GitHub's published vector), and more than one approver.
+- **Not yet run for real:** Telegram (fake API only) and more than one approver. GitHub webhooks have run for real (issue and comment events through a tunnel).
 - **Please do your own supervised dry run** on a throwaway repository before you point it at real work. [docs/operations.md](docs/operations.md) lists the limits honestly.
 
 ## Built with

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- GitHub webhooks verified with real deliveries (issue opened, comment created) through a temporary tunnel that forwarded only the webhook path.
 - Agent sandbox network limit: `docker-compose.egress.yml` adds an internal Docker network and a small allowlist proxy (`docker/egress-proxy/proxy.py`) so the agent container can reach only the model API. Checked with the real CLI inside the sandbox.
 - Merge queue: a repository that merges through GitHub's merge queue now fails the ticket with a clear message instead of an opaque refusal.
 - Comments are marked by their author's relationship to the repository. A stranger's comment is tagged `trust="untrusted"` for every agent role and is left out of the developer's prompt entirely; the system rules tell the agent never to follow it.
