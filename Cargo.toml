@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/tasklane-orchestrator", "crates/tasklane-queue", "crates/tasklane-core", "crates/tasklane-plugin", "crates/tasklane-server"]
 
 [workspace.package]
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/kunci115/tasklane"

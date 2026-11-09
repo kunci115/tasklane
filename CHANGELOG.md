@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.2 (2026-11-10)
+
+A large step since the first alpha: the developer now really receives feedback, pull request feedback from people, repository rules and notes, duplicate proposals, a second agent engine and a GitLab source (both experimental), an autonomy guide, and the fixes from an independent security review. Verified with real GitHub and Claude: the developer acting on feedback in the Docker sandbox, webhooks, two installs on one repository; see the README status section for what has not run for real.
+
 - GitLab ticket source (`plugins/source-gitlab`, experimental): issues, merge requests, pipelines, webhooks, the repository rules file, merge-request feedback and the two-installs claim. Tested against a fake GitLab.
 - Generic agent engine (`plugins/engine-cli`): run any command-line coding agent (Codex, Gemini CLI, Aider, ...) with the same Docker sandbox, read-only roles, egress allowlist, secret handling and answer checks as the Claude engine. Tested with a stand-in agent.
 - Fixes from an independent security review of everything since the alpha:
