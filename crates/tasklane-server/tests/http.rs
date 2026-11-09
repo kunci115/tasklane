@@ -2173,3 +2173,29 @@ async fn metrics_need_their_own_bearer_token_and_show_the_queue_and_the_tickets(
     );
     assert!(body.contains("tasklane_model_tokens_total"), "{body}");
 }
+
+#[tokio::test]
+async fn the_repository_card_shows_the_model_tokens_of_the_last_thirty_days() {
+    let Some(e) = env().await else { return };
+    let t = seed_ticket(&e, "51", "Costly", "merged", 1).await;
+    let job: i64 = sqlx::query_scalar(
+        "INSERT INTO jobs (ticket_id, kind, status) VALUES ($1, 'triage', 'done') RETURNING id",
+    )
+    .bind(t)
+    .fetch_one(&e.pool)
+    .await
+    .unwrap();
+    for ago in ["1 day", "90 days"] {
+        sqlx::query("INSERT INTO runs (job_id, actor, started_at, usage) VALUES ($1, 'triage', now() - $2::interval, '{\"tokens_in\": 1000, \"tokens_out\": 500}')")
+            .bind(job)
+            .bind(ago)
+            .execute(&e.pool)
+            .await
+            .unwrap();
+    }
+    let (_, _, page) = send(&e.app, get("/services", Some(e.cookie.clone()))).await;
+    assert!(
+        page.contains("1.5k tokens (30 d)"),
+        "only the recent run counts: {page}"
+    );
+}

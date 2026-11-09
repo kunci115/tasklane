@@ -75,7 +75,10 @@ pub async fn page(
                 (SELECT count(*) FROM tickets t WHERE t.service_id = s.id AND t.state NOT LIKE 'closed_%' AND t.state <> 'merged') AS open,
                 (SELECT count(*) FROM tickets t WHERE t.service_id = s.id AND t.state = 'merged') AS merged,
                 (SELECT count(*) FROM tickets t WHERE t.service_id = s.id AND t.state IN ('awaiting_approval','failed')) AS attention,
-                (SELECT extract(epoch FROM now() - max(t.updated_at))::bigint FROM tickets t WHERE t.service_id = s.id) AS last
+                (SELECT extract(epoch FROM now() - max(t.updated_at))::bigint FROM tickets t WHERE t.service_id = s.id) AS last,
+                (SELECT coalesce(sum(coalesce((r.usage->>'tokens_in')::bigint, 0) + coalesce((r.usage->>'tokens_out')::bigint, 0)), 0)::bigint
+                   FROM runs r JOIN jobs j ON j.id = r.job_id JOIN tickets t ON t.id = j.ticket_id
+                  WHERE t.service_id = s.id AND r.started_at > now() - interval '30 days') AS tokens
          FROM services s
          WHERE s.external_id ILIKE $1 ESCAPE '\\' AND ($2 = 'all' OR s.mode = $2)
          ORDER BY s.archived, s.external_id LIMIT $3 OFFSET $4",
@@ -187,6 +190,7 @@ pub async fn page(
         let (open, merged, attention): (i64, i64, i64) =
             (r.get("open"), r.get("merged"), r.get("attention"));
         let last: Option<i64> = r.get("last");
+        let tokens: i64 = r.get("tokens");
         let link = repo_link(&source, &name);
         let seg = |m: &str| {
             format!(
@@ -226,7 +230,7 @@ pub async fn page(
         b.push_str(&format!(
             "<div class=\"card repo-card\"><div class=\"row tight\" style=\"align-items:center;gap:.5rem\"><h2 style=\"margin:0\">{}</h2>{}{}{}{}</div>\
 <form method=\"post\" action=\"/services/{id}/mode\" style=\"margin:.8rem 0\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"ret\" value=\"{here}\"><div class=\"seg\" role=\"group\" aria-label=\"Mode\">{}{}{}</div></form>\
-{}<div class=\"row tight muted small\" style=\"gap:1rem;margin-bottom:.6rem\"><span>{open} open</span><span>{merged} merged</span>{}<span>{}</span></div>\
+{}<div class=\"row tight muted small\" style=\"gap:1rem;margin-bottom:.6rem\"><span>{open} open</span><span>{merged} merged</span><span title=\"Model tokens used in the last 30 days\">{} tokens (30 d)</span>{}<span>{}</span></div>\
 <details style=\"margin-top:.7rem\"><summary class=\"btn small\">Settings and protected paths</summary><h3 style=\"margin-top:.9rem\">Protected paths</h3><div>{}</div><p class=\"hint\">Changes to these always need approval of the exact diff, on top of the built-in list (CI config, Dockerfiles, migrations, keys).</p><form method=\"post\" action=\"/services/{id}/profile\" style=\"margin-top:.8rem\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"ret\" value=\"{here}\">\
 <div class=\"field\"><label for=\"s{id}\">Instructions for the agent</label><textarea id=\"s{id}\" name=\"system\" maxlength=\"4000\" placeholder=\"For example: follow the existing code style; never change generated files.\">{}</textarea></div>\
 <div class=\"field\"><label for=\"t{id}\">Test command the agent may run</label><input id=\"t{id}\" type=\"text\" name=\"test_command\" maxlength=\"200\" value=\"{}\" placeholder=\"pytest -q\"><div class=\"hint\">One command, no parentheses or line breaks.</div></div>\
@@ -247,6 +251,7 @@ pub async fn page(
             } else {
                 String::new()
             },
+            human_tokens(tokens),
             last.map(|s| format!("<span>active {}</span>", ago(s))).unwrap_or_else(|| "<span>no activity yet</span>".into()),
             if mode == "full" { "<span class=\"pill ok\">working on its own</span>" } else if mode == "watch" { "<span class=\"pill\">idle</span>" } else { "<span class=\"pill info\">asks first</span>" },
             if protected.is_empty() { "<span class=\"muted small\">none detected</span>".to_string() } else { protected },
@@ -272,6 +277,15 @@ pub async fn page(
     render(&st, &sess.csrf, "repos", "Repositories", &b)
         .await
         .into_response()
+}
+
+/// 1234 -> "1.2k", 3500000 -> "3.5M".
+fn human_tokens(n: i64) -> String {
+    match n {
+        n if n >= 1_000_000 => format!("{:.1}M", n as f64 / 1e6),
+        n if n >= 1_000 => format!("{:.1}k", n as f64 / 1e3),
+        n => n.to_string(),
+    }
 }
 
 /// The notes the agents are given for one repository, with a form to add one.
