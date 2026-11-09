@@ -43,7 +43,7 @@ Look at the code before you decide. Put questions in "questions" ONLY when the t
 Reply with ONLY one JSON object: {"level": 1|2|3, "plan": "<short plan>", "questions": ["<open question>", ...]}""",
     "dev": """\
 Role: developer. Implement the ticket by editing files inside the current working directory only.
-You may run only git status, git diff, git log and the test command if one is allowed. Do not commit or push.
+You may run only git status, git diff, git log, chmod +x or chmod -x (for the executable bit) and the test command if one is allowed. Do not commit or push.
 If part of the task needs something you are not allowed to do (for example changing file permissions),
 still make every change you can, and say in the summary what is left for a person. Never stop without making the changes.
 Finish with a short plain-text summary of what you changed and why.""",
@@ -70,7 +70,8 @@ SCHEMAS = {
 READ_TOOLS = ["Read", "Grep", "Glob"]
 READ_DENY = ["Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch", "Task"]
 DEV_TOOLS = ["Read", "Edit", "Write", "Grep", "Glob", "Bash"]
-DEV_BASH = ["Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)"]
+DEV_BASH = ["Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)",
+            "Bash(chmod +x:*)", "Bash(chmod -x:*)"]  # the file mode is part of a change; nothing else of chmod
 DEV_DENY = ["WebFetch", "WebSearch", "Task", "Bash(curl:*)", "Bash(wget:*)",
             "Bash(git push:*)", "Bash(git commit:*)", "Bash(ssh:*)", "Bash(nc:*)"]
 

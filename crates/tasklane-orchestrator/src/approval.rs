@@ -210,6 +210,13 @@ pub async fn retry_or_close(
         .execute(&mut *tx)
         .await?;
     if !close {
+        // A retry never skips the review: only a head a reviewer approved may go straight to merge.
+        let reviewed: Option<String> =
+            sqlx::query_scalar("SELECT reviewed_head FROM tickets WHERE id = $1")
+                .bind(ticket_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        let head = head.filter(|h| reviewed.as_deref() == Some(h.as_str()));
         let kind = resume_kind(
             branch.as_deref(),
             pr_ref.as_deref(),

@@ -2,6 +2,8 @@
 
 ## Unreleased (0.1.0 is planned, not tagged)
 
+- Security fix, found in a real run: pressing Retry on a failed ticket could send a pull request straight to merge even though the reviewer had asked for changes. The reviewed head is now recorded, and a retry merges only a head a reviewer approved; anything else goes back through CI and review.
+- The developer role may run `chmod +x` / `chmod -x` (the executable bit is part of a change); nothing else of chmod.
 - Docker sandbox fix, found in a real run: the container ran as user 10001 and could not write the checkout, so the agent changed nothing. It now runs as the checkout's owner (never root). A "no change" failure now carries what the agent said, and the developer rules tell it to make every change it can.
 - A repository GitHub blocks (403/451) is skipped during sync instead of stopping the sweep for every repository.
 - Token budget per ticket (`TASKLANE_MAX_TOKENS_PER_TICKET`, default 3000000): every model run is counted, and a ticket over its budget goes to `failed` before another run starts.

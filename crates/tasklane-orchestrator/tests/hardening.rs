@@ -663,3 +663,51 @@ async fn a_ticket_nobody_answers_is_closed_as_stale_but_a_recent_one_is_left_alo
         .await
         .contains(&"ticket.closed_stale".to_string()));
 }
+
+#[tokio::test]
+async fn a_retry_never_merges_a_head_the_reviewer_did_not_approve() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    add_principal(&w.pool, "boss", "owner").await;
+    let t = ticket(&w, "T-plain").await;
+    sqlx::query("UPDATE tickets SET state = 'failed', branch = 'b', pr_ref = '7', head_sha = 'h1', pushed_head = 'h1', reviewed_head = NULL WHERE id = $1")
+        .bind(t)
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM jobs")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    retry_or_close(&w.pool, t, &console("boss"), false)
+        .await
+        .unwrap();
+    assert_eq!(
+        count(&w.pool, "SELECT count(*) FROM jobs WHERE kind = 'merge'").await,
+        0,
+        "an unreviewed head goes back through CI and review"
+    );
+    assert_eq!(
+        count(&w.pool, "SELECT count(*) FROM jobs WHERE kind = 'pr'").await,
+        1
+    );
+    // a head the reviewer did approve may be merged again
+    sqlx::query("UPDATE tickets SET state = 'failed', reviewed_head = 'h1' WHERE id = $1")
+        .bind(t)
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM jobs")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    retry_or_close(&w.pool, t, &console("boss"), false)
+        .await
+        .unwrap();
+    assert_eq!(
+        count(&w.pool, "SELECT count(*) FROM jobs WHERE kind = 'merge'").await,
+        1
+    );
+}

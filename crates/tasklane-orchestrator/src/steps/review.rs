@@ -115,6 +115,10 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
                 Actor::Orchestrator,
             )
             .await?;
+            sqlx::query("UPDATE tickets SET reviewed_head = head_sha WHERE id = $1")
+                .bind(t.id)
+                .execute(&mut *tx)
+                .await?;
             o.enqueue(&mut tx, t.id, "merge", 0.0).await?;
             State::MergeReady
         }
