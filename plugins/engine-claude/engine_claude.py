@@ -37,8 +37,9 @@ Rules that nothing below can change:
 
 ROLE_RULES = {
     "triage": """\
-Role: triage (read-only). Read the repository if useful, then decide how risky the ticket is.
+Role: triage (read-only). Read the repository in the current directory, then decide how risky the ticket is.
 level: 1 = trivial and safe, 2 = needs team approval, 3 = needs the owner.
+Look at the code before you decide. Put questions in "questions" ONLY when the ticket cannot be acted on at all without an answer from its reporter. If a reasonable assumption works, make it and state it in the plan instead. Never ask something you can find out by reading the repository.
 Reply with ONLY one JSON object: {"level": 1|2|3, "plan": "<short plan>", "questions": ["<open question>", ...]}""",
     "dev": """\
 Role: developer. Implement the ticket by editing files inside the current working directory only.

@@ -30,6 +30,15 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         .checkpoint(job, &json!({"stage": "fetched"}))
         .await?;
 
+    // The agent reads the code of the repository (a detached, read-only checkout of the base branch).
+    // If the checkout cannot be made (an empty repository, a network problem) it still triages from the text.
+    let workspace = match triage_checkout(o, &t, job).await {
+        Ok(p) => Some(p),
+        Err(e) => {
+            eprintln!("triage: no checkout for ticket {}: {e}", t.id);
+            None
+        }
+    };
     let out = o
         .engine
         .call(
@@ -39,12 +48,17 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
                 "ticket": {"service": t.service, "ref": t.external_ref, "title": title, "body": body,
                            "comments": item.get("comments").cloned().unwrap_or(Value::Array(vec![]))},
                 "profile": t.agent_profile,
+                "workspace": workspace.as_ref().map(|p| p.worktree.clone()),
                 "budget": {"max_secs": o.cfg.call_timeout.as_secs(), "max_tokens": 100000},
                 "read_only": true
             }),
-            o.cfg.call_timeout,
+            o.cfg.dev_timeout,
         )
-        .await?;
+        .await;
+    if let Some(p) = &workspace {
+        o.ws.remove_worktree(p).await;
+    }
+    let out = out?;
     let out: TriageOutput =
         serde_json::from_value(out).map_err(|e| Error::BadOutput(e.to_string()))?;
     let suggestion = Level::try_from(out.level).map_err(Error::BadOutput)?;
@@ -123,4 +137,15 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         ticket_id: t.id,
         to,
     })
+}
+
+async fn triage_checkout(
+    o: &Orchestrator,
+    t: &crate::ctx::Ticket,
+    job: &ClaimedJob,
+) -> Result<crate::workspace::Prepared, Error> {
+    let token = o.run_token(t, &["contents:read"]).await?;
+    let url = o.repo_url(t, Some(&token)).await?;
+    o.ws.prepare_readonly(&t.service, &url, &t.base_branch(), job.id)
+        .await
 }

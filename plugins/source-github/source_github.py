@@ -448,6 +448,16 @@ def own_bot_login():
     return _app_login["value"]
 
 
+def is_own_comment(c):
+    """Written by this App's bot user. (GitHub strips hidden HTML markers from stored comments,
+    so the author is the reliable signal.)"""
+    try:
+        mine = own_bot_login()
+    except PluginError:
+        return False
+    return bool(mine) and (c.get("user") or {}).get("login") == mine
+
+
 TRUSTED_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
 
 
@@ -475,7 +485,8 @@ def op_get_item(params):
             "is_pull_request": "pull_request" in issue,
             "author_trusted": author_trusted(issue),
             "comments": [{"author": (c.get("user") or {}).get("login", ""),
-                          "body": c.get("body") or "", "at": c.get("created_at", "")}
+                          "body": c.get("body") or "", "at": c.get("created_at", ""),
+                          "mine": is_own_comment(c)}
                          for c in comments]}
 
 

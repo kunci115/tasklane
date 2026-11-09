@@ -270,3 +270,31 @@ async fn plugins_get_no_inherited_environment() {
         .unwrap();
     assert_eq!(r["v"], serde_json::Value::Null);
 }
+
+#[tokio::test]
+async fn triage_gets_a_read_only_checkout_of_the_repository_and_it_is_removed_afterwards() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    let t = ticket(&w, "T-plain").await;
+    assert_eq!(
+        w.orch.run_one().await.unwrap(),
+        RunResult::Moved {
+            ticket_id: t,
+            to: State::Queued
+        }
+    );
+    let log = w.read_state("triage_ws.log");
+    assert!(
+        log.contains("\"readme\": true"),
+        "the agent could read the repository: {log}"
+    );
+    assert_eq!(
+        std::fs::read_dir(w.dir.path().join("data/ask"))
+            .unwrap()
+            .count(),
+        0,
+        "the checkout was removed"
+    );
+}

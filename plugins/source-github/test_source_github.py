@@ -228,7 +228,7 @@ class Reading(Base):
         self.assertEqual(self.ok("get_item", {"service": "acme/one", "ref": "5"}), {
             "title": "T", "body": "B", "author": "ann", "labels": ["bug", "p1"], "state": "closed",
             "is_pull_request": False, "author_trusted": False,
-            "comments": [{"author": "bob", "body": "hi", "at": "2026-01-01T00:00:00Z"}]})
+            "comments": [{"author": "bob", "body": "hi", "at": "2026-01-01T00:00:00Z", "mine": False}]})
 
     def issue(self, **kw):
         base = {"title": "T", "body": "B", "user": {"login": "ann"}, "state": "open", "labels": []}
@@ -247,6 +247,15 @@ class Reading(Base):
         self.fake.routes[("GET", "/app")] = (200, {}, {"slug": "tasklane-test"})
         self.assertTrue(self.issue(user={"login": "tasklane-test[bot]"}, author_association="NONE")["author_trusted"])
         self.assertFalse(self.issue(user={"login": "evil-app[bot]"}, author_association="NONE")["author_trusted"])
+
+    def test_the_apps_own_comments_are_flagged_by_author_not_by_a_hidden_marker(self):
+        self.fake.routes[("GET", "/app")] = (200, {}, {"slug": "tasklane-test"})
+        self.fake.routes[("GET", "/repos/acme/one/issues/5")] = (200, {}, {"title": "T", "body": "B", "user": {"login": "ann"}, "state": "open", "labels": []})
+        self.fake.routes[("GET", "/repos/acme/one/issues/5/comments")] = (200, {}, [
+            {"user": {"login": "tasklane-test[bot]"}, "body": "question? (no marker: GitHub stripped it)", "created_at": "t1"},
+            {"user": {"login": "ann"}, "body": "answer", "created_at": "t2"}])
+        got = self.ok("get_item", {"service": "acme/one", "ref": "5"})
+        self.assertEqual([c["mine"] for c in got["comments"]], [True, False])
 
     def test_pull_requests_are_flagged(self):
         self.fake.routes[("GET", "/app")] = (200, {}, {"slug": "t"})

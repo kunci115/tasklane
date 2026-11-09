@@ -212,11 +212,15 @@ impl Orchestrator {
         let last = item
             .get("comments")
             .and_then(Value::as_array)
-            .and_then(|c| c.last())
-            .and_then(|c| c.get("body"))
-            .and_then(Value::as_str);
+            .and_then(|c| c.last());
+        let ours = |c: &Value| {
+            c.get("mine").and_then(Value::as_bool) == Some(true)
+                || c.get("body")
+                    .and_then(Value::as_str)
+                    .is_some_and(|b| b.contains(MARKER))
+        };
         match last {
-            Some(body) if !body.contains(MARKER) => {}
+            Some(c) if !ours(c) => {}
             _ => return Ok(Noted::Nothing), // our own question is still the last word
         }
         let mut tx = self.pool.begin().await?;

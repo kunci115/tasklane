@@ -55,6 +55,9 @@ def run(params):
     role = params.get("role", "triage")
     ref = params["ticket"]["ref"]
     if role == "triage":
+        ws = params.get("workspace")
+        with open(os.path.join(STATE, "triage_ws.log"), "a") as f:
+            f.write(json.dumps({"ref": ref, "ws": ws, "readme": bool(ws) and os.path.exists(os.path.join(ws, "README"))}) + "\n")
         if "slow" in ref:
             time.sleep(2.5)
         if "crash" in ref:
