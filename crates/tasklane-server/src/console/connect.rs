@@ -614,8 +614,8 @@ pub async fn agent_form(
         sel("docker"),
         sel("none"),
         if agent.sandbox == "docker" { "open" } else { "" },
-        esc(&agent.image),
-        esc(&agent.network),
+        esc(if agent.image.is_empty() { "tasklane-sandbox" } else { &agent.image }),
+        esc(if agent.network.is_empty() { "bridge" } else { &agent.network }),
         icon("check")
     ));
     b.push_str(&format!(
@@ -658,10 +658,19 @@ pub async fn agent_save(
     }
     let key = f.key.as_deref().map(str::trim).unwrap_or("");
     let sandbox = f.sandbox.as_deref().unwrap_or("");
-    let (image, network) = (
+    let (mut image, mut network) = (
         f.image.as_deref().map(str::trim).unwrap_or(""),
         f.network.as_deref().map(str::trim).unwrap_or(""),
     );
+    // the fields sit in a folded section with these as placeholders; leaving them empty means "the defaults"
+    if sandbox == "docker" {
+        if image.is_empty() {
+            image = "tasklane-sandbox";
+        }
+        if network.is_empty() {
+            network = "bridge";
+        }
+    }
     if !key.is_empty()
         && (key.len() > 400
             || key

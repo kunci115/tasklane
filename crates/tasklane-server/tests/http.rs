@@ -1687,16 +1687,6 @@ async fn the_agent_key_is_saved_privately_validated_and_never_shown_again() {
     );
     assert_eq!(
         save(format!(
-            "csrf={}&key=ok&sandbox=docker&image=&network=",
-            e.csrf
-        ))
-        .await
-        .0,
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "docker needs an image and a network"
-    );
-    assert_eq!(
-        save(format!(
             "csrf={}&key=ok&sandbox=docker&image=--privileged&network=net",
             e.csrf
         ))
@@ -1711,7 +1701,7 @@ async fn the_agent_key_is_saved_privately_validated_and_never_shown_again() {
     );
 
     let (st, h, _) = save(format!(
-        "csrf={}&key=sk-ant-secret-key-value&sandbox=docker&image=tasklane-sandbox&network=bridge",
+        "csrf={}&key=sk-ant-secret-key-value&sandbox=docker&image=&network=",
         e.csrf
     ))
     .await;
