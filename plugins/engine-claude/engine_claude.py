@@ -44,6 +44,8 @@ Reply with ONLY one JSON object: {"level": 1|2|3, "plan": "<short plan>", "quest
     "dev": """\
 Role: developer. Implement the ticket by editing files inside the current working directory only.
 You may run only git status, git diff, git log and the test command if one is allowed. Do not commit or push.
+If part of the task needs something you are not allowed to do (for example changing file permissions),
+still make every change you can, and say in the summary what is left for a person. Never stop without making the changes.
 Finish with a short plain-text summary of what you changed and why.""",
     "reviewer": """\
 Role: reviewer (read-only). Review the diff against the ticket.
@@ -184,6 +186,18 @@ def sandbox_mode(env=None):
     raise EngineError("permanent", "TASKLANE_SANDBOX must be unset, 'none' or 'docker'")
 
 
+def agent_ids(workspace):
+    """uid:gid the container runs as. It must be able to write the checkout, which belongs to whoever runs
+    tasklane, so it takes that owner (never root); with no checkout it uses the image's own user."""
+    try:
+        st = os.stat(workspace)
+        if st.st_uid > 0:
+            return st.st_uid, st.st_gid or st.st_uid
+    except (OSError, TypeError):
+        pass
+    return 10001, 10001
+
+
 def docker_command(role, claude_argv, workspace, name, env=None):
     """Build the `docker run` argv. Credentials are passed by NAME only (docker
     reads the value from its own environment), never in argv."""
@@ -195,15 +209,16 @@ def docker_command(role, claude_argv, workspace, name, env=None):
     image = env.get("TASKLANE_SANDBOX_IMAGE", "").strip()
     if not image:
         raise EngineError("permanent", "TASKLANE_SANDBOX_IMAGE is not set")
+    uid, gid = agent_ids(workspace)
     argv = [env.get("TASKLANE_DOCKER_BIN", "docker"), "run", "--rm", "-i", "--name", name,
             "--network", network,
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
             "--read-only",
             "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
-            "--tmpfs", "/home/agent:rw,nosuid,size=256m,uid=10001,gid=10001",
+            "--tmpfs", "/home/agent:rw,nosuid,size=256m,uid=%d,gid=%d" % (uid, gid),
             "--pids-limit", env.get("TASKLANE_SANDBOX_PIDS", "256"),
             "--memory", env.get("TASKLANE_SANDBOX_MEMORY", "2g"),
-            "--user", "10001:10001",
+            "--user", "%d:%d" % (uid, gid),
             "-e", "HOME=/home/agent"]
     for v in CRED_VARS:
         if env.get(v):

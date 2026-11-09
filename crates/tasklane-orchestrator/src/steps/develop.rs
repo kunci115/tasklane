@@ -237,9 +237,10 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
     o.ws.remove_worktree(&prepared).await;
     let committed = committed?;
     if !committed && o.ws.diff(&t.service, &base, &branch).await?.0.is_empty() {
-        return Err(Error::BadOutput(
-            "the development agent made no change".into(),
-        ));
+        let said: String = summary.chars().take(500).collect();
+        return Err(Error::BadOutput(format!(
+            "the development agent made no change. It said: {said}"
+        )));
     }
     let (diff, files) = o.ws.diff(&t.service, &base, &branch).await?;
     let head = o.ws.head(&t.service, &branch).await?;

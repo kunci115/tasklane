@@ -2,6 +2,8 @@
 
 ## Unreleased (0.1.0 is planned, not tagged)
 
+- Docker sandbox fix, found in a real run: the container ran as user 10001 and could not write the checkout, so the agent changed nothing. It now runs as the checkout's owner (never root). A "no change" failure now carries what the agent said, and the developer rules tell it to make every change it can.
+- A repository GitHub blocks (403/451) is skipped during sync instead of stopping the sweep for every repository.
 - Token budget per ticket (`TASKLANE_MAX_TOKENS_PER_TICKET`, default 3000000): every model run is counted, and a ticket over its budget goes to `failed` before another run starts.
 - Tickets that nobody answers are closed as stale (14 days waiting for the reporter, 30 days waiting for an approval). A timer only closes, it never approves.
 - A second tasklane install on the same repository stays out of the way: repositories are claimed through an atomic ref on GitHub (oldest claim wins), the other install skips them and shows who owns them, and a person can take a repository over.

@@ -246,6 +246,17 @@ class Docker(unittest.TestCase):
         spec.loader.exec_module(m)
         return m
 
+    def test_container_runs_as_the_owner_of_the_checkout_so_it_can_write_it(self):
+        import tempfile
+        m = self.load()
+        with tempfile.TemporaryDirectory() as d:
+            st = os.stat(d)
+            argv = m.docker_command("dev", ["-p"], d, "tasklane-abc", self.ENV)
+        if st.st_uid > 0:
+            self.assertEqual(argv[argv.index("--user") + 1], "%d:%d" % (st.st_uid, st.st_gid))
+            self.assertIn("uid=%d,gid=%d" % (st.st_uid, st.st_gid), " ".join(argv))
+        self.assertNotEqual(argv[argv.index("--user") + 1].split(":")[0], "0")
+
     def test_dev_argv(self):
         m = self.load()
         argv = m.docker_command("dev", ["-p", "--model", "x"], "/srv/ws", "tasklane-abc", self.ENV)
