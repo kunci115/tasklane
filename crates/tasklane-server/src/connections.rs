@@ -419,10 +419,16 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let s = Secrets::new(d.path()).unwrap();
         s.write(AGENT_KEY, "sk-ant-oat-x").unwrap();
-        let sub = AgentSettings { auth: "subscription".into(), ..Default::default() };
+        let sub = AgentSettings {
+            auth: "subscription".into(),
+            ..Default::default()
+        };
         let out = engine_spec(&spec(&[]), &sub, &s);
         let get = |k: &str| out.env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
-        assert_eq!(get("CLAUDE_CODE_OAUTH_TOKEN").as_deref(), Some("sk-ant-oat-x"));
+        assert_eq!(
+            get("CLAUDE_CODE_OAUTH_TOKEN").as_deref(),
+            Some("sk-ant-oat-x")
+        );
         assert_eq!(get("ANTHROPIC_API_KEY"), None);
         let key = engine_spec(&spec(&[]), &AgentSettings::default(), &s);
         assert!(key.env.iter().any(|(n, _)| n == "ANTHROPIC_API_KEY"));

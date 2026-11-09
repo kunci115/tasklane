@@ -450,7 +450,10 @@ pub async fn github_callback(
 /// Its owner installs it from the settings page that lists the App's installations.
 fn install_url(gh: &GithubConn) -> String {
     if gh.owner_type == "Organization" {
-        format!("https://github.com/organizations/{}/settings/apps/{}/installations", gh.owner, gh.slug)
+        format!(
+            "https://github.com/organizations/{}/settings/apps/{}/installations",
+            gh.owner, gh.slug
+        )
     } else {
         format!("https://github.com/settings/apps/{}/installations", gh.slug)
     }
@@ -472,7 +475,11 @@ pub async fn github_install(State(st): State<Arc<AppState>>, headers: HeaderMap)
             .source_call_with("list_installations", json!({}), Duration::from_secs(20))
             .await
         {
-            if let Some(t) = v.get("owner_type").and_then(Value::as_str).filter(|t| !t.is_empty()) {
+            if let Some(t) = v
+                .get("owner_type")
+                .and_then(Value::as_str)
+                .filter(|t| !t.is_empty())
+            {
                 gh.owner_type = t.to_string();
             }
             let found = v
@@ -674,12 +681,18 @@ pub async fn agent_save(
         "" => previous.auth.as_str(),
         a @ ("api_key" | "subscription") => a,
         _ => {
-            return (StatusCode::UNPROCESSABLE_ENTITY, "Choose API key or Claude subscription.")
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "Choose API key or Claude subscription.",
+            )
                 .into_response()
         }
     };
     let was_sub = previous.auth == "subscription";
-    if key.is_empty() && (auth == "subscription") != was_sub && st.secrets.exists(connections::AGENT_KEY) {
+    if key.is_empty()
+        && (auth == "subscription") != was_sub
+        && st.secrets.exists(connections::AGENT_KEY)
+    {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
             "You changed how the agent signs in, so paste the matching key or token too.",
@@ -795,10 +808,23 @@ mod tests {
 
     #[test]
     fn the_install_link_is_the_owners_settings_page_not_the_404_public_one() {
-        let mut gh = GithubConn { app_id: "1".into(), slug: "my-app".into(), owner: "acme".into(), owner_type: "Organization".into(), html_url: String::new(), installation_id: None };
-        assert_eq!(install_url(&gh), "https://github.com/organizations/acme/settings/apps/my-app/installations");
+        let mut gh = GithubConn {
+            app_id: "1".into(),
+            slug: "my-app".into(),
+            owner: "acme".into(),
+            owner_type: "Organization".into(),
+            html_url: String::new(),
+            installation_id: None,
+        };
+        assert_eq!(
+            install_url(&gh),
+            "https://github.com/organizations/acme/settings/apps/my-app/installations"
+        );
         gh.owner_type = "User".into();
-        assert_eq!(install_url(&gh), "https://github.com/settings/apps/my-app/installations");
+        assert_eq!(
+            install_url(&gh),
+            "https://github.com/settings/apps/my-app/installations"
+        );
     }
 
     #[test]
