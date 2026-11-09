@@ -1,10 +1,18 @@
-//! The admin console: server-rendered pages, one admin token, no JavaScript.
-//! Every value that comes from a ticket is escaped. Every state-changing form
-//! carries a CSRF token, and the session cookie is HttpOnly and SameSite=Strict.
+//! The admin console: server-rendered pages with a little progressive JavaScript.
+//! Everything that comes from a ticket is escaped. Every state-changing form carries a
+//! per-session CSRF token, and the session cookie is HttpOnly and SameSite=Strict.
+//! The pages work without JavaScript; the script only adds live updates and comfort.
+
+mod dashboard;
+mod people;
+mod repos;
+mod system;
+mod tickets;
+mod ui;
 
 use std::sync::Arc;
 
-use axum::extract::{Form, Path, Query, State};
+use axum::extract::{Form, Path, State};
 use axum::http::header::{COOKIE, LOCATION, SET_COOKIE};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
@@ -12,26 +20,41 @@ use axum::routing::{get, post};
 use axum::Router;
 use serde::Deserialize;
 use sqlx::Row;
-use tasklane_orchestrator::approval::{decide, Decision, Principal};
 
 use crate::auth::ct_eq;
 use crate::{esc, AppState};
+use ui::{empty, head, icon, render};
 
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/", get(home))
+        .route("/", get(dashboard::home))
+        .route("/fragments/overview", get(dashboard::overview_fragment))
         .route("/login", get(login_form).post(login))
-        .route("/tickets/{id}", get(ticket_page))
-        .route("/tickets/{id}/decide", post(decide_form))
-        .route("/services", get(services_page))
-        .route("/services/{id}/mode", post(set_mode))
+        .route("/logout", post(logout))
+        .route("/tickets", get(tickets::list))
+        .route("/tickets/{id}", get(tickets::detail))
+        .route("/fragments/ticket/{id}", get(tickets::live_fragment))
+        .route("/tickets/{id}/decide", post(tickets::decide_form))
+        .route("/tickets/{id}/retry", post(tickets::retry_form))
+        .route("/services", get(repos::page))
+        .route("/services/{id}/mode", post(repos::set_mode))
+        .route("/services/{id}/profile", post(repos::set_profile))
+        .route("/people", get(people::page).post(people::add))
+        .route("/people/{id}/delete", post(people::delete))
         .route("/chat", get(chat_page))
         .route("/chat/groups", post(add_group))
         .route("/chat/groups/{id}/delete", post(delete_group))
-        .route("/logout", post(logout))
-        .route("/tickets/{id}/retry", post(retry_form))
+        .route("/activity", get(system::activity))
+        .route("/health", get(system::health))
         .route("/pause", post(pause))
         .route("/resume", post(resume))
+        .route("/static/app.css", get(|| async { ui::asset_css() }))
+        .route("/static/app.js", get(|| async { ui::asset_js() }))
+        .route("/static/icon.svg", get(|| async { ui::asset_icon() }))
+        .route(
+            "/manifest.webmanifest",
+            get(|| async { ui::asset_manifest() }),
+        )
 }
 
 /// A signed-in console session, stored server-side with its own CSRF token.
@@ -67,6 +90,22 @@ async fn session(st: &AppState, headers: &HeaderMap) -> Option<Session> {
     csrf.map(|csrf| Session { csrf })
 }
 
+/// The session, or a redirect to the sign-in page.
+#[allow(clippy::result_large_err)]
+async fn guard(st: &AppState, headers: &HeaderMap) -> Result<Session, Response> {
+    session(st, headers).await.ok_or_else(|| redirect("/login"))
+}
+
+async fn csrf_ok(st: &AppState, headers: &HeaderMap, token: &str) -> bool {
+    session(st, headers)
+        .await
+        .is_some_and(|s| ct_eq(token, &s.csrf))
+}
+
+fn forbidden() -> Response {
+    (StatusCode::FORBIDDEN, Html("<!doctype html><meta charset=\"utf-8\"><link rel=\"stylesheet\" href=\"/static/app.css\"><div class=\"login\"><div class=\"card\"><h1>Not allowed</h1><p class=\"muted\">Your session or form token is not valid. Sign in again and retry.</p><a class=\"btn primary\" href=\"/login\">Sign in</a></div></div>")).into_response()
+}
+
 /// 32 random bytes as hex, from the operating system.
 fn random_hex() -> String {
     let mut buf = [0u8; 32];
@@ -78,22 +117,19 @@ fn redirect(to: &str) -> Response {
     (StatusCode::SEE_OTHER, [(LOCATION, to.to_string())]).into_response()
 }
 
-fn page(title: &str, body: &str) -> Html<String> {
+fn login_page(message: &str) -> Html<String> {
     Html(format!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
-<title>{t} - tasklane</title><style>\
-body{{font:15px/1.5 system-ui,sans-serif;max-width:60rem;margin:2rem auto;padding:0 1rem;color:#1d2330}}\
-table{{border-collapse:collapse;width:100%}}th,td{{text-align:left;padding:.4rem .6rem;border-bottom:1px solid #dde1ea}}\
-a{{color:#0b5fff}}.pill{{border-radius:1em;padding:0 .6em;background:#eef1f7}}.warn{{background:#fff3cd}}\
-button{{font:inherit;padding:.3rem .8rem;margin-right:.4rem}}code,pre{{background:#f4f6fa;padding:.1rem .3rem}}pre{{padding:.6rem;overflow:auto}}\
-nav a{{margin-right:1rem}}</style></head><body><nav><a href=\"/\">Tickets</a><a href=\"/services\">Repositories</a><a href=\"/chat\">Chat groups</a></nav>{b}</body></html>",
-        t = esc(title),
-        b = body
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Sign in - tasklane</title>\
+<meta name=\"theme-color\" content=\"#14172b\"><link rel=\"icon\" href=\"/static/icon.svg\"><link rel=\"manifest\" href=\"/manifest.webmanifest\"><link rel=\"stylesheet\" href=\"/static/app.css\"></head>\
+<body><div class=\"login\"><div class=\"card\"><div class=\"logo\"><svg viewBox=\"0 0 24 24\" width=\"26\" height=\"26\"><path d=\"M4 7h10M4 12h16M4 17h7\" stroke=\"#fff\" stroke-width=\"2.4\" stroke-linecap=\"round\" fill=\"none\"/></svg></div>\
+<h1>tasklane</h1><p class=\"muted\">Issues in, reviewed changes out. Sign in to manage it.</p>{message}\
+<form method=\"post\" action=\"/login\"><div class=\"field\"><label for=\"token\">Admin token</label><input id=\"token\" type=\"password\" name=\"token\" autocomplete=\"current-password\" autofocus required></div>\
+<button class=\"btn primary\" style=\"width:100%\">Sign in</button><p class=\"hint\">The token is the value of TASKLANE_ADMIN_TOKEN on the server.</p></form></div></div><script src=\"/static/app.js\" defer></script></body></html>"
     ))
 }
 
 async fn login_form() -> Html<String> {
-    page("Sign in", "<h1>Sign in</h1><form method=\"post\" action=\"/login\"><label>Admin token <input type=\"password\" name=\"token\" autocomplete=\"current-password\" required></label> <button>Sign in</button></form>")
+    login_page("")
 }
 
 #[derive(Deserialize)]
@@ -111,9 +147,8 @@ async fn login(State(st): State<Arc<AppState>>, Form(f): Form<LoginIn>) -> Respo
         if t.0 >= 5 {
             return (
                 StatusCode::TOO_MANY_REQUESTS,
-                page(
-                    "Sign in",
-                    "<h1>Sign in</h1><p>Too many wrong tokens. Try again in a few minutes.</p>",
+                login_page(
+                    "<p class=\"pill bad\">Too many wrong tokens. Try again in a few minutes.</p>",
                 ),
             )
                 .into_response();
@@ -125,7 +160,11 @@ async fn login(State(st): State<Arc<AppState>>, Form(f): Form<LoginIn>) -> Respo
             t.1 = std::time::Instant::now();
         }
         t.0 += 1;
-        return (StatusCode::UNAUTHORIZED, page("Sign in", "<h1>Sign in</h1><p>That token is not right.</p><p><a href=\"/login\">Try again</a></p>")).into_response();
+        return (
+            StatusCode::UNAUTHORIZED,
+            login_page("<p class=\"pill bad\">That token is not right.</p>"),
+        )
+            .into_response();
     }
     let (id, csrf) = (random_hex(), random_hex());
     if sqlx::query("INSERT INTO console_sessions (id, csrf, expires_at) VALUES ($1, $2, now() + interval '8 hours')")
@@ -135,7 +174,7 @@ async fn login(State(st): State<Arc<AppState>>, Form(f): Form<LoginIn>) -> Respo
         .await
         .is_err()
     {
-        return (StatusCode::INTERNAL_SERVER_ERROR, page("Error", "<p>Could not start a session.</p>")).into_response();
+        return (StatusCode::INTERNAL_SERVER_ERROR, login_page("<p class=\"pill bad\">Could not start a session.</p>")).into_response();
     }
     let secure = if st.secure_cookies { "; Secure" } else { "" };
     (
@@ -152,24 +191,20 @@ async fn login(State(st): State<Arc<AppState>>, Form(f): Form<LoginIn>) -> Respo
 }
 
 #[derive(Deserialize)]
-struct CsrfOnlyIn {
+struct CsrfOnly {
     csrf: String,
 }
 
 async fn logout(
     State(st): State<Arc<AppState>>,
     headers: HeaderMap,
-    Form(f): Form<CsrfOnlyIn>,
+    Form(f): Form<CsrfOnly>,
 ) -> Response {
     let Some(sess) = session(&st, &headers).await else {
         return redirect("/login");
     };
     if !ct_eq(&f.csrf, &sess.csrf) {
-        return (
-            StatusCode::FORBIDDEN,
-            page("Refused", "<p>Form token is not valid.</p>"),
-        )
-            .into_response();
+        return forbidden();
     }
     if let Some(id) = cookie_value(&headers) {
         let _ = sqlx::query("DELETE FROM console_sessions WHERE id = $1")
@@ -190,273 +225,6 @@ async fn logout(
         .into_response()
 }
 
-#[derive(Deserialize)]
-struct HomeQuery {
-    state: Option<String>,
-}
-
-async fn home(
-    State(st): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Query(q): Query<HomeQuery>,
-) -> Response {
-    let Some(sess) = session(&st, &headers).await else {
-        return redirect("/login");
-    };
-    let pool = st.orch.pool();
-    let paused = st.orch.is_paused().await.unwrap_or(false);
-    let rows = sqlx::query(
-        "SELECT t.id, t.state, t.level, t.external_ref, t.title, s.external_id, t.updated_at::text AS updated
-         FROM tickets t JOIN services s ON s.id = t.service_id
-         WHERE ($1::text IS NULL OR t.state = $1) ORDER BY t.updated_at DESC LIMIT 100",
-    )
-    .bind(q.state.as_deref())
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
-    let mut b = String::from("<h1>Tickets</h1>");
-    b.push_str(&format!(
-        "<form method=\"post\" action=\"{}\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><p>Work is <strong>{}</strong>. <button>{}</button></p></form>",
-        if paused { "/resume" } else { "/pause" },
-        sess.csrf,
-        if paused { "paused" } else { "running" },
-        if paused { "Resume" } else { "Pause everything" }
-    ));
-    b.push_str(&format!("<form method=\"post\" action=\"/logout\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><button>Sign out</button></form>", sess.csrf));
-    b.push_str("<p>Show: <a href=\"/\">all</a> | <a href=\"/?state=awaiting_approval\">waiting for approval</a> | <a href=\"/?state=failed\">failed</a></p>");
-    b.push_str("<table><tr><th>#</th><th>Repository</th><th>Ticket</th><th>State</th><th>Level</th><th>Updated</th></tr>");
-    for r in rows {
-        let id: i64 = r.get("id");
-        let state: String = r.get("state");
-        let level: Option<i16> = r.get("level");
-        let ext: String = r.get("external_ref");
-        let title: Option<String> = r.get("title");
-        let service: String = r.get("external_id");
-        let updated: String = r.get("updated");
-        b.push_str(&format!(
-            "<tr><td><a href=\"/tickets/{id}\">{id}</a></td><td>{}</td><td>{}{}</td><td><span class=\"pill{}\">{}</span></td><td>{}</td><td>{}</td></tr>",
-            esc(&service),
-            esc(&ext),
-            title.map(|t| format!(" {}", esc(&t))).unwrap_or_default(),
-            if state == "awaiting_approval" || state == "failed" { " warn" } else { "" },
-            esc(&state),
-            level.map(|l| l.to_string()).unwrap_or_default(),
-            esc(&updated)
-        ));
-    }
-    b.push_str("</table>");
-    page("Tickets", &b).into_response()
-}
-
-async fn ticket_page(
-    State(st): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(id): Path<i64>,
-) -> Response {
-    let Some(sess) = session(&st, &headers).await else {
-        return redirect("/login");
-    };
-    let pool = st.orch.pool();
-    let Some(r) = sqlx::query(
-        "SELECT t.state, t.level, t.level_reasons::text AS reasons, t.plan_hash, t.external_ref, t.title, t.branch, t.pr_ref, t.last_error, t.plan_text, t.diff_text, s.external_id
-         FROM tickets t JOIN services s ON s.id = t.service_id WHERE t.id = $1",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-    .unwrap_or(None) else {
-        return (StatusCode::NOT_FOUND, page("Not found", "<p>No such ticket.</p>")).into_response();
-    };
-    let state: String = r.get("state");
-    let level: Option<i16> = r.get("level");
-    let plan_hash: Option<String> = r.get("plan_hash");
-    let mut b = format!(
-        "<h1>Ticket {id}</h1><p>{} #{} {}</p><table>\
-<tr><th>State</th><td>{}</td></tr><tr><th>Level</th><td>{}</td></tr><tr><th>Why</th><td><code>{}</code></td></tr>\
-<tr><th>Branch</th><td>{}</td></tr><tr><th>Pull request</th><td>{}</td></tr><tr><th>Last error</th><td>{}</td></tr></table>",
-        esc(&r.get::<String, _>("external_id")),
-        esc(&r.get::<String, _>("external_ref")),
-        esc(&r.get::<Option<String>, _>("title").unwrap_or_default()),
-        esc(&state),
-        level.map(|l| l.to_string()).unwrap_or_default(),
-        esc(&r.get::<Option<String>, _>("reasons").unwrap_or_default()),
-        esc(&r.get::<Option<String>, _>("branch").unwrap_or_default()),
-        esc(&r.get::<Option<String>, _>("pr_ref").unwrap_or_default()),
-        esc(&r.get::<Option<String>, _>("last_error").unwrap_or_default()),
-    );
-    if state == "awaiting_approval" {
-        if let Some(h) = &plan_hash {
-            b.push_str(&format!(
-                "<h2>Decision</h2><p>Approving applies to this exact plan or diff: <code>{}</code></p>\
-<form method=\"post\" action=\"/tickets/{id}/decide\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"plan_hash\" value=\"{}\">\
-<button name=\"decision\" value=\"approve\">Approve</button><button name=\"decision\" value=\"reject\">Reject</button></form>",
-                esc(&h[..16.min(h.len())]),
-                sess.csrf,
-                esc(h)
-            ));
-        }
-    }
-    if let Some(plan) = r.get::<Option<String>, _>("plan_text") {
-        b.push_str(&format!("<h2>Plan</h2><pre>{}</pre>", esc(&plan)));
-    }
-    if let Some(diff) = r.get::<Option<String>, _>("diff_text") {
-        b.push_str(&format!(
-            "<h2>Change (what an approval covers)</h2><pre>{}</pre>",
-            esc(&diff)
-        ));
-    }
-    if state == "failed" {
-        b.push_str(&format!(
-            "<h2>This ticket stopped</h2><form method=\"post\" action=\"/tickets/{id}/retry\"><input type=\"hidden\" name=\"csrf\" value=\"{}\">\
-<button name=\"action\" value=\"retry\">Try again</button><button name=\"action\" value=\"close\">Close it</button></form>",
-            sess.csrf
-        ));
-    }
-    b.push_str(
-        "<h2>History</h2><table><tr><th>When</th><th>Who</th><th>What</th><th>Detail</th></tr>",
-    );
-    let audit = sqlx::query("SELECT at::text AS at, actor, action, detail::text AS detail FROM audit_events WHERE ticket_id = $1 ORDER BY id DESC LIMIT 100")
-        .bind(id)
-        .fetch_all(pool)
-        .await
-        .unwrap_or_default();
-    for a in audit {
-        b.push_str(&format!(
-            "<tr><td>{}</td><td>{}</td><td>{}</td><td><code>{}</code></td></tr>",
-            esc(&a.get::<String, _>("at")),
-            esc(&a.get::<String, _>("actor")),
-            esc(&a.get::<String, _>("action")),
-            esc(&a.get::<String, _>("detail"))
-        ));
-    }
-    b.push_str("</table>");
-    page(&format!("Ticket {id}"), &b).into_response()
-}
-
-#[derive(Deserialize)]
-struct DecideIn {
-    csrf: String,
-    plan_hash: String,
-    decision: String,
-}
-
-async fn decide_form(
-    State(st): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(id): Path<i64>,
-    Form(f): Form<DecideIn>,
-) -> Response {
-    if session(&st, &headers)
-        .await
-        .is_none_or(|s| !ct_eq(&f.csrf, &s.csrf))
-    {
-        return (
-            StatusCode::FORBIDDEN,
-            page(
-                "Refused",
-                "<p>Session or form token is not valid. Sign in again.</p>",
-            ),
-        )
-            .into_response();
-    }
-    let decision = if f.decision == "approve" {
-        Decision::Approve
-    } else {
-        Decision::Reject
-    };
-    let who = Principal {
-        channel: "console".into(),
-        reference: "admin".into(),
-    };
-    match decide(st.orch.pool(), id, &who, "console", decision, &f.plan_hash).await {
-        Ok(_) => redirect(&format!("/tickets/{id}")),
-        Err(e) => (
-            StatusCode::CONFLICT,
-            page(
-                "Not done",
-                &format!(
-                    "<p>{}</p><p><a href=\"/tickets/{id}\">Back to the ticket</a></p>",
-                    esc(&e.to_string())
-                ),
-            ),
-        )
-            .into_response(),
-    }
-}
-
-async fn services_page(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    let Some(sess) = session(&st, &headers).await else {
-        return redirect("/login");
-    };
-    let rows =
-        sqlx::query("SELECT id, external_id, mode, archived FROM services ORDER BY external_id")
-            .fetch_all(st.orch.pool())
-            .await
-            .unwrap_or_default();
-    let mut b = String::from("<h1>Repositories</h1><p><strong>watch</strong>: listed only. <strong>triage</strong>: tickets are read and planned; a person must approve before any change. <strong>full</strong>: the whole pipeline runs for approved levels.</p><table><tr><th>Repository</th><th>Mode</th><th></th></tr>");
-    for r in rows {
-        let id: i64 = r.get("id");
-        let mode: String = r.get("mode");
-        let archived: bool = r.get("archived");
-        b.push_str(&format!(
-            "<tr><td>{}{}</td><td>{}</td><td><form method=\"post\" action=\"/services/{id}/mode\"><input type=\"hidden\" name=\"csrf\" value=\"{}\">\
-<select name=\"mode\"><option>watch</option><option>triage</option><option>full</option></select> <button>Set</button></form></td></tr>",
-            esc(&r.get::<String, _>("external_id")),
-            if archived { " (archived)" } else { "" },
-            esc(&mode),
-            sess.csrf
-        ));
-    }
-    b.push_str("</table>");
-    page("Repositories", &b).into_response()
-}
-
-#[derive(Deserialize)]
-struct ModeIn {
-    csrf: String,
-    mode: String,
-}
-
-async fn set_mode(
-    State(st): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(id): Path<i64>,
-    Form(f): Form<ModeIn>,
-) -> Response {
-    if session(&st, &headers)
-        .await
-        .is_none_or(|s| !ct_eq(&f.csrf, &s.csrf))
-    {
-        return (
-            StatusCode::FORBIDDEN,
-            page("Refused", "<p>Session or form token is not valid.</p>"),
-        )
-            .into_response();
-    }
-    if !matches!(f.mode.as_str(), "watch" | "triage" | "full") {
-        return (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            page("Refused", "<p>Unknown mode.</p>"),
-        )
-            .into_response();
-    }
-    let _ = sqlx::query("UPDATE services SET mode = $2 WHERE id = $1")
-        .bind(id)
-        .bind(&f.mode)
-        .execute(st.orch.pool())
-        .await;
-    let _ = sqlx::query("INSERT INTO audit_events (actor, action, detail) VALUES ('console:admin', 'service.mode', $1)")
-        .bind(serde_json::json!({"service_id": id, "mode": f.mode}))
-        .execute(st.orch.pool())
-        .await;
-    redirect("/services")
-}
-
-#[derive(Deserialize)]
-struct CsrfOnly {
-    csrf: String,
-}
-
 async fn pause(
     State(st): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -472,15 +240,8 @@ async fn resume(
     toggle(st, headers, f, false).await
 }
 async fn toggle(st: Arc<AppState>, headers: HeaderMap, f: CsrfOnly, paused: bool) -> Response {
-    if session(&st, &headers)
-        .await
-        .is_none_or(|s| !ct_eq(&f.csrf, &s.csrf))
-    {
-        return (
-            StatusCode::FORBIDDEN,
-            page("Refused", "<p>Session or form token is not valid.</p>"),
-        )
-            .into_response();
+    if !csrf_ok(&st, &headers, &f.csrf).await {
+        return forbidden();
     }
     let _ = st.orch.set_paused(paused).await;
     let _ = sqlx::query(
@@ -497,8 +258,9 @@ async fn toggle(st: Arc<AppState>, headers: HeaderMap, f: CsrfOnly, paused: bool
 }
 
 async fn chat_page(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    let Some(sess) = session(&st, &headers).await else {
-        return redirect("/login");
+    let sess = match guard(&st, &headers).await {
+        Ok(s) => s,
+        Err(r) => return r,
     };
     let pool = st.orch.pool();
     let groups = sqlx::query("SELECT g.id, g.channel, g.group_ref, g.daily_cap, s.external_id FROM chat_groups g JOIN services s ON s.id = g.service_id ORDER BY g.id").fetch_all(pool).await.unwrap_or_default();
@@ -507,19 +269,38 @@ async fn chat_page(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Respo
             .fetch_all(pool)
             .await
             .unwrap_or_default();
-    let mut b = String::from("<h1>Chat groups</h1><p>Anyone in a registered group can ask questions about its repository and open tickets. Only registered approvers can approve. A group that is not listed gets one reply with its id and nothing else.</p><table><tr><th>Channel</th><th>Group id</th><th>Repository</th><th>Questions per day</th><th></th></tr>");
+    let mut b = head(
+        "Chat groups",
+        "Let people ask questions and open tickets from a chat, with approvals as buttons.",
+        "",
+    );
+    b.push_str(
+        "<div class=\"card\" style=\"margin-bottom:1rem\"><div class=\"grid g3\">\
+<div><strong>1. Add the bot</strong><p class=\"small muted\">Add your bot to a group. It replies once with the group id, then leaves.</p></div>\
+<div><strong>2. Register the group</strong><p class=\"small muted\">Paste that id below and pick the repository it is about. Add the bot again.</p></div>\
+<div><strong>3. Use it</strong><p class=\"small muted\">Anyone in the group can use /ask and /task. Only approvers on the People page can press approve.</p></div></div></div>",
+    );
+    b.push_str("<div class=\"card flush\"><div class=\"scroll\"><table><thead><tr><th>Channel</th><th>Group id</th><th>Repository</th><th>Questions per day</th><th></th></tr></thead><tbody>");
+    if groups.is_empty() {
+        b.push_str(&format!(
+            "<tr><td colspan=\"5\">{}</td></tr>",
+            empty("chat", "No groups registered yet")
+        ));
+    }
     for g in groups {
         let id: i64 = g.get("id");
         b.push_str(&format!(
-            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td><form method=\"post\" action=\"/chat/groups/{id}/delete\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><button>Remove</button></form></td></tr>",
+            "<tr><td>{}</td><td class=\"mono\">{}</td><td>{}</td><td>{}</td><td style=\"text-align:right\"><form method=\"post\" action=\"/chat/groups/{id}/delete\" style=\"display:inline\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><button class=\"btn small danger\" data-confirm=\"Remove this group?\" title=\"Remove\">{}</button></form></td></tr>",
             esc(&g.get::<String, _>("channel")),
             esc(&g.get::<String, _>("group_ref")),
             esc(&g.get::<String, _>("external_id")),
             g.get::<i32, _>("daily_cap"),
-            sess.csrf
+            sess.csrf,
+            icon("trash")
         ));
     }
-    b.push_str(&format!("</table><h2>Register a group</h2><form method=\"post\" action=\"/chat/groups\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><label>Group id <input name=\"group_ref\" required></label> <label>Repository <select name=\"service_id\">", sess.csrf));
+    b.push_str("</tbody></table></div></div>");
+    b.push_str(&format!("<div class=\"card\" style=\"margin-top:1rem\"><h2>Register a group</h2><form method=\"post\" action=\"/chat/groups\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><div class=\"row\"><div><label for=\"gr\">Group id</label><input id=\"gr\" name=\"group_ref\" type=\"text\" required placeholder=\"-1001234567890\"></div><div><label for=\"sv\">Repository</label><select id=\"sv\" name=\"service_id\">", sess.csrf));
     for sv in services {
         b.push_str(&format!(
             "<option value=\"{}\">{}</option>",
@@ -527,8 +308,10 @@ async fn chat_page(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Respo
             esc(&sv.get::<String, _>("external_id"))
         ));
     }
-    b.push_str("</select></label> <label>Questions per day <input name=\"daily_cap\" type=\"number\" value=\"50\" min=\"1\"></label> <button>Register</button></form>");
-    page("Chat groups", &b).into_response()
+    b.push_str(&format!("</select></div><div><label for=\"dc\">Questions per day</label><input id=\"dc\" name=\"daily_cap\" type=\"number\" value=\"50\" min=\"1\"></div><div class=\"row tight\"><button class=\"btn primary\">{} Register</button></div></div><p class=\"hint\">Anyone in a registered group can read what /ask can read from that repository. Keep groups private.</p></form></div>", icon("plus")));
+    render(&st, &sess.csrf, "chat", "Chat groups", &b)
+        .await
+        .into_response()
 }
 
 #[derive(Deserialize)]
@@ -544,21 +327,14 @@ async fn add_group(
     headers: HeaderMap,
     Form(f): Form<GroupIn>,
 ) -> Response {
-    if session(&st, &headers)
-        .await
-        .is_none_or(|s| !ct_eq(&f.csrf, &s.csrf))
-    {
-        return (
-            StatusCode::FORBIDDEN,
-            page("Refused", "<p>Session or form token is not valid.</p>"),
-        )
-            .into_response();
+    if !csrf_ok(&st, &headers, &f.csrf).await {
+        return forbidden();
     }
     let group_ref = f.group_ref.trim();
     if group_ref.is_empty() || group_ref.len() > 64 || f.daily_cap < 1 {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
-            page("Refused", "<p>Check the group id and the daily number.</p>"),
+            "Check the group id and the daily number.",
         )
             .into_response();
     }
@@ -569,11 +345,7 @@ async fn add_group(
         .execute(st.orch.pool())
         .await;
     if r.is_err() {
-        return (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            page("Refused", "<p>Unknown repository.</p>"),
-        )
-            .into_response();
+        return (StatusCode::UNPROCESSABLE_ENTITY, "Unknown repository.").into_response();
     }
     let _ = sqlx::query("INSERT INTO audit_events (actor, action, detail) VALUES ('console:admin', 'chat.group_registered', $1)")
         .bind(serde_json::json!({"group": group_ref, "service_id": f.service_id}))
@@ -588,62 +360,12 @@ async fn delete_group(
     Path(id): Path<i64>,
     Form(f): Form<CsrfOnly>,
 ) -> Response {
-    if session(&st, &headers)
-        .await
-        .is_none_or(|s| !ct_eq(&f.csrf, &s.csrf))
-    {
-        return (
-            StatusCode::FORBIDDEN,
-            page("Refused", "<p>Session or form token is not valid.</p>"),
-        )
-            .into_response();
+    if !csrf_ok(&st, &headers, &f.csrf).await {
+        return forbidden();
     }
     let _ = sqlx::query("DELETE FROM chat_groups WHERE id = $1")
         .bind(id)
         .execute(st.orch.pool())
         .await;
     redirect("/chat")
-}
-
-#[derive(Deserialize)]
-struct RetryIn {
-    csrf: String,
-    action: String,
-}
-
-async fn retry_form(
-    State(st): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(id): Path<i64>,
-    Form(f): Form<RetryIn>,
-) -> Response {
-    if session(&st, &headers)
-        .await
-        .is_none_or(|s| !ct_eq(&f.csrf, &s.csrf))
-    {
-        return (
-            StatusCode::FORBIDDEN,
-            page("Refused", "<p>Session or form token is not valid.</p>"),
-        )
-            .into_response();
-    }
-    let who = Principal {
-        channel: "console".into(),
-        reference: "admin".into(),
-    };
-    match tasklane_orchestrator::approval::retry_or_close(
-        st.orch.pool(),
-        id,
-        &who,
-        f.action == "close",
-    )
-    .await
-    {
-        Ok(_) => redirect(&format!("/tickets/{id}")),
-        Err(e) => (
-            StatusCode::CONFLICT,
-            page("Not done", &format!("<p>{}</p>", esc(&e.to_string()))),
-        )
-            .into_response(),
-    }
 }

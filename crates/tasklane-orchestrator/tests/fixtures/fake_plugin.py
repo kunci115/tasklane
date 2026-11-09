@@ -106,6 +106,8 @@ def run(params):
 
 
 def handle(op, params):
+    if op == "describe":
+        return {"name": "fake", "version": "0.0.0", "role": "test", "sandbox": "docker", "unsandboxed_allowed": False}
     if op == "get_item":
         return item(params["ref"])
     if op == "run":

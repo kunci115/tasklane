@@ -472,7 +472,9 @@ def handle(req):
         op = req.get("op")
         if op == "describe":
             res = {"name": "claude", "role": "agent_engine",
-                   "protocol_major": PROTOCOL_MAJOR, "version": VERSION}
+                   "protocol_major": PROTOCOL_MAJOR, "version": VERSION,
+                   "sandbox": sandbox_mode(),
+                   "unsandboxed_allowed": os.environ.get("TASKLANE_ALLOW_UNSANDBOXED", "").strip() == "1"}
         elif op == "capabilities":
             res = capabilities()
         elif op == "run":

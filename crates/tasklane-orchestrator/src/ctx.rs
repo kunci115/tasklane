@@ -508,6 +508,14 @@ impl Orchestrator {
         Ok(())
     }
 
+    /// What the two plug-ins say about themselves (`None` if one does not answer in time).
+    pub async fn describe_plugins(&self) -> (Option<Value>, Option<Value>) {
+        let t = Duration::from_secs(5);
+        let src = self.source.call("describe", json!({}), t).await.ok();
+        let eng = self.engine.call("describe", json!({}), t).await.ok();
+        (src, eng)
+    }
+
     /// Both plug-ins answer? Any reply counts (even "unknown operation"); silence or a dead process does not.
     pub async fn plugins_ready(&self) -> bool {
         use crate::host::CallError;

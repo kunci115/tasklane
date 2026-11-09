@@ -11,6 +11,19 @@ Ticket-driven AI agent pipeline: a problem is reported, triaged, approved by a h
 - One install = one organization. Install with `docker compose up`, then a setup wizard (planned).
 - Safe defaults: repos start read-only; nothing merges without approval; production is never touched by the system.
 
+## The console
+
+A web console ships inside the daemon (no separate frontend, no JavaScript build). It works on a laptop, a tablet and a phone, in light and dark, and can be installed as an app from Chrome or Safari ("Add to Dock" or "Install app").
+
+| | |
+|---|---|
+| ![Overview](docs/screenshots/overview.png) | ![Approve a change](docs/screenshots/approve-a-change.png) |
+| **Overview:** what needs you, what is moving, a live pipeline board. | **A decision:** the exact diff, why a person is needed, approve or reject. |
+| ![Repositories](docs/screenshots/repositories.png) | ![Health and setup](docs/screenshots/health-and-setup.png) |
+| **Repositories:** choose how far tasklane may go in each, and give the agent instructions. | **Health and setup:** a checklist that tells a new user what to do next. |
+
+Also: a ticket list with search, a timeline written in plain sentences, a progress stepper, people and roles, chat groups, an activity feed, and a pause-all switch. The demo data in the screenshots is invented.
+
 ## Layout
 
 | Path | What |

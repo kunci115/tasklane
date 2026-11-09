@@ -22,6 +22,21 @@ curl -fsS http://127.0.0.1:8080/readyz     # prints "ready"
 
 Open the console at `http://127.0.0.1:8080/` (through your proxy in production) and sign in with `TASKLANE_ADMIN_TOKEN`.
 
+## The console at a glance
+
+Sign in with `TASKLANE_ADMIN_TOKEN`. The left menu has:
+
+- **Overview**: a number of things waiting for you, a list of what needs a decision (with a Review button), and a live board of every ticket by stage. A "Getting started" card guides a new install through connecting a source, making the agent safe, choosing repositories and getting a first ticket.
+- **Tickets**: a searchable list with views (needs you, in progress, done, failed). Opening one shows a progress stepper, a timeline in plain sentences, the plan, and the full colour diff of the change. **A decision box appears when a person is needed**: it says whether you are approving a plan or an exact change, why a person is needed, and offers Approve and Reject. A stopped ticket offers Try again and Close.
+- **Repositories**: a mode switch per repository (watch, triage, full), its protected paths, and **Agent settings** (instructions for the agent and a test command it may run).
+- **People**: who may approve and at which level.
+- **Chat groups**: register Telegram groups.
+- **Activity**: everything tasklane and people did.
+- **Health & setup**: whether each part is connected, whether the agent is sandboxed, the queue, and recent failures.
+- **Pause all work** (bottom left) stops all new work at once. Light or dark and sign out are next to it.
+
+Pages refresh by themselves every few seconds while the tab is open. Without JavaScript the pages still work; they just do not refresh on their own. To use it as an app, open it in Chrome or Safari and choose "Install" or "Add to Dock".
+
 ## 1. Create the GitHub App
 
 GitHub: Settings, Developer settings, GitHub Apps, New. Then:

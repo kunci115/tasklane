@@ -646,7 +646,7 @@ async fn five_wrong_tokens_lock_sign_in_for_a_while() {
 #[tokio::test]
 async fn the_approver_sees_the_plan_and_the_change_and_a_failed_ticket_can_be_retried() {
     let Some(e) = env().await else { return };
-    let (t,): (i64,) = sqlx::query_as("INSERT INTO tickets (service_id, external_ref, state, level, plan_hash, plan_text, diff_text) SELECT id, '3', 'awaiting_approval', 2, 'abc123', 'Plan: <b>rotate</b>', '+ new line' FROM services WHERE external_id = 'org/repo' RETURNING id")
+    let (t,): (i64,) = sqlx::query_as("INSERT INTO tickets (service_id, external_ref, state, level, plan_hash, plan_text, diff_text) SELECT id, '3', 'awaiting_approval', 2, 'abc123', 'Plan: <b>rotate</b>', E'diff --git a/README.md b/README.md\\n--- a/README.md\\n+++ b/README.md\\n@@ -1 +1,2 @@\\n keep\\n+new line' FROM services WHERE external_id = 'org/repo' RETURNING id")
         .fetch_one(&e.pool).await.unwrap();
     let page = send(
         &e.app,
@@ -655,7 +655,10 @@ async fn the_approver_sees_the_plan_and_the_change_and_a_failed_ticket_can_be_re
     .await
     .2;
     assert!(
-        page.contains("Plan: &lt;b&gt;rotate&lt;/b&gt;") && page.contains("+ new line"),
+        page.contains("Plan: &lt;b&gt;rotate&lt;/b&gt;")
+            && page.contains("README.md")
+            && page.contains("dl add")
+            && page.contains("new line"),
         "{page}"
     );
     sqlx::query("UPDATE tickets SET state = 'failed' WHERE id = $1")
@@ -703,4 +706,354 @@ async fn the_approver_sees_the_plan_and_the_change_and_a_failed_ticket_can_be_re
         .await
         .unwrap();
     assert_eq!(state, "queued");
+}
+
+// ---- the redesigned console ----
+
+async fn seed_ticket(e: &Env, ext: &str, title: &str, state: &str, level: i16) -> i64 {
+    sqlx::query_scalar("INSERT INTO tickets (service_id, external_ref, title, state, level, updated_at) SELECT id, $1, $2, $3, $4, now() FROM services WHERE external_id = 'org/repo' RETURNING id")
+        .bind(ext)
+        .bind(title)
+        .bind(state)
+        .bind(level)
+        .fetch_one(&e.pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn the_overview_shows_what_needs_you_and_a_board_and_its_live_part_needs_a_session() {
+    let Some(e) = env().await else { return };
+    seed_ticket(&e, "1", "Rotate the <key>", "awaiting_approval", 3).await;
+    seed_ticket(&e, "2", "Fix the footer", "ci_running", 1).await;
+    seed_ticket(&e, "3", "Old fix", "merged", 1).await;
+    let (st, _, page) = send(&e.app, get("/", Some(e.cookie.clone()))).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(
+        page.contains("Needs you")
+            && page.contains("Pipeline")
+            && page.contains("data-live=\"/fragments/overview\"")
+    );
+    assert!(
+        page.contains("Rotate the &lt;key&gt;") && !page.contains("Rotate the <key>"),
+        "ticket text is escaped"
+    );
+    assert!(
+        page.contains("waiting for your decision") && page.contains("merged in the last 7 days")
+    );
+    // the live fragment is only for signed-in users
+    assert_eq!(
+        send(&e.app, get("/fragments/overview", None)).await.0,
+        StatusCode::SEE_OTHER
+    );
+    let (st, _, frag) = send(&e.app, get("/fragments/overview", Some(e.cookie.clone()))).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(
+        !frag.contains("<html") && frag.contains("Fix the footer"),
+        "a fragment, not a page"
+    );
+}
+
+#[tokio::test]
+async fn the_ticket_list_filters_by_view_and_searches_without_trusting_the_query() {
+    let Some(e) = env().await else { return };
+    seed_ticket(&e, "1", "Printing fails", "failed", 1).await;
+    seed_ticket(&e, "2", "Footer typo", "merged", 1).await;
+    let (_, _, all) = send(&e.app, get("/tickets", Some(e.cookie.clone()))).await;
+    assert!(all.contains("Printing fails") && all.contains("Footer typo"));
+    let (_, _, failed) = send(&e.app, get("/tickets?view=failed", Some(e.cookie.clone()))).await;
+    assert!(failed.contains("Printing fails") && !failed.contains("Footer typo"));
+    let (_, _, found) = send(&e.app, get("/tickets?q=footer", Some(e.cookie.clone()))).await;
+    assert!(found.contains("Footer typo") && !found.contains("Printing fails"));
+    let (st, _, evil) = send(
+        &e.app,
+        get(
+            "/tickets?q=%22%3E%3Cscript%3Ealert(1)%3C/script%3E%25",
+            Some(e.cookie.clone()),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(
+        !evil.contains("<script>alert(1)</script>"),
+        "the search text is escaped"
+    );
+    assert_eq!(
+        send(&e.app, get("/tickets", None)).await.0,
+        StatusCode::SEE_OTHER
+    );
+}
+
+#[tokio::test]
+async fn the_ticket_page_has_a_stepper_a_timeline_and_live_parts_and_unknown_tickets_are_a_404() {
+    let Some(e) = env().await else { return };
+    let t = seed_ticket(&e, "9", "Add a line", "ci_running", 1).await;
+    sqlx::query("INSERT INTO audit_events (actor, action, ticket_id, detail) VALUES ('orchestrator','ticket.ci_green',$1,'{}'), ('orchestrator','ticket.failed',$1,'{\"reason\":\"x <b>\"}')").bind(t).execute(&e.pool).await.unwrap();
+    let (st, _, page) = send(
+        &e.app,
+        get(&format!("/tickets/{t}"), Some(e.cookie.clone())),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(
+        page.contains("class=\"stepper\"")
+            && page.contains("What happened")
+            && page.contains("CI passed")
+    );
+    assert!(page.contains("x &lt;b&gt;"), "reasons are escaped");
+    for part in ["steps", "timeline"] {
+        let (st, _, frag) = send(
+            &e.app,
+            get(
+                &format!("/fragments/ticket/{t}?part={part}"),
+                Some(e.cookie.clone()),
+            ),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{part}");
+        assert!(!frag.contains("<html"));
+    }
+    assert_eq!(
+        send(&e.app, get("/tickets/99999", Some(e.cookie.clone())))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        send(
+            &e.app,
+            get("/fragments/ticket/99999", Some(e.cookie.clone()))
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn repository_agent_settings_are_saved_validated_and_protected_by_csrf() {
+    let Some(e) = env().await else { return };
+    let id: i64 = sqlx::query_scalar("SELECT id FROM services WHERE external_id = 'org/repo'")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    let path = format!("/services/{id}/profile");
+    let body =
+        |sys: &str, cmd: &str| format!("csrf={}&system={}&test_command={}", e.csrf, sys, cmd);
+    assert_eq!(
+        send(
+            &e.app,
+            form(
+                &path,
+                "csrf=bad&system=x&test_command=y".into(),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        send(
+            &e.app,
+            form(
+                &path,
+                body("be+careful", "pytest+-q"),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    let profile: serde_json::Value =
+        sqlx::query_scalar("SELECT agent_profile FROM services WHERE id = $1")
+            .bind(id)
+            .fetch_one(&e.pool)
+            .await
+            .unwrap();
+    assert_eq!(profile["system"], "be careful");
+    assert_eq!(profile["test_command"], "pytest -q");
+    // a command the engine would refuse is refused here too
+    assert_eq!(
+        send(
+            &e.app,
+            form(&path, body("x", "rm+(-rf)"), Some(e.cookie.clone()))
+        )
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        send(
+            &e.app,
+            form(&path, body("x", "a%0Ab"), Some(e.cookie.clone()))
+        )
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let (_, _, page) = send(&e.app, get("/services", Some(e.cookie.clone()))).await;
+    assert!(
+        page.contains("pytest -q") && page.contains("be careful") && page.contains("aria-pressed")
+    );
+}
+
+#[tokio::test]
+async fn people_can_be_added_changed_and_removed_but_not_the_built_in_admin() {
+    let Some(e) = env().await else { return };
+    let add = |channel: &str, who: &str, role: &str| {
+        format!(
+            "csrf={}&channel={channel}&reference={who}&role={role}",
+            e.csrf
+        )
+    };
+    assert_eq!(
+        send(
+            &e.app,
+            form(
+                "/people",
+                "csrf=x&channel=telegram&reference=1&role=owner".into(),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        send(
+            &e.app,
+            form(
+                "/people",
+                add("telegram", "555", "team_approver"),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    assert_eq!(
+        send(
+            &e.app,
+            form(
+                "/people",
+                add("telegram", "555", "owner"),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER,
+        "adding again changes the role"
+    );
+    let role: String = sqlx::query_scalar(
+        "SELECT role FROM principals WHERE channel = 'telegram' AND ref = '555'",
+    )
+    .fetch_one(&e.pool)
+    .await
+    .unwrap();
+    assert_eq!(role, "owner");
+    for bad in [
+        add("sms", "1", "owner"),
+        add("telegram", "1", "god"),
+        add("telegram", "", "owner"),
+    ] {
+        assert_eq!(
+            send(&e.app, form("/people", bad, Some(e.cookie.clone())))
+                .await
+                .0,
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
+    let (_, _, page) = send(&e.app, get("/people", Some(e.cookie.clone()))).await;
+    assert!(page.contains("555") && page.contains("signed in with the admin token"));
+    let admin_id: i64 = sqlx::query_scalar("SELECT id FROM principals WHERE channel = 'console'")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    let person_id: i64 = sqlx::query_scalar("SELECT id FROM principals WHERE ref = '555'")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    send(
+        &e.app,
+        form(
+            &format!("/people/{admin_id}/delete"),
+            format!("csrf={}", e.csrf),
+            Some(e.cookie.clone()),
+        ),
+    )
+    .await;
+    send(
+        &e.app,
+        form(
+            &format!("/people/{person_id}/delete"),
+            format!("csrf={}", e.csrf),
+            Some(e.cookie.clone()),
+        ),
+    )
+    .await;
+    let left: Vec<String> = sqlx::query_scalar("SELECT ref FROM principals")
+        .fetch_all(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        left,
+        vec!["admin".to_string()],
+        "the admin stays, the person is gone"
+    );
+}
+
+#[tokio::test]
+async fn health_setup_and_activity_pages_render_and_the_checklist_reflects_reality() {
+    let Some(e) = env().await else { return };
+    let (st, _, health) = send(&e.app, get("/health", Some(e.cookie.clone()))).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(
+        health.contains("Setup checklist")
+            && health.contains("Connections")
+            && health.contains("Work queue")
+    );
+    assert!(
+        health.contains("running"),
+        "the fake plug-ins answer describe"
+    );
+    seed_ticket(&e, "1", "x", "new", 1).await;
+    sqlx::query("INSERT INTO audit_events (actor, action, detail) VALUES ('console:admin','service.mode','{\"mode\":\"full\"}')").execute(&e.pool).await.unwrap();
+    let (_, _, activity) = send(&e.app, get("/activity?kind=admin", Some(e.cookie.clone()))).await;
+    assert!(activity.contains("Repository mode set to full") && activity.contains("you"));
+    let (_, _, none) = send(&e.app, get("/activity?kind=chat", Some(e.cookie.clone()))).await;
+    assert!(none.contains("Nothing yet"));
+    // every required step is done now (the optional one does not count), so the card goes away
+    let (_, _, home) = send(&e.app, get("/", Some(e.cookie.clone()))).await;
+    assert!(!home.contains("Getting started"));
+}
+
+#[tokio::test]
+async fn static_assets_and_the_app_manifest_are_served_without_signing_in() {
+    let Some(e) = env().await else { return };
+    for (path, ctype) in [
+        ("/static/app.css", "text/css"),
+        ("/static/app.js", "application/javascript"),
+        ("/static/icon.svg", "image/svg+xml"),
+        ("/manifest.webmanifest", "application/manifest+json"),
+    ] {
+        let (st, h, body) = send(&e.app, get(path, None)).await;
+        assert_eq!(st, StatusCode::OK, "{path}");
+        assert!(
+            h[header::CONTENT_TYPE].to_str().unwrap().starts_with(ctype),
+            "{path}"
+        );
+        assert!(!body.is_empty());
+    }
+    let (_, _, login) = send(&e.app, get("/login", None)).await;
+    assert!(
+        login.contains("/static/app.css")
+            && login.contains("rel=\"manifest\"")
+            && login.contains("autocomplete=\"current-password\"")
+    );
+    let (_, _, page) = send(&e.app, get("/", Some(e.cookie.clone()))).await;
+    assert!(page.contains("<meta name=\"viewport\"") && page.contains("aria-label=\"Main\""));
 }
