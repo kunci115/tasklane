@@ -466,6 +466,7 @@ class RunTokens(Base):
         cases = [(409, "Head branch was modified", "head_moved"),
                  (405, "Pull Request is not mergeable", "not_mergeable"),
                  (405, "Merge conflict", "conflict"),
+                 (405, "Changes must be made through the merge queue", "merge_queue"),
                  (405, "3 of 3 required status checks are expected", "checks_failing")]
         for status, msg, reason in cases:
             self.fake.routes[("PUT", "/repos/acme/one/pulls/8/merge")] = (status, {}, {"message": msg})

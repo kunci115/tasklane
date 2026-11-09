@@ -230,6 +230,13 @@ def docker_command(role, claude_argv, workspace, name, env=None):
     for v in CRED_VARS:
         if env.get(v):
             argv += ["-e", v]
+    proxy = env.get("TASKLANE_SANDBOX_PROXY", "").strip()
+    if proxy:
+        # the only way out of an internal network: an allowlist proxy (docker/egress-proxy)
+        if not re.fullmatch(r"http://[A-Za-z0-9.-]{1,100}:\d{2,5}", proxy):
+            raise EngineError("permanent", "TASKLANE_SANDBOX_PROXY must look like http://host:port")
+        argv += ["-e", "HTTPS_PROXY=" + proxy, "-e", "HTTP_PROXY=" + proxy, "-e", "NO_PROXY=",
+                 "-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"]
     if workspace:
         mode = "rw" if role == "dev" else "ro"
         argv += ["-v", "%s:/work:%s" % (os.path.abspath(workspace), mode), "-w", "/work"]

@@ -1,0 +1,30 @@
+# Limits the agent sandbox to the model API. Use it together with the other two files:
+#   export DOCKER_GID=$(stat -c %g /var/run/docker.sock)
+#   docker compose -f docker-compose.prod.yml -f docker-compose.sandbox.yml -f docker-compose.egress.yml up -d --build
+# Then in the console: Connections > Connect the agent > Docker sandbox, image "tasklane-sandbox",
+# network "tasklane-agent". The agent container joins that network, which has no route to the
+# internet; its only way out is the proxy below, which allows HTTPS to the hosts in ALLOW and nothing else
+# (see docker/egress-proxy/proxy.py: no other host, no other port, no private addresses).
+services:
+  tasklane:
+    environment:
+      TASKLANE_SANDBOX_PROXY: http://tasklane-egress:3128
+  egress:
+    image: python:3.12-slim
+    container_name: tasklane-egress
+    command: ["python3", "/proxy.py"]
+    environment:
+      ALLOW: ${EGRESS_ALLOW:-api.anthropic.com}
+    volumes:
+      - ./docker/egress-proxy/proxy.py:/proxy.py:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    networks:
+      - default
+      - agent
+networks:
+  agent:
+    name: tasklane-agent
+    internal: true

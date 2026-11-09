@@ -307,6 +307,19 @@ class Docker(unittest.TestCase):
             self.assertIn("uid=%d,gid=%d" % (st.st_uid, st.st_gid), " ".join(argv))
         self.assertNotEqual(argv[argv.index("--user") + 1].split(":")[0], "0")
 
+    def test_a_sandbox_proxy_is_passed_and_checked(self):
+        m = self.load()
+        env = dict(self.ENV, TASKLANE_SANDBOX_PROXY="http://tasklane-egress:3128")
+        argv = m.docker_command("dev", ["-p"], "/srv/ws", "tasklane-abc", env)
+        j = " ".join(argv)
+        for needle in ("-e HTTPS_PROXY=http://tasklane-egress:3128", "-e HTTP_PROXY=http://tasklane-egress:3128",
+                       "-e NO_PROXY=", "-e CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"):
+            self.assertIn(needle, j)
+        self.assertNotIn("HTTPS_PROXY", " ".join(m.docker_command("dev", ["-p"], "/srv/ws", "n", self.ENV)))
+        for bad in ("https://x:1", "http://x", "http://x:3128/path", "http://a b:1", "x:3128"):
+            with self.assertRaises(m.EngineError, msg=bad):
+                m.docker_command("dev", ["-p"], "/srv/ws", "n", dict(self.ENV, TASKLANE_SANDBOX_PROXY=bad))
+
     def test_dev_argv(self):
         m = self.load()
         argv = m.docker_command("dev", ["-p", "--model", "x"], "/srv/ws", "tasklane-abc", self.ENV)

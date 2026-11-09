@@ -122,7 +122,7 @@ The agent can run **unsandboxed** only if you explicitly opt in; the default is 
 |---|---|
 | Ticket source | GitHub Issues through a GitHub App |
 | Agent engine | Claude, through the Claude Code CLI, with an API key or a subscription token |
-| Isolation | Read-only agents for triage and review; developer in a git worktree, optionally inside a locked-down Docker container |
+| Isolation | Read-only agents for triage and review; developer in a git worktree, optionally inside a locked-down Docker container whose only way out is an allowlist proxy to the model API |
 | Roles | Owner and team approver, with different levels they may approve |
 | Chat | Telegram bot for questions and `/task`, with approvals by button |
 | Console | Setup, approvals, tickets, repositories, people, activity, live map, replay, health |
@@ -148,7 +148,7 @@ The agent can run **unsandboxed** only if you explicitly opt in; the default is 
 tasklane is **pre-release (0.1.0-alpha.1)**. Expect rough edges, and read the next two points before you rely on it.
 
 - **Verified:** the whole pipeline from issue to merge runs in tests against a real Postgres and git. Two supervised runs against live GitHub and live Claude (one-click App creation, subscription token, Docker sandbox) took issues to merged pull requests, and two installs on one repository were run side by side. They found and fixed seven bugs, listed in the [CHANGELOG](CHANGELOG.md).
-- **Not yet run for real:** Telegram (fake API only), GitHub webhooks (polling was used), a Docker network limited to the model API, and more than one approver.
+- **Not yet run for real:** Telegram (fake API only), GitHub webhooks (polling was used; the signature check is tested against GitHub's published vector), and more than one approver.
 - **Please do your own supervised dry run** on a throwaway repository before you point it at real work. [docs/operations.md](docs/operations.md) lists the limits honestly.
 
 ## Built with

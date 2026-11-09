@@ -90,9 +90,11 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         State::CiRunning
     } else {
         tx.rollback().await?;
-        return Err(Error::Fatal(format!(
-            "the pull request cannot be merged: {reason}"
-        )));
+        return Err(Error::Fatal(if reason == "merge_queue" {
+            "this repository merges through GitHub's merge queue, which tasklane does not drive yet: add the reviewed pull request to the queue yourself".to_string()
+        } else {
+            format!("the pull request cannot be merged: {reason}")
+        }));
     };
     o.finish_job(&mut tx, job).await?;
     tx.commit().await?;

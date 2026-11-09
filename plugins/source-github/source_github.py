@@ -806,7 +806,9 @@ def op_merge_pr(params):
             return {"merged": False, "reason": "head_moved"}
         if e.status == 405:
             low = e.message.lower()
-            if "conflict" in low:
+            if "merge queue" in low:
+                reason = "merge_queue"
+            elif "conflict" in low:
                 reason = "conflict"
             elif "check" in low or "status" in low:
                 reason = "checks_failing"
