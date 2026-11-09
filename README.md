@@ -181,6 +181,7 @@ tasklane is **pre-release (0.1.0-alpha.1)**. Expect rough edges, and read the ne
 
 | | |
 |---|---|
+| [Writing a plug-in](docs/plugins.md) | The protocol in one page, a tested template, how to register a plug-in |
 | [Roadmap and status](docs/roadmap.md) | Each part of the design: built, next, and what has run for real |
 | [Autonomy and escalation](docs/autonomy.md) | When agents act alone, when a person is needed, and every setting that turns the dial |
 | [Operations guide](docs/operations.md) | Install, configuration, backups, upgrades, sandbox, two installs on one repository |
@@ -202,7 +203,7 @@ tasklane is **pre-release (0.1.0-alpha.1)**. Expect rough edges, and read the ne
 
 ## Contributing
 
-Contributions are welcome, especially new ticket-source and agent-engine plug-ins, and real-world test reports. Start with [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions are welcome, especially new ticket-source and agent-engine plug-ins (start from [docs/plugins.md](docs/plugins.md) and the tested template in `plugins/_template`) and real-world test reports. See also [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```bash
 TASKLANE_TEST_DATABASE_URL=postgres://tasklane:tasklane@127.0.0.1:5432/postgres \

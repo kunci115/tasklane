@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `docs/plugins.md`: the plug-in protocol in one page, and `plugins/_template`, a tested ticket-source plug-in (tickets in a JSON file) to copy.
 - `tasklane doctor` checks an installation (database, migrations, git, data directory, plug-ins, Docker, public address) and says what to fix.
 - `/metrics` (Prometheus format) for tickets, the queue, repositories and model usage; off unless `TASKLANE_METRICS_TOKEN` is set.
 - Housekeeping removes sandbox containers a crashed daemon left running (only containers this engine named, older than the longest run).
