@@ -18,6 +18,7 @@ Open an issue, get a reviewed pull request. A person approves anything risky.</p
 <p align="center">
   <a href="#quickstart">Quickstart</a> ·
   <a href="#how-it-works">How it works</a> ·
+  <a href="#autonomy-when-the-agents-act-alone-and-when-they-ask">Autonomy</a> ·
   <a href="#safety-model">Safety model</a> ·
   <a href="docs/operations.md">Operations guide</a> ·
   <a href="docs/design">Design</a> ·
@@ -79,7 +80,7 @@ Open <http://localhost:8080>, sign in with that token, and follow the **Getting 
 
 1. **Connect GitHub.** One click opens GitHub with the App already filled in; press Create, then Install and pick the repositories. No key files, no config file.
 2. **Connect the agent.** Paste an API key, or a Claude subscription token from `claude setup-token`. Choose how the agent is isolated and press **Run the test**.
-3. **Choose repositories.** New ones start in *triage* (read and plan only). Switch one to *full* when you trust it.
+3. **Choose repositories.** New ones start in *triage*: every ticket's plan waits for your approval before any code is written. Switch one to *full* when you trust it.
 4. Open an issue. It appears on the Overview within a minute.
 
 Put a TLS reverse proxy in front of port 8080 if the console is reachable from outside. Full setup, environment variables, backups and upgrade notes: [docs/operations.md](docs/operations.md).
@@ -101,6 +102,20 @@ Served by the daemon itself, responsive (laptop, tablet, phone), light and dark,
 | **Replay:** play back the last hours at up to 1200x. Idle time is skipped. | **Repositories:** choose how far tasklane may go in each, with search and paging. |
 
 Also: a ticket list with search and paging, a plain-sentence timeline per ticket, people and roles, chat groups, an activity feed, a health checklist and a pause-all switch. The demo data in the screenshots is invented.
+
+## Autonomy: when the agents act alone and when they ask
+
+You decide per repository. In `full` mode a low-risk ticket from a collaborator goes from issue to **merged pull request with nobody pressing anything**, as long as CI is green on the exact commit and the reviewer agent approves it. Anything riskier stops and asks a person, and the model can raise that bar but never lower it.
+
+| | Acts alone | Asks a person |
+|---|---|---|
+| Mode | `full` repository | `triage` mode, or `always_ask: true` |
+| Author | collaborator, member, owner | a stranger, always |
+| Text | no risk rule matched (L1) | migrations, login/permissions, deploy (L2); secrets, payments, deleting data, personal data (L3, owner only) |
+| Diff | no protected path, within the size limit | CI/deploy config, `migrations/`, `.env`, keys; too large |
+| Review | the reviewer agent approves the commit | the reviewer says "escalate" |
+
+When something goes wrong (CI fails twice, three failed attempts, token budget used up) it stops and hands the ticket to a person. A timer never approves anything. Full rules, who may approve what, and every setting that turns the dial: **[docs/autonomy.md](docs/autonomy.md)**.
 
 ## Safety model
 
@@ -166,6 +181,7 @@ tasklane is **pre-release (0.1.0-alpha.1)**. Expect rough edges, and read the ne
 
 | | |
 |---|---|
+| [Autonomy and escalation](docs/autonomy.md) | When agents act alone, when a person is needed, and every setting that turns the dial |
 | [Operations guide](docs/operations.md) | Install, configuration, backups, upgrades, sandbox, two installs on one repository |
 | [Design documents](docs/design) | State machine, schema, plug-in interfaces and protocol, threat model |
 | [C4 architecture](docs/architecture) | Context, containers and components as diagram sources |

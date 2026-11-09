@@ -16,13 +16,13 @@ A repository may carry a `.tasklane.yml` on its default branch. It can only make
 ```yaml
 protected_paths:        # extra paths that always need approval of the exact diff
   - payments/
-  - config/*.yml
+  - config/prod.yml
 max_diff_lines: 200     # a smaller diff limit than the install's (never a larger one)
 mode_cap: triage        # the most this repository may be set to: watch, triage or full
 always_ask: true        # every ticket waits for a person's approval
 ```
 
-Other keys (a test command, auto-merge, instructions for the agent) are ignored on purpose: they would let repository content steer or loosen the pipeline. The file is read before each triage and each development run; if it cannot be read, the last known rules stay. Instructions for the agent and recorded notes are set in the console (**Repositories**), not in the repository.
+A path is a directory (`payments/`, matched anywhere in the tree), a file name or a name prefix; `*` patterns are not supported and are ignored. Other keys (a test command, auto-merge, instructions for the agent) are ignored on purpose: they would let repository content steer or loosen the pipeline. The file is read before each triage and each development run; if it cannot be read, the last known rules stay. Instructions for the agent and recorded notes are set in the console (**Repositories**), not in the repository.
 
 ## Notes for the agents
 
@@ -58,7 +58,7 @@ Open `http://localhost:8080`, sign in with that token, and follow the **Getting 
 
 1. **Connect GitHub.** Press the button. GitHub opens with the App already filled in; press **Create GitHub App**, then **Install** and choose only the repositories tasklane should work on. tasklane stores the App's credentials itself. You never create a key or edit a config file.
 2. **Connect the agent.** Choose how it signs in: an API key, or your Claude subscription (run `claude setup-token` on a computer where you are signed in to Claude Code and paste the token; the work counts against your plan limits). Then choose how the agent is isolated and press **Run the test**.
-3. **Choose repositories.** New ones start in triage (read and plan only).
+3. **Choose repositories.** New ones start in triage: tasklane plans, and every ticket waits for your approval before any code is written.
 4. Open an issue on one of them. It shows up on the Overview within a minute.
 
 Where it listens: `127.0.0.1:8080`. For anything but a local try, put a TLS reverse proxy in front and set `TASKLANE_PUBLIC_URL` to its address; with an `https://` address GitHub can also send webhooks, so tickets are picked up at once. Without that, tasklane checks for new issues every minute.

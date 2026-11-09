@@ -87,8 +87,8 @@ async fn new_repos_start_read_only_and_new_issues_become_tickets_once() {
 }
 
 #[tokio::test]
-async fn in_a_triage_repo_even_a_level_one_ticket_waits_for_a_person_and_the_approval_wakes_the_repo(
-) {
+async fn in_a_triage_repo_every_ticket_waits_for_a_person_and_an_approval_does_not_change_the_mode()
+{
     let Some(pool) = test_pool().await else {
         return;
     };
@@ -129,9 +129,16 @@ async fn in_a_triage_repo_even_a_level_one_ticket_waits_for_a_person_and_the_app
         .fetch_one(&w.pool)
         .await
         .unwrap();
-    assert_eq!(mode, "full");
+    assert_eq!(
+        mode, "triage",
+        "an approval never raises the mode by itself"
+    );
     drive(&w).await;
     assert_eq!(state(&w.pool, t).await, "merged");
+    // the next ticket of the same repository asks again
+    let next = ticket(&w, "T-plain-2").await;
+    drive(&w).await;
+    assert_eq!(state(&w.pool, next).await, "awaiting_approval");
 }
 
 #[tokio::test]

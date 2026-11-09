@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Behaviour change: approving a ticket in a `triage` repository no longer switches the repository to `full`. `triage` now means what it says (every ticket asks); you switch a repository to `full` yourself.
+- New `docs/autonomy.md` and a README section: when the agents act alone, when a person is needed, who may approve what, and every setting that turns the dial.
 - Per-repository notes for the agents, written only by people in the console and added to every agent's instructions for that repository.
 - `.tasklane.yml` in a repository: extra protected paths, a smaller diff limit, a mode cap and `always_ask`. It can only tighten; every other key is ignored.
 - `TASKLANE_DEV_TIMEOUT_SECS` and `TASKLANE_CI_TIMEOUT_SECS` set the wall time of a development run and the wait for checks.

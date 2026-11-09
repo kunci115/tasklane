@@ -674,7 +674,9 @@ def parse_overrides(text):
         item = line.strip()
         if item.startswith("- ") and key == "protected_paths":
             v = item[2:].strip().strip("\"'")
-            if v and len(v) <= 200 and "\x00" not in v and ".." not in v.split("/"):
+            if "*" in v:
+                ignored.append("protected_paths: patterns with * (use a directory such as payments/ or a file name prefix)")
+            elif v and len(v) <= 200 and "\x00" not in v and ".." not in v.split("/"):
                 out.setdefault("protected_paths", [])
                 if len(out["protected_paths"]) < 50:
                     out["protected_paths"].append(v.lstrip("/"))

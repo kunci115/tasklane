@@ -489,7 +489,8 @@ class Overrides(Base):
         self.put("""# comment
 protected_paths:
   - payments/
-  - "config/*.yml"   # trailing comment
+  - "config/prod.yml"   # trailing comment
+  - "reports/*.csv"
   - ../escape
 max_diff_lines: 150
 mode_cap: triage
@@ -499,8 +500,9 @@ auto_merge: true
 max_diff_lines_extra: 3
 """)
         r = self.ok("read_overrides", {"service": "acme/one"})
-        self.assertEqual(r["overrides"], {"protected_paths": ["payments/", "config/*.yml"],
+        self.assertEqual(r["overrides"], {"protected_paths": ["payments/", "config/prod.yml"],
                                           "max_diff_lines": 150, "mode_cap": "triage", "always_ask": True})
+        self.assertTrue(any("patterns with *" in i for i in r["ignored"]), r["ignored"])
         self.assertIn("test_command", r["ignored"])
         self.assertIn("auto_merge", r["ignored"])
 

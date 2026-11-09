@@ -448,7 +448,10 @@ async fn approving_in_the_console_needs_csrf_and_the_current_plan_then_work_star
             .fetch_one(&e.pool)
             .await
             .unwrap();
-    assert_eq!(mode, "full", "the first approval wakes the repository");
+    assert_eq!(
+        mode, "triage",
+        "an approval never raises the mode by itself"
+    );
 }
 
 #[tokio::test]
