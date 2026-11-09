@@ -181,6 +181,7 @@ tasklane is **pre-release (0.1.0-alpha.1)**. Expect rough edges, and read the ne
 
 | | |
 |---|---|
+| [Roadmap and status](docs/roadmap.md) | Each part of the design: built, next, and what has run for real |
 | [Autonomy and escalation](docs/autonomy.md) | When agents act alone, when a person is needed, and every setting that turns the dial |
 | [Operations guide](docs/operations.md) | Install, configuration, backups, upgrades, sandbox, two installs on one repository |
 | [Design documents](docs/design) | State machine, schema, plug-in interfaces and protocol, threat model |
