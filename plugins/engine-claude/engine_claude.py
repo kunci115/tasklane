@@ -460,6 +460,21 @@ def run(params):
     return finish(role, parsed, secs)
 
 
+def check():
+    """The setup page's test button: one tiny, real question through the whole path (credential,
+    sandbox gate, sandbox if configured). Failures are returned as a result with a plain message,
+    not as a protocol error, so the page can show them."""
+    params = {"role": "ask", "ticket": {"service": "check/check", "ref": "0", "title": "", "body": "", "comments": []},
+              "question": "Reply with the single word: ok", "budget": {"max_secs": 90}}
+    t0 = time.monotonic()
+    try:
+        res = run(params)
+    except EngineError as e:
+        return {"ok": False, "kind": e.kind, "message": scrub(str(e))[:300], "secs": round(time.monotonic() - t0, 1)}
+    return {"ok": True, "answer": scrub(str(res.get("answer", "")))[:80], "secs": round(time.monotonic() - t0, 1),
+            "sandbox": sandbox_mode()}
+
+
 def capabilities():
     return {"tool_use": True, "structured_output": True, "read_only_mode": True}
 
@@ -474,9 +489,12 @@ def handle(req):
             res = {"name": "claude", "role": "agent_engine",
                    "protocol_major": PROTOCOL_MAJOR, "version": VERSION,
                    "sandbox": sandbox_mode(),
-                   "unsandboxed_allowed": os.environ.get("TASKLANE_ALLOW_UNSANDBOXED", "").strip() == "1"}
+                   "unsandboxed_allowed": os.environ.get("TASKLANE_ALLOW_UNSANDBOXED", "").strip() == "1",
+                   "credential": bool(secret_values())}
         elif op == "capabilities":
             res = capabilities()
+        elif op == "check":
+            res = check()
         elif op == "run":
             params = req.get("params")
             if not isinstance(params, dict):

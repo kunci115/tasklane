@@ -3,6 +3,7 @@
 //! per-session CSRF token, and the session cookie is HttpOnly and SameSite=Strict.
 //! The pages work without JavaScript; the script only adds live updates and comfort.
 
+mod connect;
 mod dashboard;
 mod map;
 mod people;
@@ -45,6 +46,22 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/chat", get(chat_page))
         .route("/chat/groups", post(add_group))
         .route("/chat/groups/{id}/delete", post(delete_group))
+        .route("/connections", get(connect::page))
+        .route("/connect/github", get(connect::github_form))
+        .route("/connect/github/start", post(connect::github_start))
+        .route("/connect/github/callback", get(connect::github_callback))
+        .route("/connect/github/install", get(connect::github_install))
+        .route("/connect/github/installed", get(connect::github_installed))
+        .route(
+            "/connect/github/disconnect",
+            post(connect::github_disconnect),
+        )
+        .route(
+            "/connect/agent",
+            get(connect::agent_form).post(connect::agent_save),
+        )
+        .route("/connect/agent/test", post(connect::agent_test))
+        .route("/connect/agent/disconnect", post(connect::agent_disconnect))
         .route("/map", get(map::page))
         .route("/map/data", get(map::snapshot))
         .route("/map/replay", get(map::replay))
@@ -112,7 +129,7 @@ fn forbidden() -> Response {
 }
 
 /// 32 random bytes as hex, from the operating system.
-fn random_hex() -> String {
+pub(super) fn random_hex() -> String {
     let mut buf = [0u8; 32];
     getrandom::fill(&mut buf).expect("operating system randomness");
     buf.iter().map(|b| format!("{b:02x}")).collect()

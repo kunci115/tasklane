@@ -56,7 +56,7 @@ struct Live {
 /// A plug-in process and the pipe to it. If the process dies, the call that
 /// notices fails with `Closed` and the next call starts it again.
 pub struct PluginClient {
-    spec: PluginSpec,
+    spec: std::sync::Mutex<PluginSpec>,
     live: Mutex<Arc<Live>>,
     next_id: AtomicU64,
 }
@@ -101,18 +101,28 @@ fn start(spec: &PluginSpec) -> Result<Arc<Live>, CallError> {
 impl PluginClient {
     pub fn spawn(spec: &PluginSpec) -> Result<PluginClient, CallError> {
         Ok(PluginClient {
-            spec: spec.clone(),
+            spec: std::sync::Mutex::new(spec.clone()),
             live: Mutex::new(start(spec)?),
             next_id: AtomicU64::new(1),
         })
+    }
+
+    /// Replace the plug-in's command or environment (for example after the user connected an account
+    /// in the console) and start it again with the new settings. In-flight calls to the old process fail.
+    pub async fn reconfigure(&self, spec: PluginSpec) -> Result<(), CallError> {
+        let fresh = start(&spec)?;
+        *self.spec.lock().unwrap_or_else(|e| e.into_inner()) = spec;
+        *self.live.lock().await = fresh;
+        Ok(())
     }
 
     /// The running process, restarted first if the last one died.
     async fn current(&self) -> Result<Arc<Live>, CallError> {
         let mut live = self.live.lock().await;
         if !live.alive.load(Ordering::SeqCst) {
-            eprintln!("plug-in {} stopped; starting it again", self.spec.program);
-            *live = start(&self.spec)?;
+            let spec = self.spec.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            eprintln!("plug-in {} stopped; starting it again", spec.program);
+            *live = start(&spec)?;
         }
         Ok(live.clone())
     }

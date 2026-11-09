@@ -8,8 +8,23 @@ Ticket-driven AI agent pipeline: a problem is reported, triaged, approved by a h
 
 - Ticket source: GitHub only. Agent engine: Claude only.
 - Ticket source, agent engine, notifier, chat channel and device adapters are fixed plug-in interfaces, so other sources and engines can be added later without touching the core.
-- One install = one organization. Install with `docker compose up`, then a setup wizard (planned).
+- One install = one organization. Start it with one command, then connect GitHub and the agent in the console: GitHub is one click (tasklane creates the App for you), the agent is a pasted key and a test button.
 - Safe defaults: repos start read-only; nothing merges without approval; production is never touched by the system.
+
+## Getting started
+
+```bash
+export POSTGRES_PASSWORD=$(openssl rand -hex 16)
+docker compose -f compose.prod.yaml up -d --build
+docker compose -f compose.prod.yaml logs tasklane     # the admin token is printed once
+```
+
+Open <http://localhost:8080>, sign in, and follow the **Getting started** card. **Connect GitHub** opens GitHub with the App already filled in (press Create, then Install); **Connect the agent** takes a Claude key, an isolation choice and a test button. No config file, no key files. Details and the honest list of what has and has not been verified: [docs/operations.md](docs/operations.md).
+
+| | | |
+|---|---|---|
+| ![Getting started](docs/screenshots/getting-started.png) | ![Connect GitHub](docs/screenshots/connect-github.png) | ![Connect the agent](docs/screenshots/connect-agent.png) |
+| First start: a checklist says what to do next. | One click creates the GitHub App. | A key, an isolation choice, and a test. |
 
 ## The console
 

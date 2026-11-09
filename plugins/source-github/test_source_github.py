@@ -168,6 +168,12 @@ class Protocol(Base):
     def test_describe(self):
         r = self.ok("describe")
         self.assertEqual((r["name"], r["role"], r["protocol_major"]), ("github", "ticket_source", 1))
+        self.assertIs(r["configured"], True, "the test environment has an App id and a key file")
+
+    def test_describe_says_when_the_plugin_is_not_configured(self):
+        (r,) = talk({"GITHUB_APP_ID": "", "GITHUB_APP_PRIVATE_KEY_FILE": ""}, {"id": 1, "op": "describe"})
+        self.assertTrue(r["ok"])
+        self.assertIs(r["result"]["configured"], False)
 
     def test_unknown_op_malformed_lines_and_ids(self):
         out = talk({"GITHUB_API_URL": self.fake.url},
@@ -477,6 +483,45 @@ class Webhooks(Base):
         r = self.send("ping", {"zen": "x", "repository": {"full_name": "acme/one"}})
         self.assertFalse(r["ok"])
         self.assertEqual(r["error"]["kind"], "permanent")
+
+
+class ConnectingAnApp(Base):
+    CODE = "abcdef0123456789abcdef"
+
+    def test_the_manifest_code_is_exchanged_for_the_apps_credentials_without_authentication(self):
+        self.fake.routes[("POST", f"/app-manifests/{self.CODE}/conversions")] = (201, {}, {
+            "id": 5677544, "slug": "my-tasklane", "name": "My tasklane", "owner": {"login": "someone"},
+            "html_url": "https://github.com/apps/my-tasklane", "client_id": "Iv1.abc", "client_secret": "cs-secret-value",
+            "pem": "-----BEGIN RSA PRIVATE KEY-----\nKEYDATA\n-----END RSA PRIVATE KEY-----\n", "webhook_secret": "whsec-value-1234"})
+        r = self.ok("app_manifest_convert", {"code": self.CODE})
+        self.assertEqual((r["app_id"], r["slug"], r["owner"]), ("5677544", "my-tasklane", "someone"))
+        self.assertIn("KEYDATA", r["pem"])
+        self.assertEqual(r["webhook_secret"], "whsec-value-1234")
+        self.assertNotIn("client_secret", r)
+        (req,) = self.fake.seen("POST", f"/app-manifests/{self.CODE}/conversions")
+        self.assertNotIn("authorization", req["headers"], "the exchange is unauthenticated")
+
+    def test_a_bad_code_never_reaches_github_and_a_used_code_is_a_clear_error(self):
+        for bad in ["", "short", "has space in it 123", "../../etc/passwd", "a" * 200]:
+            self.assertEqual(self.err("app_manifest_convert", {"code": bad})["kind"], "permanent", bad)
+        self.assertEqual(self.fake.log, [])
+        self.fake.routes[("POST", f"/app-manifests/{self.CODE}/conversions")] = (404, {}, {"message": "Not Found"})
+        self.assertEqual(self.err("app_manifest_convert", {"code": self.CODE})["kind"], "permanent")
+
+    def test_the_credentials_never_appear_in_the_plugins_logs(self):
+        self.fake.routes[("POST", f"/app-manifests/{self.CODE}/conversions")] = (201, {}, {
+            "id": 1, "slug": "s", "owner": {"login": "o"}, "pem": "PEMSECRETVALUE-1234567", "webhook_secret": "WHSECRETVALUE-1234", "client_secret": "CSSECRETVALUE-1234"})
+        out = subprocess.run([sys.executable, "-I", str(SCRIPT)], input=json.dumps({"id": 1, "op": "app_manifest_convert", "params": {"code": self.CODE}}) + "\n",
+                             env={"PATH": os.environ["PATH"], "GITHUB_API_URL": self.fake.url}, capture_output=True, text=True, timeout=30)
+        self.assertNotIn("CSSECRETVALUE", out.stderr + out.stdout)
+        self.assertNotIn("WHSECRETVALUE", out.stderr)
+        self.assertNotIn("PEMSECRETVALUE", out.stderr)
+
+    def test_installations_are_listed_for_the_setup_page(self):
+        self.fake.routes[("GET", "/app/installations")] = (200, {}, [
+            {"id": 180094190, "account": {"login": "someone"}, "repository_selection": "selected"}])
+        r = self.ok("list_installations")
+        self.assertEqual(r["installations"], [{"id": "180094190", "account": "someone", "repository_selection": "selected"}])
 
 
 class WebhookPullRequests(Webhooks):

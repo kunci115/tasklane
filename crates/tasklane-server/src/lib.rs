@@ -4,6 +4,7 @@ pub mod api;
 pub mod auth;
 pub mod chat;
 pub mod config;
+pub mod connections;
 pub mod console;
 pub mod runtime;
 pub mod tickets;
@@ -22,6 +23,13 @@ pub struct AppState {
     pub secure_cookies: bool,
     /// (failed sign-ins, when the count started)
     pub login_throttle: std::sync::Mutex<(u32, std::time::Instant)>,
+    /// Secrets saved from the console (files under the data directory).
+    pub secrets: connections::Secrets,
+    /// The plug-in specs the operator's environment describes; the console adds to them.
+    pub base_source: tasklane_orchestrator::host::PluginSpec,
+    pub base_engine: tasklane_orchestrator::host::PluginSpec,
+    /// Public address of the console as the operator set it (the browser's own address is used when unset).
+    pub public_url: Option<String>,
 }
 
 pub fn now_unix() -> i64 {

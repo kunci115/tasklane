@@ -170,9 +170,39 @@ impl Orchestrator {
         &self.cfg
     }
 
+    /// Start the ticket-source plug-in again with new settings.
+    pub async fn reconfigure_source(&self, spec: crate::host::PluginSpec) -> Result<(), Error> {
+        Ok(self.source.reconfigure(spec).await?)
+    }
+
+    /// Start the agent-engine plug-in again with new settings.
+    pub async fn reconfigure_engine(&self, spec: crate::host::PluginSpec) -> Result<(), Error> {
+        Ok(self.engine.reconfigure(spec).await?)
+    }
+
     /// Call an operation on the ticket-source plug-in.
     pub async fn source_call(&self, op: &str, params: Value) -> Result<Value, Error> {
         Ok(self.source.call(op, params, self.cfg.call_timeout).await?)
+    }
+
+    /// A short call to the engine (for the setup page's checks).
+    pub async fn engine_call_with(
+        &self,
+        op: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Value, Error> {
+        Ok(self.engine.call(op, params, timeout).await?)
+    }
+
+    /// A call to the source with its own timeout.
+    pub async fn source_call_with(
+        &self,
+        op: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Value, Error> {
+        Ok(self.source.call(op, params, timeout).await?)
     }
 
     /// Call an operation on the agent-engine plug-in with the long (development) timeout.
@@ -514,6 +544,18 @@ impl Orchestrator {
         let src = self.source.call("describe", json!({}), t).await.ok();
         let eng = self.engine.call("describe", json!({}), t).await.ok();
         (src, eng)
+    }
+
+    /// Is the ticket source set up? (Plug-ins that do not say are assumed to be.)
+    pub async fn source_configured(&self) -> bool {
+        match self
+            .source
+            .call("describe", json!({}), Duration::from_secs(5))
+            .await
+        {
+            Ok(v) => v.get("configured").and_then(Value::as_bool).unwrap_or(true),
+            Err(_) => false,
+        }
     }
 
     /// Both plug-ins answer? Any reply counts (even "unknown operation"); silence or a dead process does not.

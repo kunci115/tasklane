@@ -1,0 +1,21 @@
+# Adds the Docker sandbox option to compose.prod.yaml. Use both files:
+#   export DOCKER_GID=$(stat -c %g /var/run/docker.sock)      # on macOS Docker Desktop: export DOCKER_GID=0
+#   docker compose -f compose.prod.yaml -f compose.sandbox.yaml up -d --build
+# Then in the console: Connections > Connect the agent > Docker sandbox, image "tasklane-sandbox".
+#
+# WARNING: mounting the Docker socket lets tasklane start containers on this machine, which is as
+# powerful as root on it. Do this only on a machine you dedicate to tasklane. The agent itself never
+# sees the socket: it runs inside the container tasklane starts.
+services:
+  tasklane:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:?set DOCKER_GID first (see the comment at the top of this file)}"
+  sandbox-image:
+    image: tasklane-sandbox
+    build:
+      context: .
+      dockerfile: Dockerfile.sandbox
+    entrypoint: ["true"]
+    restart: "no"

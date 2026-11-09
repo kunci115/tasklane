@@ -13,14 +13,21 @@ tasklane is a single daemon plus Postgres. It reads tickets from a ticket source
 
 ```bash
 git clone https://github.com/kunci115/tasklane && cd tasklane
-cp .env.example .env            # fill in the values (see below)
-cp /path/to/your-app.private-key.pem github-app-key.pem
-chmod 644 github-app-key.pem   # the container user (uid 10001) must be able to read it
+export POSTGRES_PASSWORD=$(openssl rand -hex 16)
 docker compose -f compose.prod.yaml up -d --build
-curl -fsS http://127.0.0.1:8080/readyz     # prints "ready"
+docker compose -f compose.prod.yaml logs tasklane      # prints the admin token once
 ```
 
-Open the console at `http://127.0.0.1:8080/` (through your proxy in production) and sign in with `TASKLANE_ADMIN_TOKEN`.
+Open `http://localhost:8080`, sign in with that token, and follow the **Getting started** card:
+
+1. **Connect GitHub.** Press the button. GitHub opens with the App already filled in; press **Create GitHub App**, then **Install** and choose only the repositories tasklane should work on. tasklane stores the App's credentials itself. You never create a key or edit a config file.
+2. **Connect the agent.** Paste a Claude API key, choose how the agent is isolated, and press **Run the test**.
+3. **Choose repositories.** New ones start in triage (read and plan only).
+4. Open an issue on one of them. It shows up on the Overview within a minute.
+
+Where it listens: `127.0.0.1:8080`. For anything but a local try, put a TLS reverse proxy in front and set `TASKLANE_PUBLIC_URL` to its address; with an `https://` address GitHub can also send webhooks, so tickets are picked up at once. Without that, tasklane checks for new issues every minute.
+
+The secrets you save in the console (the GitHub App's key, the model key) are files in the `workdata` volume, readable only by tasklane. The admin token is in the same place. Back that volume up like any other secret.
 
 ## The console at a glance
 
@@ -38,7 +45,7 @@ Sign in with `TASKLANE_ADMIN_TOKEN`. The left menu has:
 
 Pages refresh by themselves every few seconds while the tab is open. Without JavaScript the pages still work; they just do not refresh on their own. To use it as an app, open it in Chrome or Safari and choose "Install" or "Add to Dock".
 
-## 1. Create the GitHub App
+## 1. Create the GitHub App by hand (alternative to the one-click setup)
 
 GitHub: Settings, Developer settings, GitHub Apps, New. Then:
 
@@ -51,16 +58,16 @@ GitHub: Settings, Developer settings, GitHub Apps, New. Then:
 
 The App never holds write access in the agent's hands: the daemon asks GitHub for a separate token limited to one repository and valid for about an hour each time it pushes or merges.
 
-## 2. Configuration
+## 2. Configuration by environment variables (advanced)
 
-Everything is an environment variable. The daemon refuses to start with a clear message when a required value is missing or weak.
+The console covers everything a normal install needs. Environment variables are for automated setups, and they win over what the console saved. The daemon refuses to start with a clear message when a required value is missing or weak.
 
 | Variable | Required | Meaning |
 |---|---|---|
 | `TASKLANE_DATABASE_URL` | yes | Postgres URL. Migrations run on start. |
-| `TASKLANE_ADMIN_TOKEN` | yes | At least 24 characters. Signs in to the console. |
-| `TASKLANE_SOURCE_CMD` | yes | Command that starts the ticket-source plug-in. The image sets the GitHub one. |
-| `TASKLANE_ENGINE_CMD` | yes | Command that starts the agent-engine plug-in. The image sets the Claude one. |
+| `TASKLANE_ADMIN_TOKEN` | no | At least 24 characters. Signs in to the console. If unset, one is generated on first start and kept in the data volume. |
+| `TASKLANE_SOURCE_CMD` | no | Command that starts the ticket-source plug-in. Defaults to the shipped GitHub plug-in. |
+| `TASKLANE_ENGINE_CMD` | no | Command that starts the agent-engine plug-in. Defaults to the shipped Claude plug-in. |
 | `TASKLANE_SOURCE_ENV` / `TASKLANE_ENGINE_ENV` | no | Comma-separated names of variables to pass to that plug-in. **Nothing else is inherited**, apart from `PATH`. |
 | `TASKLANE_CHAT_CMD`, `TASKLANE_CHAT_ENV` | no | Chat plug-in (see "Chat"). |
 | `TASKLANE_BIND` | no | Listen address, default `127.0.0.1:8080` (`0.0.0.0:8080` in the image). |
@@ -134,11 +141,12 @@ Anyone in a registered group can read what `/ask` can read from that repository.
 - Risk levels come from fixed rules on the ticket text and the real diff; the model can raise a level, never lower it. The rules are starting defaults in `crates/tasklane-core/src/floor.rs` and `paths.rs`, deliberately broad.
 - Ticket text, comments, diffs and chat messages are untrusted input.
 - **The agent engine refuses to run without a sandbox.** Every role runs model-driven file tools on your server. Without isolation they run as the daemon's user and can read its environment, its database URL and its keys (for example through `/proc`), and a question in a chat group could return them. Either:
-  - set `TASKLANE_SANDBOX=docker`, `TASKLANE_SANDBOX_IMAGE=tasklane-sandbox` (build it with `docker build -f Dockerfile.sandbox -t tasklane-sandbox .`; it holds only the Claude CLI, no tasklane binary and no secrets) and `TASKLANE_SANDBOX_NETWORK=<a Docker network that can reach only the model API>`. The daemon then needs the Docker socket. Each run starts a container with a read-only root, no capabilities, process and memory limits and only the checkout mounted. **Verified so far:** the container starts with all those restrictions, runs the real CLI, and is killed on timeout. **Not verified:** a full answer from inside the sandbox with a valid key, and your egress-limited network (that is yours to build). Test it on a throwaway repository first; or
+  - choose **Docker sandbox** in Connections > Connect the agent. The agent then runs in a locked-down container (read-only root, no capabilities, process and memory limits, only the checkout mounted) built from `Dockerfile.sandbox`, which holds only the agent program and none of your secrets. It needs the Docker socket available to tasklane: start with `docker compose -f compose.prod.yaml -f compose.sandbox.yaml up -d --build` after `export DOCKER_GID=$(stat -c %g /var/run/docker.sock)`. **Mounting the socket is as powerful as root on that machine, so use a machine you dedicate to tasklane.** For the container's network, create a Docker network that can reach only the model API if you can; the built-in `bridge` reaches everything. **Verified:** the container starts with all those restrictions, runs the real CLI, and is killed on timeout; the image contains the Docker client. **Not verified:** a full answer from inside the sandbox with a valid key, started through the socket from the tasklane container; or
   - set `TASKLANE_ALLOW_UNSANDBOXED=1`, only on a host that holds nothing else, with repositories and reporters you fully trust.
   Answers returned to chat have known token shapes and configured keys removed, which is a safety net, not a boundary.
 - Anyone who can open an issue on a repository tasklane watches can cause **triage** (a read-only model run, so cost). Their tickets never run unattended. At most 25 triage runs wait at once; further issues are held back and picked up as the queue drains, so a flood cannot queue unlimited model runs. Prefer private repositories or restricted issue creation on the source.
-- **What has run for real:** one supervised dry run against live GitHub and live Claude on a throwaway private repository: unattended issue-to-merge twice, a protected-path change that stopped for approval of its exact diff, the pause switch, the question flow, and GitHub's refusal of a workflow push. That run found three bugs, all fixed. **What has not run for real:** Telegram (tested against a fake API only), the Docker sandbox with a valid key, webhooks (polling was used), and anything with more than one repository or one approver. Do your own supervised dry run on a throwaway repository first.
+- **What has run for real:** the first-run flow in the real container (start with only a database password, admin token printed once, sign in, the Connections pages, the GitHub App manifest generated with the right permissions); and
+   one supervised dry run against live GitHub and live Claude on a throwaway private repository: unattended issue-to-merge twice, a protected-path change that stopped for approval of its exact diff, the pause switch, the question flow, and GitHub's refusal of a workflow push. That run found three bugs, all fixed. **What has not run for real:** the GitHub step of the one-click App creation (it needs a person to press Create on GitHub; the exchange of GitHub's one-time code is tested against a fake GitHub only), Telegram (tested against a fake API only), the Docker sandbox with a valid key, webhooks (polling was used), and anything with more than one repository or one approver. Do your own supervised dry run on a throwaway repository first.
 - The console signs in with one admin token and uses server-side sessions (8 hours, random id, per-session form token, sign-out, lockout after five wrong tokens). It has no user accounts: everyone who has the token is the owner.
 - Logs go to stderr and contain job and ticket ids, not secrets. There are no metrics endpoints yet. A plug-in that crashes is started again on the next call; `/readyz` checks the database and that both plug-ins answer.
 

@@ -53,6 +53,8 @@
       document.querySelectorAll(sel).forEach(function (row) { row.style.display = row.textContent.toLowerCase().indexOf(q) >= 0 ? "" : "none"; });
     });
   });
+  // a form that only hands the browser on to another site (the GitHub App creation) submits itself
+  document.querySelectorAll("form[data-autosubmit]").forEach(function (f) { setTimeout(function () { f.submit(); }, 150); });
   // segmented controls submit their form on choice
   document.querySelectorAll("form[data-auto] select").forEach(function (s) { s.addEventListener("change", function () { s.form.submit(); }); });
 })();

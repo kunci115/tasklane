@@ -101,6 +101,10 @@ async fn env() -> Option<Env> {
         user_daily_limit: 2,
         secure_cookies: false,
         login_throttle: std::sync::Mutex::new((0, std::time::Instant::now())),
+        secrets: tasklane_server::connections::Secrets::new(dir.path()).unwrap(),
+        base_source: spec(),
+        base_engine: spec(),
+        public_url: None,
     });
     let app = api::routes().merge(console::routes()).with_state(state);
     let (st, h, _) = send(&app, form("/login", format!("token={ADMIN}"), None)).await;
@@ -1026,9 +1030,36 @@ async fn health_setup_and_activity_pages_render_and_the_checklist_reflects_reali
     assert!(activity.contains("Repository mode set to full") && activity.contains("you"));
     let (_, _, none) = send(&e.app, get("/activity?kind=chat", Some(e.cookie.clone()))).await;
     assert!(none.contains("Nothing yet"));
-    // every required step is done now (the optional one does not count), so the card goes away
+    // connecting GitHub and the agent through the console completes the required steps (the optional
+    // one does not count), so the card goes away
     let (_, _, home) = send(&e.app, get("/", Some(e.cookie.clone()))).await;
-    assert!(!home.contains("Getting started"));
+    assert!(
+        home.contains("Connect GitHub") || home.contains("Getting started"),
+        "still guiding while nothing is connected"
+    );
+    connect_github(&e).await;
+    send(
+        &e.app,
+        get(
+            "/connect/github/installed?installation_id=180094190",
+            Some(e.cookie.clone()),
+        ),
+    )
+    .await;
+    send(
+        &e.app,
+        form(
+            "/connect/agent",
+            format!(
+                "csrf={}&key=sk-ant-x-key-value&sandbox=docker&image=img&network=bridge",
+                e.csrf
+            ),
+            Some(e.cookie.clone()),
+        ),
+    )
+    .await;
+    let (_, _, home) = send(&e.app, get("/", Some(e.cookie.clone()))).await;
+    assert!(!home.contains("Getting started"), "{home}");
 }
 
 #[tokio::test]
@@ -1188,4 +1219,600 @@ async fn the_map_shows_paused_when_work_is_paused() {
     let (_, _, body) = send(&e.app, get("/map/data", Some(e.cookie.clone()))).await;
     let v: Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["paused"], true);
+}
+
+// ---- connections ----
+
+fn state_in(html: &str) -> String {
+    let i = html.find("state=").expect("a state in the page") + 6;
+    html[i..i + 64].to_string()
+}
+
+async fn start_github(e: &Env, extra: &str) -> (StatusCode, String) {
+    let body = format!("csrf={}&name=tasklane-test&owner_type=user{extra}", e.csrf);
+    let (st, _, html) = send(
+        &e.app,
+        form("/connect/github/start", body, Some(e.cookie.clone())),
+    )
+    .await;
+    (st, html)
+}
+
+#[tokio::test]
+async fn the_connections_page_says_what_is_missing_and_the_wizard_links_to_it() {
+    let Some(e) = env().await else { return };
+    let (st, _, page) = send(&e.app, get("/connections", Some(e.cookie.clone()))).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(
+        page.contains("Connect GitHub")
+            && page.contains("Connect the agent")
+            && page.contains("not connected")
+    );
+    assert_eq!(
+        send(&e.app, get("/connections", None)).await.0,
+        StatusCode::SEE_OTHER
+    );
+    let (_, _, home) = send(&e.app, get("/", Some(e.cookie.clone()))).await;
+    assert!(
+        home.contains("/connections"),
+        "the getting-started card links to it"
+    );
+}
+
+#[tokio::test]
+async fn starting_the_github_app_hands_the_browser_to_github_with_a_manifest_and_a_one_time_state()
+{
+    let Some(e) = env().await else { return };
+    let (st, html) = start_github(&e, "").await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(
+        html.contains("action=\"https://github.com/settings/apps/new?state="),
+        "{html}"
+    );
+    assert!(html.contains("data-autosubmit") && html.contains("name=\"manifest\""));
+    let state = state_in(&html);
+    let stored: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM setup_states WHERE state = $1 AND purpose = 'github_manifest'",
+    )
+    .bind(&state)
+    .fetch_one(&e.pool)
+    .await
+    .unwrap();
+    assert_eq!(stored, 1);
+    // the manifest in the page is JSON with the permissions and the browser's own address
+    let m = html
+        .split("name=\"manifest\" value=\"")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap()
+        .replace("&quot;", "\"")
+        .replace("&amp;", "&");
+    let m: Value = serde_json::from_str(&m).unwrap();
+    assert_eq!(m["default_permissions"]["issues"], "write");
+    assert!(m["redirect_url"]
+        .as_str()
+        .unwrap()
+        .ends_with("/connect/github/callback"));
+    assert_eq!(m["name"], "tasklane-test");
+    // an organization goes to the organization's page
+    let (_, html) = start_github(&e, "&org=my-company").await;
+    assert!(
+        !html.contains("/organizations/"),
+        "owner_type user ignores the organization"
+    );
+    let body = format!(
+        "csrf={}&name=tasklane-test&owner_type=org&org=my-company",
+        e.csrf
+    );
+    let (_, _, html) = send(
+        &e.app,
+        form("/connect/github/start", body, Some(e.cookie.clone())),
+    )
+    .await;
+    assert!(html.contains("https://github.com/organizations/my-company/settings/apps/new?state="));
+}
+
+#[tokio::test]
+async fn starting_needs_a_valid_form_a_session_and_a_sane_name() {
+    let Some(e) = env().await else { return };
+    assert_eq!(
+        send(
+            &e.app,
+            form(
+                "/connect/github/start",
+                "csrf=bad&name=abc&owner_type=user".into(),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        send(
+            &e.app,
+            form(
+                "/connect/github/start",
+                format!("csrf={}&name=ab&owner_type=user", e.csrf),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        send(
+            &e.app,
+            form(
+                "/connect/github/start",
+                format!("csrf={}&name=abc&owner_type=org&org=", e.csrf),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        send(
+            &e.app,
+            form(
+                "/connect/github/start",
+                format!("csrf={}&name=abc&owner_type=org&org=a%2Fb", e.csrf),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "no slash in an organization name"
+    );
+}
+
+#[tokio::test]
+async fn the_callback_stores_the_credentials_privately_once_and_only_for_the_session_that_started_it(
+) {
+    let Some(e) = env().await else { return };
+    let (_, html) = start_github(&e, "").await;
+    let state = state_in(&html);
+    // another session cannot use this state
+    let (_, h2, _) = send(&e.app, form("/login", format!("token={ADMIN}"), None)).await;
+    let other = h2[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        send(
+            &e.app,
+            get(
+                &format!("/connect/github/callback?code=abcdef0123456789&state={state}"),
+                Some(other)
+            )
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    // no state, a made-up state, no session
+    assert_eq!(
+        send(
+            &e.app,
+            get(
+                "/connect/github/callback?code=abcdef0123456789",
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        send(
+            &e.app,
+            get(
+                &format!(
+                    "/connect/github/callback?code=abcdef0123456789&state={}",
+                    "0".repeat(64)
+                ),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        send(
+            &e.app,
+            get(
+                &format!("/connect/github/callback?code=abcdef0123456789&state={state}"),
+                None
+            )
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    // the right session works
+    let (st, h, _) = send(
+        &e.app,
+        get(
+            &format!("/connect/github/callback?code=abcdef0123456789&state={state}"),
+            Some(e.cookie.clone()),
+        ),
+    )
+    .await;
+    assert_eq!(
+        (st, h[header::LOCATION].to_str().unwrap()),
+        (StatusCode::SEE_OTHER, "/connect/github/install")
+    );
+    let key = e.dir.path().join("secrets/github_app.pem");
+    assert!(std::fs::read_to_string(&key)
+        .unwrap()
+        .contains("FAKEPEMDATA"));
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(
+        std::fs::metadata(&key).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(
+        std::fs::read_to_string(e.dir.path().join("secrets/github_webhook_secret"))
+            .unwrap()
+            .trim(),
+        "fake-webhook-secret-value"
+    );
+    let saved: Value = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'github'")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            saved["app_id"].as_str(),
+            saved["slug"].as_str(),
+            saved["owner"].as_str()
+        ),
+        (Some("4242"), Some("tasklane-test"), Some("someone"))
+    );
+    assert!(
+        !saved.to_string().contains("FAKEPEM") && !saved.to_string().contains("fake-webhook"),
+        "no secret in the database"
+    );
+    // one use only
+    assert_eq!(
+        send(
+            &e.app,
+            get(
+                &format!("/connect/github/callback?code=abcdef0123456789&state={state}"),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    // the install page now offers the install link for this App
+    let (_, _, page) = send(
+        &e.app,
+        get("/connect/github/install", Some(e.cookie.clone())),
+    )
+    .await;
+    assert!(page.contains("https://github.com/apps/tasklane-test/installations/new"));
+    // no page ever shows the credentials
+    for path in ["/connections", "/connect/github/install", "/health", "/"] {
+        let (_, _, body) = send(&e.app, get(path, Some(e.cookie.clone()))).await;
+        assert!(
+            !body.contains("FAKEPEMDATA") && !body.contains("fake-webhook-secret-value"),
+            "{path}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_refused_code_saves_nothing_and_says_so() {
+    let Some(e) = env().await else { return };
+    let (_, html) = start_github(&e, "").await;
+    let state = state_in(&html);
+    let (st, _, page) = send(
+        &e.app,
+        get(
+            &format!("/connect/github/callback?code=badcodebadcode&state={state}"),
+            Some(e.cookie.clone()),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_GATEWAY);
+    assert!(page.contains("did not hand over"));
+    assert!(!e.dir.path().join("secrets/github_app.pem").exists());
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM settings WHERE key = 'github'")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+}
+
+async fn installation_id(e: &Env) -> Option<String> {
+    sqlx::query_scalar::<_, Option<String>>(
+        "SELECT value->>'installation_id' FROM settings WHERE key = 'github'",
+    )
+    .fetch_one(&e.pool)
+    .await
+    .unwrap()
+}
+
+async fn connect_github(e: &Env) {
+    let (_, html) = start_github(e, "").await;
+    let state = state_in(&html);
+    let (st, _, _) = send(
+        &e.app,
+        get(
+            &format!("/connect/github/callback?code=abcdef0123456789&state={state}"),
+            Some(e.cookie.clone()),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::SEE_OTHER);
+}
+
+#[tokio::test]
+async fn after_the_install_github_sends_the_installation_id_and_it_is_kept_if_valid() {
+    let Some(e) = env().await else { return };
+    connect_github(&e).await;
+    for bad in ["abc", "1;drop", "", "123456789012345678901234"] {
+        send(
+            &e.app,
+            get(
+                &format!("/connect/github/installed?installation_id={bad}&setup_action=install"),
+                Some(e.cookie.clone()),
+            ),
+        )
+        .await;
+        assert_eq!(
+            installation_id(&e).await,
+            None,
+            "{bad:?} is not an installation id"
+        );
+    }
+    let (st, h, _) = send(
+        &e.app,
+        get(
+            "/connect/github/installed?installation_id=180094190&setup_action=install",
+            Some(e.cookie.clone()),
+        ),
+    )
+    .await;
+    assert_eq!(
+        (st, h[header::LOCATION].to_str().unwrap()),
+        (StatusCode::SEE_OTHER, "/connections?msg=github_connected")
+    );
+    assert_eq!(installation_id(&e).await.as_deref(), Some("180094190"));
+    let (_, _, page) = send(
+        &e.app,
+        get("/connections?msg=github_connected", Some(e.cookie.clone())),
+    )
+    .await;
+    assert!(
+        page.contains("GitHub is connected.")
+            && page.contains("tasklane-test")
+            && page.contains("Disconnect")
+    );
+}
+
+#[tokio::test]
+async fn if_github_does_not_send_the_user_back_the_installation_is_found_by_itself() {
+    let Some(e) = env().await else { return };
+    connect_github(&e).await;
+    std::fs::write(e.dir.path().join("state/installations.json"), r#"[{"id":"77","account":"someone","repository_selection":"selected"},{"id":"88","account":"other","repository_selection":"all"}]"#).unwrap();
+    let (_, _, page) = send(&e.app, get("/connections", Some(e.cookie.clone()))).await;
+    assert!(page.contains("connected"));
+    let id: Option<String> =
+        sqlx::query_scalar("SELECT value->>'installation_id' FROM settings WHERE key = 'github'")
+            .fetch_one(&e.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        id.as_deref(),
+        Some("77"),
+        "the installation on the App owner's account is chosen"
+    );
+}
+
+#[tokio::test]
+async fn disconnecting_github_removes_the_secrets_and_the_setting() {
+    let Some(e) = env().await else { return };
+    connect_github(&e).await;
+    assert_eq!(
+        send(
+            &e.app,
+            form(
+                "/connect/github/disconnect",
+                "csrf=bad".into(),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert!(e.dir.path().join("secrets/github_app.pem").exists());
+    assert_eq!(
+        send(
+            &e.app,
+            form(
+                "/connect/github/disconnect",
+                format!("csrf={}", e.csrf),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    assert!(
+        !e.dir.path().join("secrets/github_app.pem").exists()
+            && !e.dir.path().join("secrets/github_webhook_secret").exists()
+    );
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM settings WHERE key = 'github'")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+}
+
+#[tokio::test]
+async fn the_agent_key_is_saved_privately_validated_and_never_shown_again() {
+    let Some(e) = env().await else { return };
+    let save = |body: String| {
+        let (app, cookie) = (e.app.clone(), e.cookie.clone());
+        async move { send(&app, form("/connect/agent", body, Some(cookie))).await }
+    };
+    assert_eq!(
+        save("csrf=bad&key=x&sandbox=none".into()).await.0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        save(format!("csrf={}&key=has+a+space&sandbox=none", e.csrf))
+            .await
+            .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        save(format!("csrf={}&key=ok&sandbox=sudo", e.csrf)).await.0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        save(format!(
+            "csrf={}&key=ok&sandbox=docker&image=&network=",
+            e.csrf
+        ))
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "docker needs an image and a network"
+    );
+    assert_eq!(
+        save(format!(
+            "csrf={}&key=ok&sandbox=docker&image=--privileged&network=net",
+            e.csrf
+        ))
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "an image name cannot carry options"
+    );
+    assert!(
+        !e.dir.path().join("secrets/anthropic_key").exists(),
+        "nothing was saved by the refused requests"
+    );
+
+    let (st, h, _) = save(format!(
+        "csrf={}&key=sk-ant-secret-key-value&sandbox=docker&image=tasklane-sandbox&network=bridge",
+        e.csrf
+    ))
+    .await;
+    assert_eq!(
+        (st, h[header::LOCATION].to_str().unwrap()),
+        (StatusCode::SEE_OTHER, "/connect/agent?msg=agent_saved")
+    );
+    use std::os::unix::fs::PermissionsExt;
+    let kf = e.dir.path().join("secrets/anthropic_key");
+    assert_eq!(
+        std::fs::read_to_string(&kf).unwrap().trim(),
+        "sk-ant-secret-key-value"
+    );
+    assert_eq!(
+        std::fs::metadata(&kf).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let s: Value = sqlx::query_scalar("SELECT value FROM settings WHERE key = 'agent'")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            s["sandbox"].as_str(),
+            s["image"].as_str(),
+            s["network"].as_str()
+        ),
+        (Some("docker"), Some("tasklane-sandbox"), Some("bridge"))
+    );
+    assert!(
+        !s.to_string().contains("sk-ant"),
+        "the key is not in the database"
+    );
+    // saving again with an empty key keeps the saved one; the key is not in any page
+    save(format!("csrf={}&key=&sandbox=none", e.csrf)).await;
+    assert_eq!(
+        std::fs::read_to_string(&kf).unwrap().trim(),
+        "sk-ant-secret-key-value"
+    );
+    for path in ["/connect/agent", "/connections", "/health", "/"] {
+        let (_, _, body) = send(&e.app, get(path, Some(e.cookie.clone()))).await;
+        assert!(!body.contains("sk-ant-secret-key-value"), "{path}");
+    }
+    let (_, _, page) = send(&e.app, get("/connect/agent", Some(e.cookie.clone()))).await;
+    assert!(page.contains("Leave empty to keep the saved key") && page.contains("saved"));
+    // removing it
+    assert_eq!(
+        send(
+            &e.app,
+            form(
+                "/connect/agent/disconnect",
+                format!("csrf={}", e.csrf),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    assert!(!kf.exists());
+}
+
+#[tokio::test]
+async fn the_agent_test_button_reports_success_and_failure_in_plain_words() {
+    let Some(e) = env().await else { return };
+    assert_eq!(
+        send(
+            &e.app,
+            form(
+                "/connect/agent/test",
+                "csrf=bad".into(),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    let (st, _, page) = send(
+        &e.app,
+        form(
+            "/connect/agent/test",
+            format!("csrf={}", e.csrf),
+            Some(e.cookie.clone()),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(page.contains("passed") && page.contains("It works"));
+    std::fs::write(e.dir.path().join("state/check.json"), r#"{"ok": false, "kind": "unauthorized", "message": "The key was refused <by> the provider", "secs": 0.4}"#).unwrap();
+    let (_, _, page) = send(
+        &e.app,
+        form(
+            "/connect/agent/test",
+            format!("csrf={}", e.csrf),
+            Some(e.cookie.clone()),
+        ),
+    )
+    .await;
+    assert!(
+        page.contains("failed") && page.contains("The key was refused &lt;by&gt; the provider"),
+        "the message is escaped"
+    );
 }

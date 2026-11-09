@@ -352,8 +352,38 @@ def q(s):
 # ---------------------------------------------------------------- ops
 
 def op_describe(params):
+    key = os.environ.get("GITHUB_APP_PRIVATE_KEY_FILE", "")
+    configured = bool(os.environ.get("GITHUB_APP_ID") and key and os.path.isfile(key))
     return {"name": "github", "role": "ticket_source",
-            "protocol_major": PROTOCOL_MAJOR, "version": VERSION}
+            "protocol_major": PROTOCOL_MAJOR, "version": VERSION, "configured": configured}
+
+
+MANIFEST_CODE = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
+
+
+def op_app_manifest_convert(params):
+    """Exchange the one-time code GitHub hands back after the user created an App from a manifest
+    for the App's credentials. The call needs no authentication. The result holds secrets (the
+    private key and the webhook secret) for the core to store; they are never logged."""
+    code = p_str(params, "code")
+    if not MANIFEST_CODE.match(code):
+        raise permanent("that is not a valid manifest code")
+    d = api("POST", f"/app-manifests/{code}/conversions").data or {}
+    for k in ("pem", "webhook_secret", "client_secret"):
+        remember_secret(d.get(k))
+    if not d.get("id") or not d.get("pem"):
+        raise permanent("GitHub did not return the App credentials (the code may have been used already)")
+    return {"app_id": str(d["id"]), "slug": d.get("slug", ""), "name": d.get("name", ""),
+            "owner": (d.get("owner") or {}).get("login", ""), "html_url": d.get("html_url", ""),
+            "client_id": d.get("client_id", ""), "pem": d["pem"],
+            "webhook_secret": d.get("webhook_secret") or ""}
+
+
+def op_list_installations(params):
+    """Where the App is installed (for the setup page): id, account, and whether all or selected repositories."""
+    items = paginate("/app/installations?per_page=100", auth=make_jwt())
+    return {"installations": [{"id": str(i["id"]), "account": (i.get("account") or {}).get("login", ""),
+                               "repository_selection": i.get("repository_selection", "")} for i in items]}
 
 
 def visible_repos():
@@ -759,6 +789,7 @@ OPS = {
     "repo_url": op_repo_url, "mint_run_token": op_mint_run_token,
     "open_pr": op_open_pr, "get_checks": op_get_checks,
     "merge_pr": op_merge_pr, "verify_webhook": op_verify_webhook,
+    "app_manifest_convert": op_app_manifest_convert, "list_installations": op_list_installations,
 }
 
 

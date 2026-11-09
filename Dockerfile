@@ -10,10 +10,14 @@ FROM node:22-bookworm-slim
 # python3: the shipped plug-ins. ca-certificates: HTTPS to the ticket source and the model API.
 # node + the Claude Code CLI: what the shipped agent-engine plug-in runs.
 ARG CLAUDE_CODE_VERSION=latest
+# the Docker client only (used by the sandbox option); the Docker socket is mounted only if you choose that option
+ARG DOCKER_CLI_VERSION=27.3.1
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git openssl python3 ca-certificates curl \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
+ && ARCH=$(uname -m) \
+ && curl -fsSL "https://download.docker.com/linux/static/stable/${ARCH}/docker-${DOCKER_CLI_VERSION}.tgz" | tar xz --strip-components=1 -C /usr/local/bin docker/docker \
  && useradd --system --create-home --uid 10001 tasklane \
  && mkdir -p /data && chown tasklane /data
 COPY --from=build /src/target/release/tasklane /usr/local/bin/tasklane

@@ -1,12 +1,15 @@
-# Production-style stack: Postgres + tasklane. Copy .env.example to .env, fill it in, then:
-#   docker compose -f compose.prod.yaml up -d
+# Start tasklane with a database. Everything else (GitHub, the agent's key, isolation) is set up in the
+# console after it starts:
+#   POSTGRES_PASSWORD=$(openssl rand -hex 16) docker compose -f compose.prod.yaml up -d --build
+#   docker compose -f compose.prod.yaml logs tasklane      # shows the admin token once
+#   then open http://localhost:8080
 services:
   db:
     image: postgres:16
     restart: unless-stopped
     environment:
       POSTGRES_USER: tasklane
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD first (see the comment at the top of this file)}
       POSTGRES_DB: tasklane
     volumes:
       - dbdata:/var/lib/postgresql/data
@@ -20,21 +23,17 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    env_file: .env
     environment:
       TASKLANE_DATABASE_URL: postgres://tasklane:${POSTGRES_PASSWORD}@db:5432/tasklane
-      TASKLANE_SOURCE_ENV: GITHUB_APP_ID,GITHUB_APP_PRIVATE_KEY_FILE,GITHUB_INSTALLATION_ID,GITHUB_WEBHOOK_SECRET,GITHUB_ORG,GITHUB_API_URL
-      TASKLANE_ENGINE_ENV: ANTHROPIC_API_KEY,CLAUDE_CODE_OAUTH_TOKEN,TASKLANE_ALLOW_UNSANDBOXED,TASKLANE_SANDBOX,TASKLANE_SANDBOX_IMAGE,TASKLANE_SANDBOX_NETWORK
-      GITHUB_APP_PRIVATE_KEY_FILE: /run/secrets/github_app_key
+      # Optional: the address people use to reach the console (needed for webhooks and behind a proxy)
+      TASKLANE_PUBLIC_URL: ${TASKLANE_PUBLIC_URL:-}
+    env_file:
+      - path: .env
+        required: false     # advanced settings can go in .env; see docs/operations.md
     ports:
-      - "127.0.0.1:8080:8080"   # put a TLS reverse proxy in front of this
+      - "127.0.0.1:8080:8080"   # put a TLS reverse proxy in front of this for anything but a local try
     volumes:
-      - workdata:/data
-    secrets:
-      - github_app_key
-secrets:
-  github_app_key:
-    file: ./github-app-key.pem
+      - workdata:/data         # git checkouts and the secrets saved from the console
 volumes:
   dbdata:
   workdata:

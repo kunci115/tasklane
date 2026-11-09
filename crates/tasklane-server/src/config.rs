@@ -11,7 +11,8 @@ pub struct Settings {
     pub database_url: String,
     pub bind: String,
     pub data_dir: PathBuf,
-    pub admin_token: String,
+    /// From the environment, if set. Otherwise one is generated on first start and stored in the data directory.
+    pub admin_token: Option<String>,
     /// platform name -> shared secret for report-button tokens
     pub jwt_secrets: HashMap<String, String>,
     pub workers: usize,
@@ -25,6 +26,7 @@ pub struct Settings {
     pub max_dev_parallel: i64,
     pub allow_no_checks: bool,
     pub retention_days: i64,
+    pub public_url: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -88,30 +90,45 @@ fn plugin(
     }))
 }
 
+/// The plug-ins that ship with tasklane, and the environment variables they may be given. These
+/// defaults mean a plain install needs no plug-in settings; everything else is set in the console.
+const SOURCE_ENV: &str = "GITHUB_APP_ID,GITHUB_APP_PRIVATE_KEY_FILE,GITHUB_INSTALLATION_ID,GITHUB_WEBHOOK_SECRET,GITHUB_ORG,GITHUB_API_URL";
+const ENGINE_ENV: &str = "ANTHROPIC_API_KEY,CLAUDE_CODE_OAUTH_TOKEN,TASKLANE_ALLOW_UNSANDBOXED,TASKLANE_SANDBOX,TASKLANE_SANDBOX_IMAGE,TASKLANE_SANDBOX_NETWORK,TASKLANE_SANDBOX_CLAUDE_BIN,TASKLANE_CLAUDE_BIN";
+
+fn with_defaults(vars: &HashMap<String, String>) -> HashMap<String, String> {
+    let mut v = vars.clone();
+    let dir = get(vars, "TASKLANE_PLUGIN_DIR").unwrap_or_else(|| "/opt/tasklane/plugins".into());
+    v.entry("TASKLANE_SOURCE_CMD".into())
+        .or_insert_with(|| format!("python3 -I {dir}/source-github/source_github.py"));
+    v.entry("TASKLANE_ENGINE_CMD".into())
+        .or_insert_with(|| format!("python3 -I {dir}/engine-claude/engine_claude.py"));
+    v.entry("TASKLANE_SOURCE_ENV".into())
+        .or_insert_with(|| SOURCE_ENV.into());
+    v.entry("TASKLANE_ENGINE_ENV".into())
+        .or_insert_with(|| ENGINE_ENV.into());
+    v
+}
+
 impl Settings {
     pub fn from_env() -> Result<Settings, ConfigError> {
         Settings::from_map(&std::env::vars().collect())
     }
 
     pub fn from_map(vars: &HashMap<String, String>) -> Result<Settings, ConfigError> {
-        let admin_token = get(vars, "TASKLANE_ADMIN_TOKEN")
-            .ok_or(ConfigError::Missing("TASKLANE_ADMIN_TOKEN"))?;
-        if admin_token.len() < 24 {
-            return Err(ConfigError::Invalid(
-                "TASKLANE_ADMIN_TOKEN",
-                "must be at least 24 characters".into(),
-            ));
-        }
-        if admin_token
-            .chars()
-            .collect::<std::collections::HashSet<_>>()
-            .len()
-            < 8
-        {
-            return Err(ConfigError::Invalid(
-                "TASKLANE_ADMIN_TOKEN",
-                "looks too repetitive; use a long random string".into(),
-            ));
+        let admin_token = get(vars, "TASKLANE_ADMIN_TOKEN");
+        if let Some(t) = &admin_token {
+            if t.len() < 24 {
+                return Err(ConfigError::Invalid(
+                    "TASKLANE_ADMIN_TOKEN",
+                    "must be at least 24 characters".into(),
+                ));
+            }
+            if t.chars().collect::<std::collections::HashSet<_>>().len() < 8 {
+                return Err(ConfigError::Invalid(
+                    "TASKLANE_ADMIN_TOKEN",
+                    "looks too repetitive; use a long random string".into(),
+                ));
+            }
         }
         let mut jwt_secrets = HashMap::new();
         for pair in get(vars, "TASKLANE_JWT_SECRETS")
@@ -147,16 +164,26 @@ impl Settings {
             workers: num(vars, "TASKLANE_WORKERS", 2usize)?.max(1),
             sync_every: Duration::from_secs(num(vars, "TASKLANE_SYNC_SECS", 60u64)?.max(5)),
             user_daily_limit: num(vars, "TASKLANE_USER_DAILY_LIMIT", 10i64)?,
-            source: plugin(vars, "TASKLANE_SOURCE_CMD", "TASKLANE_SOURCE_ENV")?
-                .ok_or(ConfigError::Missing("TASKLANE_SOURCE_CMD"))?,
-            engine: plugin(vars, "TASKLANE_ENGINE_CMD", "TASKLANE_ENGINE_ENV")?
-                .ok_or(ConfigError::Missing("TASKLANE_ENGINE_CMD"))?,
+            source: plugin(
+                &with_defaults(vars),
+                "TASKLANE_SOURCE_CMD",
+                "TASKLANE_SOURCE_ENV",
+            )?
+            .ok_or(ConfigError::Missing("TASKLANE_SOURCE_CMD"))?,
+            engine: plugin(
+                &with_defaults(vars),
+                "TASKLANE_ENGINE_CMD",
+                "TASKLANE_ENGINE_ENV",
+            )?
+            .ok_or(ConfigError::Missing("TASKLANE_ENGINE_CMD"))?,
             chat: plugin(vars, "TASKLANE_CHAT_CMD", "TASKLANE_CHAT_ENV")?,
             source_name: get(vars, "TASKLANE_SOURCE_NAME").unwrap_or_else(|| "github".into()),
             secure_cookies: public.starts_with("https://"),
             max_dev_parallel: num(vars, "TASKLANE_MAX_DEV", 1i64)?.max(1),
             allow_no_checks: get(vars, "TASKLANE_ALLOW_NO_CHECKS").as_deref() == Some("1"),
             retention_days: num(vars, "TASKLANE_RETENTION_DAYS", 365i64)?.max(7),
+            public_url: get(vars, "TASKLANE_PUBLIC_URL")
+                .map(|u| u.trim_end_matches('/').to_string()),
         })
     }
 }
@@ -197,6 +224,44 @@ mod tests {
             "only PATH and the listed variables that exist"
         );
         assert!(s.chat.is_none());
+    }
+
+    #[test]
+    fn a_plain_install_needs_only_the_database_and_gets_the_shipped_plugins() {
+        let vars: HashMap<String, String> = [
+            ("TASKLANE_DATABASE_URL", "postgres://x"),
+            ("PATH", "/usr/bin"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let s = Settings::from_map(&vars).unwrap();
+        assert!(s.admin_token.is_none(), "generated on first start instead");
+        assert_eq!(s.source.program, "python3");
+        assert_eq!(
+            s.source.args,
+            vec!["-I", "/opt/tasklane/plugins/source-github/source_github.py"]
+        );
+        assert_eq!(
+            s.engine.args,
+            vec!["-I", "/opt/tasklane/plugins/engine-claude/engine_claude.py"]
+        );
+        assert!(s.public_url.is_none());
+    }
+
+    #[test]
+    fn the_plugin_directory_and_public_url_can_be_set() {
+        let vars: HashMap<String, String> = [
+            ("TASKLANE_DATABASE_URL", "postgres://x"),
+            ("TASKLANE_PLUGIN_DIR", "/p"),
+            ("TASKLANE_PUBLIC_URL", "https://t.example.com/"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let s = Settings::from_map(&vars).unwrap();
+        assert_eq!(s.source.args[1], "/p/source-github/source_github.py");
+        assert_eq!(s.public_url.as_deref(), Some("https://t.example.com"));
     }
 
     #[test]

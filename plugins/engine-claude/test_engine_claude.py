@@ -331,3 +331,38 @@ class Hardening(unittest.TestCase):
         self.assertTrue(r["ok"], r)
         self.assertEqual(r["result"]["verdict"], "escalate")
         self.assertIn("too large", r["result"]["notes"])
+
+
+class CheckOp(Fixture):
+    def check(self, env=None):
+        e = {"TASKLANE_CLAUDE_BIN": str(self.bin), "TASKLANE_ALLOW_UNSANDBOXED": "1", "ANTHROPIC_API_KEY": "sk-ant-test-key-123456"}
+        e.update(env or {})
+        (r,) = talk({"id": 5, "op": "check"}, env=e)
+        self.assertTrue(r["ok"], r)
+        return r["result"]
+
+    def test_a_working_setup_answers_the_tiny_question(self):
+        self.behave(result=json.dumps({"answer": "ok"}))
+        r = self.check()
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["answer"], "ok")
+        self.assertEqual(r["sandbox"], "none")
+
+    def test_a_refused_credential_is_reported_in_plain_words_not_as_a_protocol_error(self):
+        self.behave(is_error=True, result="Invalid API key - please check it", subtype="error")
+        r = self.check()
+        self.assertFalse(r["ok"])
+        self.assertIn(r["kind"], ("unauthorized", "permanent", "transient"))
+        self.assertNotIn("sk-ant-test-key-123456", json.dumps(r))
+
+    def test_without_a_sandbox_or_the_opt_in_the_check_says_so(self):
+        r = self.check({"TASKLANE_ALLOW_UNSANDBOXED": ""})
+        self.assertFalse(r["ok"])
+        self.assertIn("refusing to run without a sandbox", r["message"])
+
+    def test_describe_says_whether_a_credential_exists_never_its_value(self):
+        (r,) = talk({"id": 1, "op": "describe"}, env={"ANTHROPIC_API_KEY": "sk-ant-test-key-123456"})
+        self.assertIs(r["result"]["credential"], True)
+        self.assertNotIn("sk-ant", json.dumps(r))
+        (r,) = talk({"id": 1, "op": "describe"}, env={"ANTHROPIC_API_KEY": "", "CLAUDE_CODE_OAUTH_TOKEN": ""})
+        self.assertIs(r["result"]["credential"], False)

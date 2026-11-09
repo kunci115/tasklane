@@ -102,6 +102,13 @@ pub fn spawn_sync(
     let (orch, mut stop) = (orch.clone(), stop.clone());
     tokio::spawn(async move {
         loop {
+            // nothing to sync until a ticket source is connected; stay quiet instead of logging an error every minute
+            if !orch.source_configured().await {
+                if sleep_or_stop(every, &mut stop).await {
+                    return;
+                }
+                continue;
+            }
             match orch.sync_once().await {
                 Ok(r) if r.tickets_created + r.tickets_resumed > 0 => {
                     eprintln!(

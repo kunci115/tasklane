@@ -5,6 +5,7 @@ use tasklane_orchestrator::host::PluginClient;
 use tasklane_orchestrator::{Config, Orchestrator};
 use tasklane_queue::Queue;
 use tasklane_server::config::Settings;
+use tasklane_server::connections::{self, Secrets};
 use tasklane_server::{api, console, runtime, AppState};
 use tokio::sync::watch;
 
@@ -23,6 +24,9 @@ async fn main() {
 
 async fn run(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
     let s = Settings::from_env()?;
+    std::fs::create_dir_all(&s.data_dir)?;
+    let secrets = Secrets::new(&s.data_dir)?;
+    let (admin_token, fresh) = connections::admin_token(s.admin_token.clone(), &secrets)?;
     let pool = PgPoolOptions::new()
         .max_connections(16)
         .connect(&s.database_url)
@@ -33,6 +37,9 @@ async fn run(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     runtime::ensure_admin(&pool).await?;
+    if fresh {
+        eprintln!("\n  First start. Sign in to the console with this admin token (shown once; it is kept in {}):\n\n    {admin_token}\n", secrets.path(connections::ADMIN_TOKEN).display());
+    }
 
     let queue = Queue::new(pool.clone(), 3);
     let mut cfg = Config::new(
@@ -42,11 +49,17 @@ async fn run(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
     cfg.source_name = s.source_name.clone();
     cfg.max_dev_parallel = s.max_dev_parallel;
     cfg.allow_no_checks = s.allow_no_checks;
+    // what the console connected (an App, the agent's key and isolation) is added to what the environment says
+    let gh: Option<connections::GithubConn> = connections::get(&pool, "github").await;
+    let agent: connections::AgentSettings =
+        connections::get(&pool, "agent").await.unwrap_or_default();
+    let source_spec = connections::source_spec(&s.source, gh.as_ref(), &secrets);
+    let engine_spec = connections::engine_spec(&s.engine, &agent, &secrets);
     let orch = Arc::new(Orchestrator::new(
         pool.clone(),
         queue,
-        PluginClient::spawn(&s.source)?,
-        PluginClient::spawn(&s.engine)?,
+        PluginClient::spawn(&source_spec)?,
+        PluginClient::spawn(&engine_spec)?,
         cfg,
     ));
 
@@ -54,7 +67,6 @@ async fn run(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut tasks = runtime::spawn_workers(&orch, s.workers, &stop_rx);
     tasks.push(runtime::spawn_reaper(&orch, s.retention_days, &stop_rx));
     tasks.push(runtime::spawn_sync(&orch, s.sync_every, &stop_rx));
-
     if let Some(spec) = &s.chat {
         let bridge = Arc::new(tasklane_server::chat::ChatBridge {
             orch: orch.clone(),
@@ -67,11 +79,15 @@ async fn run(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     let state = Arc::new(AppState {
         orch: orch.clone(),
-        admin_token: s.admin_token.clone(),
+        admin_token,
         jwt_secrets: s.jwt_secrets.clone(),
         user_daily_limit: s.user_daily_limit,
         secure_cookies: s.secure_cookies,
         login_throttle: std::sync::Mutex::new((0, std::time::Instant::now())),
+        secrets,
+        base_source: s.source.clone(),
+        base_engine: s.engine.clone(),
+        public_url: s.public_url.clone(),
     });
     let app = api::routes().merge(console::routes()).with_state(state);
     let listener = tokio::net::TcpListener::bind(&s.bind).await?;

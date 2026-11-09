@@ -107,7 +107,22 @@ def run(params):
 
 def handle(op, params):
     if op == "describe":
-        return {"name": "fake", "version": "0.0.0", "role": "test", "sandbox": "docker", "unsandboxed_allowed": False}
+        # like the real plug-ins: report what the environment they were started with says
+        return {"name": "fake", "version": "0.0.0", "role": "test",
+                "sandbox": os.environ.get("TASKLANE_SANDBOX", "none"),
+                "unsandboxed_allowed": os.environ.get("TASKLANE_ALLOW_UNSANDBOXED") == "1",
+                "credential": bool(os.environ.get("ANTHROPIC_API_KEY")),
+                "configured": bool(os.environ.get("GITHUB_APP_ID"))}
+    if op == "app_manifest_convert":
+        if params["code"].startswith("bad"):
+            raise ValueError("code refused")
+        return {"app_id": "4242", "slug": "tasklane-test", "name": "tasklane-test", "owner": "someone",
+                "html_url": "https://github.com/apps/tasklane-test", "client_id": "Iv1.fake",
+                "pem": "-----BEGIN RSA PRIVATE KEY-----\nFAKEPEMDATA\n-----END RSA PRIVATE KEY-----\n", "webhook_secret": "fake-webhook-secret-value"}
+    if op == "list_installations":
+        return {"installations": read_json("installations.json", [])}
+    if op == "check":
+        return read_json("check.json", {"ok": True, "answer": "ok", "secs": 1.2, "sandbox": "none"})
     if op == "get_item":
         return item(params["ref"])
     if op == "run":

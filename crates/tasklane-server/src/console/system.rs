@@ -73,29 +73,31 @@ pub async fn setup_status(st: &AppState) -> Setup {
 
     let mut steps = vec![
         Step {
-            ok: src.is_some() && repos > 0,
+            ok: src.is_some() && repos > 0 && src.as_ref().and_then(|s| s.get("configured")).and_then(Value::as_bool).unwrap_or(true),
             optional: false,
             title: "Connect your ticket source",
             detail: if src.is_none() {
-                "The ticket-source plug-in is not answering. Check its settings (for GitHub: the App id, installation id and private key) and the daemon log.".into()
+                "The ticket-source plug-in is not answering. Check the daemon log.".into()
+            } else if src.as_ref().and_then(|s| s.get("configured")).and_then(Value::as_bool) == Some(false) {
+                "GitHub is not connected yet. It takes one click: tasklane creates the App for you.".into()
             } else if repos == 0 {
                 "The plug-in answers but no repository was found yet. Install the App on a repository; the list updates within a minute.".into()
             } else {
                 format!("{repos} repositor{} found.", if repos == 1 { "y" } else { "ies" })
             },
-            link: Some(("/services", "Repositories")),
+            link: Some(("/connections", "Connect GitHub")),
         },
         Step {
-            ok: eng.is_some() && (sandbox == "docker" || allowed),
+            ok: eng.is_some() && (sandbox == "docker" || allowed) && eng.as_ref().and_then(|e| e.get("credential")).and_then(Value::as_bool).unwrap_or(true),
             optional: false,
-            title: "Make the agent safe to run",
+            title: "Connect the agent and make it safe",
             detail: match (eng.is_some(), sandbox.as_str(), allowed) {
                 (false, _, _) => "The agent engine is not answering. Check its settings and the daemon log.".into(),
                 (true, "docker", _) => "The agent runs inside a Docker sandbox.".into(),
                 (true, _, true) => "The agent runs on this host without a sandbox because you allowed it. Only do that on a host that holds nothing else.".into(),
-                (true, _, false) => "The engine refuses to run until you either turn on the Docker sandbox (TASKLANE_SANDBOX=docker) or accept the risk (TASKLANE_ALLOW_UNSANDBOXED=1).".into(),
+                (true, _, false) => "The agent will not run until you choose how it is isolated, and give it a key.".into(),
             },
-            link: None,
+            link: Some(("/connect/agent", "Set up the agent")),
         },
         Step {
             ok: active > 0,
