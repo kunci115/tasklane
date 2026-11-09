@@ -18,7 +18,8 @@ Each part of the architecture ([docs/design](design) and the C4 diagrams in [doc
 | Per-repository memory (notes written by people) and `.tasklane.yml` that can only tighten | Built |
 | Two installs on one repository (ownership claim) | Built; run for real |
 | Agent sandbox: Docker container, egress allowlist proxy, optional screenshots with Obscura | Built; Obscura tested with a stand-in only |
-| Plug-in protocol with protocol version check; source, engine and chat plug-ins | Built |
+| Plug-in protocol with protocol version check; source, engine and chat plug-ins; a plug-in guide and a tested template | Built |
+| Operations: `tasklane doctor`, Prometheus `/metrics` (opt-in), a `runs` record of every model run, cleanup of stale tickets and orphaned containers | Built |
 | Threat-model tests (prompt-injection set for every role, lease races, approval binding) | Built |
 
 ## Next
