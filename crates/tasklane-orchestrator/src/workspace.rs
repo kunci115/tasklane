@@ -162,6 +162,64 @@ impl Workspaces {
         })
     }
 
+    /// A read-only checkout of the base branch, for questions. Detached, so it
+    /// cannot move any branch.
+    pub async fn prepare_readonly(
+        &self,
+        service: &str,
+        url: &str,
+        base: &str,
+        run: i64,
+    ) -> Result<Prepared, Error> {
+        let mirror = self.mirror_path(service);
+        tokio::fs::create_dir_all(&mirror)
+            .await
+            .map_err(|e| Error::Git(e.to_string()))?;
+        if !mirror.join("HEAD").exists() {
+            git(&mirror, &["init", "--bare", "-q", "."], None).await?;
+        }
+        let secret = url
+            .rsplit_once('@')
+            .map(|(left, _)| left.rsplit(':').next().unwrap_or("").to_string());
+        git(
+            &mirror,
+            &[
+                "fetch",
+                "--prune",
+                "-q",
+                url,
+                "+refs/heads/*:refs/remotes/origin/*",
+            ],
+            secret.as_deref(),
+        )
+        .await?;
+        let worktree = self
+            .root
+            .join("ask")
+            .join(format!("{run}-{}", std::process::id()));
+        tokio::fs::create_dir_all(worktree.parent().unwrap())
+            .await
+            .map_err(|e| Error::Git(e.to_string()))?;
+        git(
+            &mirror,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "--detach",
+                worktree.to_str().unwrap(),
+                &format!("refs/remotes/origin/{base}"),
+            ],
+            None,
+        )
+        .await?;
+        Ok(Prepared {
+            mirror,
+            worktree,
+            branch: String::new(),
+        })
+    }
+
     /// Commit everything the agent changed. Returns false if nothing changed.
     pub async fn commit_all(&self, worktree: &Path, message: &str) -> Result<bool, Error> {
         git(worktree, &["add", "-A"], None).await?;

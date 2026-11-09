@@ -2,9 +2,11 @@
 
 pub mod api;
 pub mod auth;
+pub mod chat;
 pub mod config;
 pub mod console;
 pub mod runtime;
+pub mod tickets;
 
 use std::collections::HashMap;
 use std::sync::Arc;

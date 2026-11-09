@@ -202,7 +202,7 @@ mod tests {
             .to_string()
             .contains("at least 24"));
         let mut v = base();
-        v.insert("TASKLANE_JWT_SECRETS".into(), "dms:tiny".into());
+        v.insert("TASKLANE_JWT_SECRETS".into(), "shop:tiny".into());
         assert!(Settings::from_map(&v)
             .err()
             .unwrap()

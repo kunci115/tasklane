@@ -2,7 +2,7 @@
 
 Ticket-driven AI agent pipeline: a problem is reported, triaged, approved by a human, fixed by an agent in an isolated workspace, checked by CI and a reviewer, and merged to a dev/staging branch. Humans stay in charge of approvals and of production.
 
-**Status: design phase plus a compiling skeleton. The pipeline does not run yet.** The architecture is drawn as C4 diagrams in [`docs/architecture`](docs/architecture); the design document is being written in [`docs/design`](docs/design).
+**Status: pre-release (0.0.1).** The whole pipeline from issue to merge runs in tests against a real Postgres and git, with a fake GitHub/source and a fake Claude engine; the Telegram and GitHub plug-ins are tested on their own against fake APIs. It has not yet been run against the live services. See [docs/operations.md](docs/operations.md) for setup and the honest list of limits. The architecture is drawn as C4 diagrams in [`docs/architecture`](docs/architecture); the design document is being written in [`docs/design`](docs/design).
 
 ## Stage 1 scope
 

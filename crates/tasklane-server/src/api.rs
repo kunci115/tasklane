@@ -12,6 +12,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::auth::verify_hs256;
+use crate::tickets::{create_ticket, CreateError, Created};
 use crate::{now_unix, AppState};
 
 pub fn routes() -> Router<Arc<AppState>> {
@@ -86,124 +87,44 @@ async fn report(
         return err(StatusCode::UNAUTHORIZED, "token needs sub and svc");
     };
     let reporter = format!("{}:{}", iss.as_deref().unwrap_or(""), sub);
-    let title = input.title.trim();
-    if title.is_empty() || title.chars().count() > 200 {
-        return err(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "title must be 1 to 200 characters",
-        );
-    }
-    if input.body.chars().count() > 20_000 {
-        return err(StatusCode::UNPROCESSABLE_ENTITY, "body is too long");
-    }
-
-    let pool = st.orch.pool();
-    let svc_row: Option<(i64, String)> = match sqlx::query_as(
-        "SELECT id, mode FROM services WHERE source = $1 AND external_id = $2 AND NOT archived",
+    let via = format!("{} by {}", iss.as_deref().unwrap_or(""), sub);
+    match create_ticket(
+        &st.orch,
+        svc,
+        &reporter,
+        &input.title,
+        &input.body,
+        &via,
+        st.user_daily_limit,
     )
-    .bind(&st.orch.config().source_name)
-    .bind(svc)
-    .fetch_optional(pool)
     .await
     {
-        Ok(r) => r,
-        Err(_) => return err(StatusCode::INTERNAL_SERVER_ERROR, "database error"),
-    };
-    let Some((service_id, mode)) = svc_row else {
-        return err(StatusCode::NOT_FOUND, "unknown service");
-    };
-    if mode == "watch" {
-        return err(
-            StatusCode::CONFLICT,
-            "this service is not accepting reports",
-        );
-    }
-
-    // Per-reporter limit over the last day.
-    let recent: i64 = sqlx::query_scalar("SELECT count(*) FROM tickets WHERE reporter_ref = $1 AND created_at > now() - interval '1 day'")
-        .bind(&reporter)
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0);
-    if recent >= st.user_daily_limit {
-        return err(StatusCode::TOO_MANY_REQUESTS, "daily report limit reached");
-    }
-    // The same title from the same reporter in the last day is the same report.
-    let dup: Option<String> = sqlx::query_scalar(
-        "SELECT external_ref FROM tickets WHERE reporter_ref = $1 AND service_id = $2 AND lower(title) = lower($3) AND created_at > now() - interval '1 day' LIMIT 1",
-    )
-    .bind(&reporter)
-    .bind(service_id)
-    .bind(title)
-    .fetch_optional(pool)
-    .await
-    .unwrap_or(None);
-    if let Some(reference) = dup {
-        return (
+        Ok(Created::New(reference)) => (
+            StatusCode::CREATED,
+            Json(json!({"ref": reference, "duplicate": false})),
+        )
+            .into_response(),
+        Ok(Created::Duplicate(reference)) => (
             StatusCode::OK,
             Json(json!({"ref": reference, "duplicate": true})),
         )
-            .into_response();
-    }
-
-    let body = format!(
-        "{}\n\n_Reported through {} by {}._",
-        input.body,
-        iss.as_deref().unwrap_or(""),
-        sub
-    );
-    let created = match st
-        .orch
-        .source_call(
-            "create_item",
-            json!({"service": svc, "title": title, "body": body, "labels": ["tasklane"]}),
-        )
-        .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("report: create_item failed: {e}");
-            return err(StatusCode::BAD_GATEWAY, "could not create the ticket");
+            .into_response(),
+        Err(CreateError::BadTitle) => err(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "title must be 1 to 200 characters",
+        ),
+        Err(CreateError::BodyTooLong) => err(StatusCode::UNPROCESSABLE_ENTITY, "body is too long"),
+        Err(CreateError::UnknownService) => err(StatusCode::NOT_FOUND, "unknown service"),
+        Err(CreateError::ReadOnlyService) => err(
+            StatusCode::CONFLICT,
+            "this service is not accepting reports",
+        ),
+        Err(CreateError::LimitReached) => {
+            err(StatusCode::TOO_MANY_REQUESTS, "daily report limit reached")
         }
-    };
-    let Some(reference) = created.get("ref").and_then(Value::as_str) else {
-        return err(
-            StatusCode::BAD_GATEWAY,
-            "ticket source returned no reference",
-        );
-    };
-    let r: Result<(), sqlx::Error> = async {
-        let mut tx = pool.begin().await?;
-        let inserted: Option<bool> = sqlx::query_scalar(
-            "INSERT INTO tickets (service_id, external_ref, reporter_ref, title) VALUES ($1,$2,$3,$4)
-             ON CONFLICT (service_id, external_ref) DO UPDATE SET reporter_ref = COALESCE(tickets.reporter_ref, $3), title = COALESCE(tickets.title, $4)
-             RETURNING (xmax = 0)",
-        )
-        .bind(service_id)
-        .bind(reference)
-        .bind(&reporter)
-        .bind(title)
-        .fetch_optional(&mut *tx)
-        .await?;
-        // Inserted now, as opposed to created earlier by the sync job (which already queued triage).
-        if inserted == Some(true) {
-            sqlx::query("INSERT INTO jobs (ticket_id, kind) SELECT id, 'triage' FROM tickets WHERE service_id = $1 AND external_ref = $2")
-                .bind(service_id)
-                .bind(reference)
-                .execute(&mut *tx)
-                .await?;
-        }
-        tx.commit().await
+        Err(CreateError::Source) => err(StatusCode::BAD_GATEWAY, "could not create the ticket"),
+        Err(CreateError::Db) => err(StatusCode::INTERNAL_SERVER_ERROR, "database error"),
     }
-    .await;
-    if r.is_err() {
-        return err(StatusCode::INTERNAL_SERVER_ERROR, "database error");
-    }
-    (
-        StatusCode::CREATED,
-        Json(json!({"ref": reference, "duplicate": false})),
-    )
-        .into_response()
 }
 
 fn base64_decode(s: &str) -> Option<Vec<u8>> {

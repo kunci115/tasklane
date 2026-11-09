@@ -25,6 +25,9 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/tickets/{id}/decide", post(decide_form))
         .route("/services", get(services_page))
         .route("/services/{id}/mode", post(set_mode))
+        .route("/chat", get(chat_page))
+        .route("/chat/groups", post(add_group))
+        .route("/chat/groups/{id}/delete", post(delete_group))
         .route("/pause", post(pause))
         .route("/resume", post(resume))
 }
@@ -61,7 +64,7 @@ body{{font:15px/1.5 system-ui,sans-serif;max-width:60rem;margin:2rem auto;paddin
 table{{border-collapse:collapse;width:100%}}th,td{{text-align:left;padding:.4rem .6rem;border-bottom:1px solid #dde1ea}}\
 a{{color:#0b5fff}}.pill{{border-radius:1em;padding:0 .6em;background:#eef1f7}}.warn{{background:#fff3cd}}\
 button{{font:inherit;padding:.3rem .8rem;margin-right:.4rem}}code,pre{{background:#f4f6fa;padding:.1rem .3rem}}pre{{padding:.6rem;overflow:auto}}\
-nav a{{margin-right:1rem}}</style></head><body><nav><a href=\"/\">Tickets</a><a href=\"/services\">Repositories</a></nav>{b}</body></html>",
+nav a{{margin-right:1rem}}</style></head><body><nav><a href=\"/\">Tickets</a><a href=\"/services\">Repositories</a><a href=\"/chat\">Chat groups</a></nav>{b}</body></html>",
         t = esc(title),
         b = body
     ))
@@ -375,4 +378,107 @@ async fn toggle(st: Arc<AppState>, headers: HeaderMap, f: CsrfOnly, paused: bool
     .execute(st.orch.pool())
     .await;
     redirect("/")
+}
+
+async fn chat_page(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if !logged_in(&st, &headers) {
+        return redirect("/login");
+    }
+    let pool = st.orch.pool();
+    let groups = sqlx::query("SELECT g.id, g.channel, g.group_ref, g.daily_cap, s.external_id FROM chat_groups g JOIN services s ON s.id = g.service_id ORDER BY g.id").fetch_all(pool).await.unwrap_or_default();
+    let services =
+        sqlx::query("SELECT id, external_id FROM services WHERE NOT archived ORDER BY external_id")
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+    let mut b = String::from("<h1>Chat groups</h1><p>Anyone in a registered group can ask questions about its repository and open tickets. Only registered approvers can approve. A group that is not listed gets one reply with its id and nothing else.</p><table><tr><th>Channel</th><th>Group id</th><th>Repository</th><th>Questions per day</th><th></th></tr>");
+    for g in groups {
+        let id: i64 = g.get("id");
+        b.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td><form method=\"post\" action=\"/chat/groups/{id}/delete\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><button>Remove</button></form></td></tr>",
+            esc(&g.get::<String, _>("channel")),
+            esc(&g.get::<String, _>("group_ref")),
+            esc(&g.get::<String, _>("external_id")),
+            g.get::<i32, _>("daily_cap"),
+            csrf_value(&st)
+        ));
+    }
+    b.push_str(&format!("</table><h2>Register a group</h2><form method=\"post\" action=\"/chat/groups\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><label>Group id <input name=\"group_ref\" required></label> <label>Repository <select name=\"service_id\">", csrf_value(&st)));
+    for sv in services {
+        b.push_str(&format!(
+            "<option value=\"{}\">{}</option>",
+            sv.get::<i64, _>("id"),
+            esc(&sv.get::<String, _>("external_id"))
+        ));
+    }
+    b.push_str("</select></label> <label>Questions per day <input name=\"daily_cap\" type=\"number\" value=\"50\" min=\"1\"></label> <button>Register</button></form>");
+    page("Chat groups", &b).into_response()
+}
+
+#[derive(Deserialize)]
+struct GroupIn {
+    csrf: String,
+    group_ref: String,
+    service_id: i64,
+    daily_cap: i32,
+}
+
+async fn add_group(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Form(f): Form<GroupIn>,
+) -> Response {
+    if !logged_in(&st, &headers) || !ct_eq(&f.csrf, &csrf_value(&st)) {
+        return (
+            StatusCode::FORBIDDEN,
+            page("Refused", "<p>Session or form token is not valid.</p>"),
+        )
+            .into_response();
+    }
+    let group_ref = f.group_ref.trim();
+    if group_ref.is_empty() || group_ref.len() > 64 || f.daily_cap < 1 {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            page("Refused", "<p>Check the group id and the daily number.</p>"),
+        )
+            .into_response();
+    }
+    let r = sqlx::query("INSERT INTO chat_groups (channel, group_ref, service_id, daily_cap) VALUES ('telegram', $1, $2, $3) ON CONFLICT (channel, group_ref) DO UPDATE SET service_id = $2, daily_cap = $3")
+        .bind(group_ref)
+        .bind(f.service_id)
+        .bind(f.daily_cap)
+        .execute(st.orch.pool())
+        .await;
+    if r.is_err() {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            page("Refused", "<p>Unknown repository.</p>"),
+        )
+            .into_response();
+    }
+    let _ = sqlx::query("INSERT INTO audit_events (actor, action, detail) VALUES ('console:admin', 'chat.group_registered', $1)")
+        .bind(serde_json::json!({"group": group_ref, "service_id": f.service_id}))
+        .execute(st.orch.pool())
+        .await;
+    redirect("/chat")
+}
+
+async fn delete_group(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Form(f): Form<CsrfOnly>,
+) -> Response {
+    if !logged_in(&st, &headers) || !ct_eq(&f.csrf, &csrf_value(&st)) {
+        return (
+            StatusCode::FORBIDDEN,
+            page("Refused", "<p>Session or form token is not valid.</p>"),
+        )
+            .into_response();
+    }
+    let _ = sqlx::query("DELETE FROM chat_groups WHERE id = $1")
+        .bind(id)
+        .execute(st.orch.pool())
+        .await;
+    redirect("/chat")
 }

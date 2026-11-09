@@ -55,6 +55,16 @@ async fn run(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
     tasks.push(runtime::spawn_reaper(&orch, &stop_rx));
     tasks.push(runtime::spawn_sync(&orch, s.sync_every, &stop_rx));
 
+    if let Some(spec) = &s.chat {
+        let bridge = Arc::new(tasklane_server::chat::ChatBridge {
+            orch: orch.clone(),
+            chat: PluginClient::spawn(spec)?,
+            channel: "telegram".into(),
+            user_daily_limit: s.user_daily_limit,
+        });
+        tasks.push(tokio::spawn(bridge.run(stop_rx.clone())));
+    }
+
     let state = Arc::new(AppState {
         orch: orch.clone(),
         admin_token: s.admin_token.clone(),
@@ -70,7 +80,13 @@ async fn run(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
     );
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
-            let _ = tokio::signal::ctrl_c().await;
+            let mut term =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("SIGTERM handler");
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = term.recv() => {}
+            }
             eprintln!("shutting down");
             let _ = stop_tx.send(true);
         })

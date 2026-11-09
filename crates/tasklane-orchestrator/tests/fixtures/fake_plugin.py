@@ -72,6 +72,12 @@ def run(params):
             open(os.path.join(ws, "big.txt"), "w").write("".join(f"line {i}\n" for i in range(900)))
         open(os.path.join(ws, "fix.txt"), "w").write(f"fix for {ref} at {time.time()}\n")
         return {"summary": f"fixed {ref}"}
+    if role == "ask":
+        if flag("ask_fails"):
+            raise ValueError("model down")
+        with open(os.path.join(STATE, "ask_calls.log"), "a") as f:
+            f.write(json.dumps({"q": params.get("question"), "ws": params.get("workspace")}) + "\n")
+        return {"answer": "The answer is 42."}
     if role == "reviewer":
         if "changes" in ref and once("changes"):
             return {"verdict": "changes", "notes": "please add a test"}
@@ -86,6 +92,17 @@ def handle(op, params):
         return item(params["ref"])
     if op == "run":
         return run(params)
+    if op == "receive":
+        events = read_json("events.json", [])
+        if events:
+            os.rename(os.path.join(STATE, "events.json"), os.path.join(STATE, "events_done.json"))
+        return {"events": events}
+    if op == "send":
+        sent = read_json("sent.json", []) + [params]
+        json.dump(sent, open(os.path.join(STATE, "sent.json"), "w"))
+        return {"message_id": str(len(sent))}
+    if op == "leave":
+        return {}
     if op == "create_item":
         n = len(read_json("created.json", [])) + 100
         made = read_json("created.json", []) + [{"title": params["title"], "body": params["body"], "labels": params.get("labels")}]

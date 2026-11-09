@@ -1,0 +1,40 @@
+# Production-style stack: Postgres + tasklane. Copy .env.example to .env, fill it in, then:
+#   docker compose -f compose.prod.yaml up -d
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tasklane
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: tasklane
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tasklane"]
+      interval: 5s
+      retries: 10
+  tasklane:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      TASKLANE_DATABASE_URL: postgres://tasklane:${POSTGRES_PASSWORD}@db:5432/tasklane
+      TASKLANE_SOURCE_ENV: GITHUB_APP_ID,GITHUB_APP_PRIVATE_KEY_FILE,GITHUB_INSTALLATION_ID,GITHUB_WEBHOOK_SECRET,GITHUB_ORG,GITHUB_API_URL
+      TASKLANE_ENGINE_ENV: ANTHROPIC_API_KEY,CLAUDE_CODE_OAUTH_TOKEN,TASKLANE_SANDBOX,TASKLANE_SANDBOX_IMAGE,TASKLANE_SANDBOX_NETWORK
+      GITHUB_APP_PRIVATE_KEY_FILE: /run/secrets/github_app_key
+    ports:
+      - "127.0.0.1:8080:8080"   # put a TLS reverse proxy in front of this
+    volumes:
+      - workdata:/data
+    secrets:
+      - github_app_key
+secrets:
+  github_app_key:
+    file: ./github-app-key.pem
+volumes:
+  dbdata:
+  workdata:
