@@ -96,7 +96,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
             o.cfg.call_timeout,
         )
         .await?;
-    o.charge(t.id, &out).await?;
+    o.record_run(job, "reviewer", &out).await?;
     let verdict = out
         .get("verdict")
         .and_then(Value::as_str)

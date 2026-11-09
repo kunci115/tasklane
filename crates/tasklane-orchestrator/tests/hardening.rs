@@ -630,6 +630,14 @@ async fn a_ticket_over_its_token_budget_stops_before_another_model_run() {
             .unwrap();
     assert_eq!(used, 1100);
     assert!(why.contains("budget"), "{why}");
+    let runs: Vec<(String, serde_json::Value)> =
+        sqlx::query_as("SELECT actor, usage FROM runs ORDER BY id")
+            .fetch_all(&w.pool)
+            .await
+            .unwrap();
+    assert_eq!(runs.len(), 1, "one engine run was recorded");
+    assert_eq!(runs[0].0, "triage");
+    assert_eq!(runs[0].1["tokens_in"], 900);
     assert_eq!(
         count(
             &w.pool,
@@ -905,4 +913,40 @@ async fn a_plugin_that_declares_an_unknown_protocol_major_is_refused_before_any_
         .call("get_item", serde_json::json!({"ref": "a"}), t)
         .await
         .is_ok());
+}
+
+#[tokio::test]
+async fn no_new_development_starts_while_too_many_pull_requests_wait_for_ci() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |c| c.max_in_ci = 1).await;
+    let busy = ticket(&w, "T-busy").await;
+    sqlx::query("UPDATE tickets SET state = 'ci_running' WHERE id = $1")
+        .bind(busy)
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM jobs")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    let t = ticket(&w, "T-plain").await;
+    sqlx::query("UPDATE tickets SET state = 'queued', level = 1 WHERE id = $1")
+        .bind(t)
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM jobs")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    w.queue.enqueue(t, "develop", 0, 0.0).await.unwrap();
+    let r = w.orch.run_one().await.unwrap();
+    assert_eq!(r, RunResult::Waiting);
+    assert_eq!(
+        state(&w.pool, t).await,
+        "queued",
+        "development did not start"
+    );
 }

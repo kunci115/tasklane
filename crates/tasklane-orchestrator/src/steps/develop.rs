@@ -96,6 +96,18 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         o.queue.defer(job, 20.0 + (job.id % 20) as f64).await?;
         return Ok(RunResult::Waiting);
     }
+    // ... and not while too many pull requests already wait for CI (a flood of new changes would
+    // only lengthen the queue every check waits in).
+    let (in_ci,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM tickets WHERE state IN ('pr_open', 'ci_running') AND id <> $1",
+    )
+    .bind(t.id)
+    .fetch_one(&o.pool)
+    .await?;
+    if in_ci >= o.cfg.max_in_ci {
+        o.queue.defer(job, 30.0 + (job.id % 20) as f64).await?;
+        return Ok(RunResult::Waiting);
+    }
     if t.dev_attempts >= o.cfg.max_dev_attempts {
         return Err(Error::Fatal(format!(
             "development was tried {} times without a mergeable result",
@@ -231,7 +243,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
             return Err(e.into());
         }
     };
-    o.charge(t.id, &out).await?;
+    o.record_run(job, "dev", &out).await?;
     let summary = out
         .get("summary")
         .and_then(Value::as_str)

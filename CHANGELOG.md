@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Every model run is recorded in the `runs` table (who, how long, tokens), and the ticket page shows the tokens it used.
+- Admission control for CI: no new development starts while `TASKLANE_MAX_IN_CI` pull requests (default 5) wait for checks.
 - The core refuses a plug-in that declares a `protocol_major` it does not know (as docs/design/05-plugin-protocol.md always said). A plug-in that does not declare one is still accepted.
 - Test databases left by earlier runs are dropped automatically (their process is gone), so a long-lived test Postgres no longer fills up.
 - The chat group a ticket was reported from (`/task`) is told how it ended or what it needs: merged, stopped, needs information, possible duplicate, closed. Each outcome is announced once.

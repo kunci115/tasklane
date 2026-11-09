@@ -68,7 +68,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         o.ws.remove_worktree(p).await;
     }
     let out = out?;
-    o.charge(t.id, &out).await?;
+    o.record_run(job, "triage", &out).await?;
     let out: TriageOutput =
         serde_json::from_value(out).map_err(|e| Error::BadOutput(e.to_string()))?;
     let suggestion = Level::try_from(out.level).map_err(Error::BadOutput)?;

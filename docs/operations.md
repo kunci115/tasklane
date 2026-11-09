@@ -114,6 +114,7 @@ The console covers everything a normal install needs. Environment variables are 
 | `TASKLANE_MAX_TOKENS_PER_TICKET` | no | Model tokens (in and out, cache reads included) one ticket may use across all its runs, default 3000000. Past it the ticket goes to `failed` with that reason and a person decides. |
 | `TASKLANE_DEV_TIMEOUT_SECS` | no | Wall time one development run may take, default 1800 (limits 60 to 86400). A run that exceeds it is stopped and counts as an attempt. |
 | `TASKLANE_CI_TIMEOUT_SECS` | no | How long a pull request's checks may stay pending before the ticket fails, default 3600. |
+| `TASKLANE_MAX_IN_CI` | no | No new development starts while this many pull requests are waiting for CI, default 5. |
 | `TASKLANE_MAX_DEV` | no | Development runs at once, default 1. Raise it only after you measure your CI capacity. |
 | `TASKLANE_USER_DAILY_LIMIT` | no | Reports per reporter per day, default 10. |
 | `TASKLANE_SYNC_SECS` | no | Polling interval for the sync backstop, default 60, minimum 5. |

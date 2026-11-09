@@ -26,6 +26,8 @@ pub struct Config {
     pub data_dir: PathBuf,
     /// At most this many development runs at once (admission control).
     pub max_dev_parallel: i64,
+    /// Start no new development while this many pull requests are waiting for CI.
+    pub max_in_ci: i64,
     /// Seconds between CI checks.
     pub ci_poll_secs: f64,
     /// Give up on CI that stays pending this long.
@@ -65,6 +67,7 @@ impl Config {
             source_name: "github".into(),
             data_dir,
             max_dev_parallel: 1,
+            max_in_ci: 5,
             ci_poll_secs: 30.0,
             ci_timeout_secs: 3600,
             max_ci_runs: 2,
@@ -376,6 +379,32 @@ impl Orchestrator {
             )));
         }
         Ok(())
+    }
+
+    /// Record one finished engine run (`runs` table) and add its tokens to the ticket's total.
+    pub(crate) async fn record_run(
+        &self,
+        job: &ClaimedJob,
+        actor: &str,
+        out: &Value,
+    ) -> Result<(), Error> {
+        let usage = out.get("usage").cloned().unwrap_or_else(|| json!({}));
+        let secs = usage
+            .get("secs")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0)
+            .max(0.0);
+        sqlx::query(
+            "INSERT INTO runs (job_id, actor, engine, started_at, ended_at, outcome, usage)
+             VALUES ($1, $2, 'engine', now() - make_interval(secs => $3), now(), 'ok', $4)",
+        )
+        .bind(job.id)
+        .bind(actor)
+        .bind(secs)
+        .bind(usage)
+        .execute(&self.pool)
+        .await?;
+        self.charge(job.ticket_id, out).await
     }
 
     /// Add the tokens an engine run reported to the ticket's total.

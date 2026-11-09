@@ -500,12 +500,13 @@ struct Detail {
     attempts: i16,
     reporter: Option<String>,
     duplicate_of: Option<String>,
+    tokens: i64,
 }
 
 async fn load(st: &AppState, id: i64) -> Option<Detail> {
     let r = sqlx::query(
         "SELECT t.state, t.level, t.level_reasons, t.plan_hash, t.external_ref, t.title, t.branch, t.pr_ref, t.last_error, t.plan_text, t.diff_text, t.head_sha,
-                s.external_id, extract(epoch FROM now()-t.created_at)::bigint AS age, t.ci_runs, t.dev_attempts, t.reporter_ref, t.duplicate_of
+                s.external_id, extract(epoch FROM now()-t.created_at)::bigint AS age, t.ci_runs, t.dev_attempts, t.reporter_ref, t.duplicate_of, t.tokens_used
          FROM tickets t JOIN services s ON s.id = t.service_id WHERE t.id = $1",
     )
     .bind(id)
@@ -532,6 +533,7 @@ async fn load(st: &AppState, id: i64) -> Option<Detail> {
         attempts: r.get("dev_attempts"),
         reporter: r.get("reporter_ref"),
         duplicate_of: r.get("duplicate_of"),
+        tokens: r.get("tokens_used"),
     })
 }
 
@@ -718,14 +720,15 @@ pub async fn detail(
     }
     b.push_str(&format!("</div><div><div data-live=\"/fragments/ticket/{id}?part=timeline\" data-every=\"4000\">{}</div>", timeline_part(&st, id, &d).await));
     b.push_str(&format!(
-        "<div class=\"card\" style=\"margin-top:1rem\"><h2>Details</h2><dl class=\"kv\"><dt>Repository</dt><dd>{}</dd><dt>Issue</dt><dd>#{}</dd><dt>Opened</dt><dd>{}</dd><dt>Reported by</dt><dd>{}</dd><dt>Branch</dt><dd class=\"mono\">{}</dd><dt>Attempts</dt><dd>{} development, {} CI</dd></dl></div>",
+        "<div class=\"card\" style=\"margin-top:1rem\"><h2>Details</h2><dl class=\"kv\"><dt>Repository</dt><dd>{}</dd><dt>Issue</dt><dd>#{}</dd><dt>Opened</dt><dd>{}</dd><dt>Reported by</dt><dd>{}</dd><dt>Branch</dt><dd class=\"mono\">{}</dd><dt>Attempts</dt><dd>{} development, {} CI</dd><dt>Model tokens</dt><dd>{}</dd></dl></div>",
         esc(&d.service),
         esc(&d.ext),
         ago(d.age),
         esc(d.reporter.as_deref().unwrap_or("on the ticket source")),
         esc(d.branch.as_deref().unwrap_or("-")),
         d.attempts,
-        d.ci_runs
+        d.ci_runs,
+        d.tokens
     ));
     b.push_str("</div></div>");
     render(&st, &sess.csrf, "tickets", &title, &b)
