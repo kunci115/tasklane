@@ -15,8 +15,8 @@ Ticket-driven AI agent pipeline: a problem is reported, triaged, approved by a h
 
 ```bash
 export POSTGRES_PASSWORD=$(openssl rand -hex 16)
-docker compose -f compose.prod.yaml up -d --build
-docker compose -f compose.prod.yaml logs tasklane     # the admin token is printed once
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml logs tasklane     # the admin token is printed once
 ```
 
 Open <http://localhost:8080>, sign in, and follow the **Getting started** card. **Connect GitHub** opens GitHub with the App already filled in (press Create, then Install); **Connect the agent** takes a Claude key, an isolation choice and a test button. No config file, no key files. Details and the honest list of what has and has not been verified: [docs/operations.md](docs/operations.md).

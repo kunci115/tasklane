@@ -1,7 +1,7 @@
 # Start tasklane with a database. Everything else (GitHub, the agent's key, isolation) is set up in the
 # console after it starts:
-#   POSTGRES_PASSWORD=$(openssl rand -hex 16) docker compose -f compose.prod.yaml up -d --build
-#   docker compose -f compose.prod.yaml logs tasklane      # shows the admin token once
+#   POSTGRES_PASSWORD=$(openssl rand -hex 16) docker compose -f docker-compose.prod.yml up -d --build
+#   docker compose -f docker-compose.prod.yml logs tasklane      # shows the admin token once
 #   then open http://localhost:8080
 services:
   db:
