@@ -5,51 +5,84 @@
 <h1 align="center">tasklane</h1>
 
 <p align="center"><strong>Open-source AI agent orchestration for GitHub issues.</strong><br>
-Report a problem, get a reviewed pull request. A human approves anything risky.</p>
+Open an issue, get a reviewed pull request. A person approves anything risky.</p>
 
 <p align="center">
   <a href="https://github.com/kunci115/tasklane/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/kunci115/tasklane/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
   <img alt="Core: Rust" src="https://img.shields.io/badge/core-Rust-orange.svg">
+  <img alt="Status: pre-release" src="https://img.shields.io/badge/status-pre--release-yellow.svg">
   <img alt="Self-hosted" src="https://img.shields.io/badge/self--hosted-yes-brightgreen.svg">
 </p>
 
-tasklane is a self-hosted, ticket-driven **AI coding agent pipeline**. It watches your GitHub issues, plans the fix with an AI agent (Claude), asks a person to approve when the change is risky, lets the agent write the change in an isolated git workspace, runs CI, has a second agent review the diff, and merges only the exact commit that was reviewed. Production is never touched by the system.
+<p align="center">
+  <a href="#quickstart">Quickstart</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#safety-model">Safety model</a> ·
+  <a href="docs/operations.md">Operations guide</a> ·
+  <a href="docs/design">Design</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
 
-Use it when you want an **autonomous coding agent for your issue tracker** without giving up control: every approval is bound to the exact plan or diff, agents never hold your tokens, and anything touching migrations, auth, secrets, CI or deploy config always waits for a human.
+<p align="center">
+  <img src="docs/screenshots/overview.png" alt="tasklane console: tickets that need you, and a live pipeline board" width="860">
+</p>
 
-**Status: pre-release (0.0.1).** The whole pipeline from issue to merge runs in tests against a real Postgres and git, and has had one supervised dry run against live GitHub and live Claude (see the CHANGELOG). Telegram, webhooks and the Docker sandbox with a valid key have not run for real. See [docs/operations.md](docs/operations.md) for setup and the honest list of limits. The architecture is drawn as C4 diagrams in [`docs/architecture`](docs/architecture); the design document is being written in [`docs/design`](docs/design).
+**tasklane** is a self-hosted pipeline that turns GitHub issues into reviewed pull requests with an AI coding agent, and keeps a human in charge of every risky step. It watches your repositories, plans the fix, asks a person to approve when the change is risky, lets the agent write the change in an isolated git workspace, runs your CI, has a second agent review the diff, and merges **only the exact commit that was reviewed**. It never touches production.
 
-## What it does
+It is the orchestration layer around an agent, not another agent: a durable job queue, deterministic risk rules, approvals, retries, an audit trail and a console. The agent (Claude today) is one replaceable part.
 
+## Why tasklane
+
+- **You stay in control.** Risk levels come from fixed rules (migrations, auth, secrets, CI and deploy config, payments, personal data). The model can only raise a level, never lower it. A timer never approves anything.
+- **Approvals mean something.** An approval is bound to a hash of the exact plan or diff. Change one line and the approval no longer applies.
+- **The agent holds no keys.** The daemon pushes and merges with short-lived, single-repository tokens. The agent runs read-only, or in a locked-down Docker container with no secrets.
+- **Work survives crashes.** A Postgres queue with `SKIP LOCKED` claims, leases, heartbeats and fencing tokens means a job never runs twice and a dead worker's job is picked up again.
+- **Two installs do not collide.** An install claims a repository on GitHub with an atomic ref; a second install on the same repository stays out of the way.
+- **Bring your own agent or tracker.** Ticket sources, agent engines, notifiers and chat channels are separate programs speaking JSON lines over stdio. Python plug-ins ship today; any language works.
+- **One daemon, one database, no build step.** The web console is served by the daemon: setup, approvals, a live 3D map of agents at work, and replay.
+
+## How it works
+
+```mermaid
+flowchart LR
+    I[GitHub issue] --> T[Triage agent<br/>read-only]
+    T --> R{Risk level<br/>from fixed rules}
+    R -- low --> D
+    R -- needs a person --> A[Approval of the<br/>exact plan or diff]
+    A --> D[Developer agent<br/>isolated git worktree]
+    D --> C[Re-check the real diff]
+    C --> P[Pull request]
+    P --> CI[Your CI]
+    CI --> V[Reviewer agent]
+    V --> M[Merge the<br/>reviewed commit]
 ```
-GitHub issue -> triage (read-only agent) -> approval where needed -> develop (isolated git worktree)
-             -> diff re-check -> pull request -> CI -> AI review -> merge of the reviewed commit
-```
 
-- **Human-in-the-loop by design.** Risk levels come from deterministic rules and protected paths; the model can only raise a level. A timer never approves anything.
-- **Approvals bound to a hash** of the exact plan or diff, so an approval for one change cannot be reused for another.
-- **Agents hold no credentials.** The daemon pushes with short-lived per-run tokens; the agent runs read-only or in a locked-down Docker sandbox.
-- **Postgres job queue** with `SKIP LOCKED` claims, leases, heartbeats and fencing tokens, so work survives crashes and never runs twice.
-- **Plug-in architecture.** Ticket source, agent engine, notifier and chat channel are separate programs speaking JSON lines over stdio (Python today, any language works). Stage 1 ships GitHub and Claude; others can be added without touching the core.
-- **A web console** for setup, approvals, a live 3D map of agents at work, and replay. No separate frontend, no build step.
+1. **Triage.** A read-only agent reads the issue and the code and writes a plan. Strangers' issues and anything near protected paths always wait for a person.
+2. **Develop.** After approval (or automatically for low-risk work in repositories you let it), the developer agent edits files in a throwaway git worktree. It cannot push.
+3. **Re-check.** tasklane scores the real diff with the same fixed rules. A protected path or a much bigger change than planned sends it back for approval of that exact diff.
+4. **Pull request, CI, review.** tasklane opens the PR, waits for your CI, and a second agent reviews the diff. Requested changes go back to the developer, within a retry budget.
+5. **Merge.** Only the reviewed head commit is merged, to your development branch, and only if branch rules pass on the server. Promotion to production is outside the system.
 
-## Stage 1 scope
+## Quickstart
 
-- Ticket source: GitHub only. Agent engine: Claude only.
-- Ticket source, agent engine, notifier, chat channel and device adapters are fixed plug-in interfaces, so other sources and engines can be added later without touching the core.
-- One install = one organization. Start it with one command, then connect GitHub and the agent in the console: GitHub is one click (tasklane creates the App for you), the agent is a pasted key and a test button.
-- Safe defaults: repos start read-only; nothing merges without approval; production is never touched by the system.
-
-## Getting started
+You need Docker with Compose, a GitHub account (or organization) and either an Anthropic API key or a Claude subscription.
 
 ```bash
+git clone https://github.com/kunci115/tasklane && cd tasklane
 export POSTGRES_PASSWORD=$(openssl rand -hex 16)
 docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml logs tasklane     # the admin token is printed once
 ```
 
-Open <http://localhost:8080>, sign in, and follow the **Getting started** card. **Connect GitHub** opens GitHub with the App already filled in (press Create, then Install); **Connect the agent** takes a Claude API key or a Claude subscription token (from `claude setup-token`), an isolation choice and a test button. No config file, no key files. Details and the honest list of what has and has not been verified: [docs/operations.md](docs/operations.md).
+Open <http://localhost:8080>, sign in with that token, and follow the **Getting started** card:
+
+1. **Connect GitHub.** One click opens GitHub with the App already filled in; press Create, then Install and pick the repositories. No key files, no config file.
+2. **Connect the agent.** Paste an API key, or a Claude subscription token from `claude setup-token`. Choose how the agent is isolated and press **Run the test**.
+3. **Choose repositories.** New ones start in *triage* (read and plan only). Switch one to *full* when you trust it.
+4. Open an issue. It appears on the Overview within a minute.
+
+Put a TLS reverse proxy in front of port 8080 if the console is reachable from outside. Full setup, environment variables, backups and upgrade notes: [docs/operations.md](docs/operations.md).
 
 | | | |
 |---|---|---|
@@ -58,45 +91,90 @@ Open <http://localhost:8080>, sign in, and follow the **Getting started** card. 
 
 ## The console
 
-A web console ships inside the daemon (no separate frontend, no JavaScript build). It works on a laptop, a tablet and a phone, in light and dark, and can be installed as an app from Chrome or Safari ("Add to Dock" or "Install app").
+Served by the daemon itself, responsive (laptop, tablet, phone), light and dark, installable as an app from Chrome or Safari.
 
 | | |
 |---|---|
-| ![tasklane console overview: tickets needing approval and a live pipeline board](docs/screenshots/overview.png) | ![Approve a change](docs/screenshots/approve-a-change.png) |
-| **Overview:** what needs you, what is moving, a live pipeline board. | **A decision:** the exact diff, why a person is needed, approve or reject. |
-| ![tasklane live 3D map of AI agents working on GitHub issues](docs/screenshots/live-map.png) | ![tasklane replay of agent activity](docs/screenshots/replay.png) |
-| **Live map:** a 3D map you can turn and zoom. Agents sit on one tier, repositories on another; agents glow while they work and a line shows which ticket each one has. | **Replay:** play back the last hours at up to 1200x and watch what the agents did. Idle time is skipped. |
-| ![Repositories](docs/screenshots/repositories.png) | ![Health and setup](docs/screenshots/health-and-setup.png) |
-| **Repositories:** choose how far tasklane may go in each, and give the agent instructions. | **Health and setup:** a checklist that tells a new user what to do next. |
+| ![Approve a change](docs/screenshots/approve-a-change.png) | ![tasklane live 3D map of AI agents working on GitHub issues](docs/screenshots/live-map.png) |
+| **A decision:** the exact diff, why a person is needed, approve or reject. | **Live map:** a 3D map you can turn and zoom. Agents on one tier, repositories on another; agents glow while they work. |
+| ![tasklane replay of agent activity](docs/screenshots/replay.png) | ![Repositories](docs/screenshots/repositories.png) |
+| **Replay:** play back the last hours at up to 1200x. Idle time is skipped. | **Repositories:** choose how far tasklane may go in each, with search and paging. |
 
-Also: a ticket list with search, a timeline written in plain sentences, a progress stepper, people and roles, chat groups, an activity feed, and a pause-all switch. The demo data in the screenshots is invented.
+Also: a ticket list with search and paging, a plain-sentence timeline per ticket, people and roles, chat groups, an activity feed, a health checklist and a pause-all switch. The demo data in the screenshots is invented.
+
+## Safety model
+
+| Risk | Control |
+|---|---|
+| The agent does something you did not intend | Fixed risk rules on the real diff; protected paths always need a person; approvals bound to a diff hash |
+| Prompt injection in an issue or comment | Untrusted text stays inside delimited blocks; the agent has no secrets, no network beyond the model API, and a fixed tool list; strangers' issues always wait for approval |
+| Leaked credentials | The agent never sees tokens; the daemon uses short-lived per-run tokens scoped to one repository |
+| Runaway cost | Per-ticket token budget, attempt limits, a bounded queue, a pause-all switch |
+| A merge nobody reviewed | The merge step takes the exact reviewed commit; a retry never skips review |
+| Two installs acting on one repository | Atomic ownership claim on GitHub; the loser skips the repository |
+| Stale tickets | Tickets nobody answers are closed as stale, never approved by time |
+
+The agent can run **unsandboxed** only if you explicitly opt in; the default is refusal. Read the [threat model](docs/design/04-threat-model.md) and [SECURITY.md](SECURITY.md) for the residual risks, including what a model can still get wrong in a diff.
+
+## Features
+
+| | |
+|---|---|
+| Ticket source | GitHub Issues through a GitHub App |
+| Agent engine | Claude, through the Claude Code CLI, with an API key or a subscription token |
+| Isolation | Read-only agents for triage and review; developer in a git worktree, optionally inside a locked-down Docker container |
+| Roles | Owner and team approver, with different levels they may approve |
+| Chat | Telegram bot for questions and `/task`, with approvals by button |
+| Console | Setup, approvals, tickets, repositories, people, activity, live map, replay, health |
+| Queue | Postgres, `SKIP LOCKED`, leases, heartbeats, fencing tokens, reaper |
+| Extension points | Plug-ins for ticket source, agent engine, notifier, chat channel |
 
 ## FAQ
 
-**Is this an AI agent framework or a product?** A product you run: one daemon, one Postgres, a console. The plug-in protocol is the extension point if you want to add a ticket source or an agent engine.
+**Is this an agent framework or a product?** A product you run: one daemon, one Postgres, a console. The plug-in protocol is the extension point if you want to add a ticket source or an engine.
 
-**Which models and trackers work today?** Claude (through the Claude Code CLI, with an API key or a Claude subscription token) and GitHub Issues. Both sit behind plug-in interfaces.
+**How is it different from running a coding agent in CI?** tasklane is the layer around the agent: the queue, the risk rules, the approvals, the review step, retries, an audit trail and a console. You can swap the agent without changing how work is controlled.
 
-**Can the agent merge to production?** No. It can merge to a dev or staging branch after CI and review; promotion to production is outside the system.
+**Can it merge to production?** No. It merges to a development branch after CI and review. Promotion is yours.
 
-**What if the agent is wrong or the issue is malicious?** Strangers' issues always need approval, protected paths always need approval of the exact diff, and the agent has no tokens and no network secrets to leak. Read [SECURITY.md](SECURITY.md) and the threat model in [docs/design](docs/design) for the honest list of limits.
+**Does every developer need a Claude account?** No. One install uses one agent credential for all tickets. Use an API key for a team; a subscription token is one person's plan.
 
-**How is it different from running a coding agent in CI?** tasklane is the orchestration layer around the agent: queue, risk rules, approvals, reviews, retries, an audit trail and a console. The agent is one replaceable part.
+**Which models and trackers work today?** Claude and GitHub Issues. Both sit behind plug-in interfaces so others can be added without touching the core.
 
-## Layout
+**What does it cost?** The software is free (Apache-2.0). You pay your model provider directly for tokens.
+
+## Project status
+
+tasklane is **pre-release (0.0.1)**. Nothing is tagged yet.
+
+- **Verified:** the whole pipeline from issue to merge runs in tests against a real Postgres and git. Two supervised runs against live GitHub and live Claude (one-click App creation, subscription token, Docker sandbox) took issues to merged pull requests, and two installs on one repository were run side by side. They found and fixed seven bugs, listed in the [CHANGELOG](CHANGELOG.md).
+- **Not yet run for real:** Telegram (fake API only), GitHub webhooks (polling was used), a Docker network limited to the model API, and more than one approver.
+- **Please do your own supervised dry run** on a throwaway repository before you point it at real work. [docs/operations.md](docs/operations.md) lists the limits honestly.
+
+## Documentation
+
+| | |
+|---|---|
+| [Operations guide](docs/operations.md) | Install, configuration, backups, upgrades, sandbox, two installs on one repository |
+| [Design documents](docs/design) | State machine, schema, plug-in interfaces and protocol, threat model |
+| [C4 architecture](docs/architecture) | Context, containers and components as diagram sources |
+| [CHANGELOG](CHANGELOG.md) | What changed and what each real run found |
+
+## Repository layout
 
 | Path | What |
 |---|---|
 | `crates/tasklane-core` | Pure domain rules: ticket states, who may move them, risk levels, protected paths |
-| `crates/tasklane-queue` | Postgres job queue: `SKIP LOCKED` claim, leases, heartbeat, fencing tokens, reaper |
-| `crates/tasklane-orchestrator` | Worker that claims a job, calls plug-ins as child processes, and runs triage, develop, PR, CI, review and merge |
-| `crates/tasklane-plugin` | Wire protocol for plug-ins (JSON lines over stdio) |
+| `crates/tasklane-queue` | Postgres job queue |
+| `crates/tasklane-orchestrator` | Worker that runs triage, develop, PR, CI, review and merge by calling plug-ins |
+| `crates/tasklane-plugin` | Plug-in wire protocol (JSON lines over stdio) |
 | `crates/tasklane-server` | The daemon: HTTP API, web console, chat bridge |
-| `plugins/` | Plug-in programs: `source-github`, `engine-claude`, `chat-telegram` (Python) |
+| `plugins/` | `source-github`, `engine-claude`, `chat-telegram` (Python) |
 | `migrations/` | Postgres schema |
-| `docs/` | Operations guide, design documents, C4 architecture diagrams |
 
-## Develop
+## Contributing
+
+Contributions are welcome, especially new ticket-source and agent-engine plug-ins, and real-world test reports. Start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```bash
 TASKLANE_TEST_DATABASE_URL=postgres://tasklane:tasklane@127.0.0.1:5432/postgres \
@@ -106,23 +184,8 @@ docker compose up -d db                         # Postgres with the schema loade
 TASKLANE_BIND=127.0.0.1:8080 cargo run -p tasklane-server
 ```
 
-Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). Third-party fonts are listed in [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md).
-
-## Architecture (C4)
-
-| Level | File |
-|---|---|
-| 1 Context | `docs/architecture/c4-1-context.json` |
-| 2 Containers | `docs/architecture/c4-2-containers.json` |
-| 3 Gateway | `docs/architecture/c4-3a-gateway.json` |
-| 3 Orchestrator | `docs/architecture/c4-3b-orchestrator.json` |
-| 3 Agent runtime | `docs/architecture/c4-3c-agents.json` |
-| 3 Runners | `docs/architecture/c4-3d-runners.json` |
-| 3 Sync and registry | `docs/architecture/c4-3e-sync.json` |
-| 3 Tool broker | `docs/architecture/c4-3f-broker.json` |
-
-The files are diagram sources (JSON); each carries its own cards for input, output, owned state and failure behaviour.
+Found a security problem? Do not open a public issue; follow [SECURITY.md](SECURITY.md).
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE](LICENSE). Third-party fonts are listed in [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md).
