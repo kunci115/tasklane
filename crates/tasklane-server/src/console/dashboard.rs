@@ -27,7 +27,8 @@ fn short(service: &str) -> &str {
 
 fn tcard(t: &T) -> String {
     format!(
-        "<a class=\"tcard\" href=\"/tickets/{}\"><div class=\"t\">{}</div><div class=\"m\"><span>{}</span>{}<span style=\"margin-left:auto\">{}</span></div></a>",
+        "<a class=\"tcard st-{}\" href=\"/tickets/{}\"><div class=\"t\">{}</div><div class=\"m\"><span>{}</span>{}<span style=\"margin-left:auto\">{}</span></div></a>",
+        t.state,
         t.id,
         esc(&t.title),
         esc(short(&t.service)),

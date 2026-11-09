@@ -11,6 +11,35 @@ const JS: &str = include_str!("../../assets/app.js");
 const MAP_JS: &str = include_str!("../../assets/map.js");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+const FONT_INTER: &[u8] = include_bytes!("../../assets/fonts/inter.woff2");
+const FONT_MONO_400: &[u8] = include_bytes!("../../assets/fonts/jetbrains-mono-400.woff2");
+const FONT_MONO_500: &[u8] = include_bytes!("../../assets/fonts/jetbrains-mono-500.woff2");
+const FONT_MONO_700: &[u8] = include_bytes!("../../assets/fonts/jetbrains-mono-700.woff2");
+const FONT_CHAKRA_600: &[u8] = include_bytes!("../../assets/fonts/chakra-petch-600.woff2");
+const FONT_CHAKRA_700: &[u8] = include_bytes!("../../assets/fonts/chakra-petch-700.woff2");
+
+/// The bundled typefaces (Inter, JetBrains Mono and Chakra Petch, all under the SIL Open Font License), served from the binary
+/// so the console looks the same on every machine and never asks a third party for a font.
+pub fn asset_font(name: &str) -> Response {
+    let bytes = match name {
+        "inter.woff2" => FONT_INTER,
+        "jetbrains-mono-400.woff2" => FONT_MONO_400,
+        "jetbrains-mono-500.woff2" => FONT_MONO_500,
+        "jetbrains-mono-700.woff2" => FONT_MONO_700,
+        "chakra-petch-600.woff2" => FONT_CHAKRA_600,
+        "chakra-petch-700.woff2" => FONT_CHAKRA_700,
+        _ => return axum::http::StatusCode::NOT_FOUND.into_response(),
+    };
+    (
+        [
+            (CONTENT_TYPE, "font/woff2"),
+            (CACHE_CONTROL, "public, max-age=31536000, immutable"),
+        ],
+        bytes,
+    )
+        .into_response()
+}
+
 pub fn asset_css() -> Response {
     (
         [
@@ -42,7 +71,7 @@ pub fn asset_js() -> Response {
         .into_response()
 }
 
-const ICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366f1"/><stop offset="1" stop-color="#22d3ee"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="url(#g)"/><path d="M14 22h22M14 32h36M14 42h16" stroke="#fff" stroke-width="5" stroke-linecap="round" fill="none"/><circle cx="46" cy="22" r="4" fill="#fff"/></svg>"##;
+const ICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#00e5ff"/><stop offset="0.55" stop-color="#8b5cff"/><stop offset="1" stop-color="#ff2e93"/></linearGradient></defs><rect width="64" height="64" rx="16" fill="url(#g)"/><path d="M14 22h22M14 32h36M14 42h16" stroke="#fff" stroke-width="5" stroke-linecap="round" fill="none"/><circle cx="46" cy="22" r="4" fill="#fff"/></svg>"##;
 
 pub fn asset_icon() -> Response {
     (
@@ -56,7 +85,7 @@ pub fn asset_icon() -> Response {
 }
 
 pub fn asset_manifest() -> Response {
-    let m = r##"{"name":"tasklane","short_name":"tasklane","description":"Ticket-driven AI agent pipeline","start_url":"/","scope":"/","display":"standalone","background_color":"#0e1120","theme_color":"#14172b","icons":[{"src":"/static/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any"}]}"##;
+    let m = r##"{"name":"tasklane","short_name":"tasklane","description":"Ticket-driven AI agent pipeline","start_url":"/","scope":"/","display":"standalone","background_color":"#04050a","theme_color":"#03040a","icons":[{"src":"/static/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any"}]}"##;
     (
         [
             (CONTENT_TYPE, "application/manifest+json"),
@@ -209,7 +238,7 @@ pub async fn render(
     .join("");
     Html(format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
-<title>{t} - tasklane</title><meta name=\"theme-color\" content=\"#14172b\"><link rel=\"icon\" href=\"/static/icon.svg\"><link rel=\"manifest\" href=\"/manifest.webmanifest\">\
+<title>{t} - tasklane</title><meta name=\"theme-color\" content=\"#03040a\"><link rel=\"icon\" href=\"/static/icon.svg\"><link rel=\"manifest\" href=\"/manifest.webmanifest\">\
 <link rel=\"stylesheet\" href=\"/static/app.css?v={v}\"></head><body><div class=\"app\">\
 <aside class=\"side\"><div class=\"brand\"><span class=\"logo\">{logo}</span>tasklane</div><nav class=\"nav\" aria-label=\"Main\">{nav}</nav><div class=\"grow\"></div>\
 <div class=\"foot\"><form method=\"post\" action=\"{pa}\"><input type=\"hidden\" name=\"csrf\" value=\"{c}\">\

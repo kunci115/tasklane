@@ -2,12 +2,13 @@
 (function () {
   var root = document.documentElement;
   // theme: stored choice, otherwise the system setting (handled in CSS)
+  // dark is the designed look; light only if the user chose it
+  root.setAttribute("data-theme", "dark");
   try { var t = localStorage.getItem("tl-theme"); if (t) root.setAttribute("data-theme", t); } catch (e) {}
   document.addEventListener("click", function (e) {
     var b = e.target.closest("[data-theme-toggle]");
     if (b) {
-      var dark = root.getAttribute("data-theme") === "dark" ||
-        (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      var dark = root.getAttribute("data-theme") === "dark";
       var next = dark ? "light" : "dark";
       root.setAttribute("data-theme", next);
       try { localStorage.setItem("tl-theme", next); } catch (e2) {}

@@ -70,6 +70,10 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/pause", post(pause))
         .route("/resume", post(resume))
         .route("/static/app.css", get(|| async { ui::asset_css() }))
+        .route(
+            "/static/fonts/{name}",
+            get(|Path(name): Path<String>| async move { ui::asset_font(&name) }),
+        )
         .route("/static/app.js", get(|| async { ui::asset_js() }))
         .route("/static/map.js", get(|| async { ui::asset_map_js() }))
         .route("/static/icon.svg", get(|| async { ui::asset_icon() }))
@@ -142,7 +146,7 @@ fn redirect(to: &str) -> Response {
 fn login_page(message: &str) -> Html<String> {
     Html(format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Sign in - tasklane</title>\
-<meta name=\"theme-color\" content=\"#14172b\"><link rel=\"icon\" href=\"/static/icon.svg\"><link rel=\"manifest\" href=\"/manifest.webmanifest\"><link rel=\"stylesheet\" href=\"/static/app.css\"></head>\
+<meta name=\"theme-color\" content=\"#03040a\"><link rel=\"icon\" href=\"/static/icon.svg\"><link rel=\"manifest\" href=\"/manifest.webmanifest\"><link rel=\"stylesheet\" href=\"/static/app.css\"></head>\
 <body><div class=\"login\"><div class=\"card\"><div class=\"logo\"><svg viewBox=\"0 0 24 24\" width=\"26\" height=\"26\"><path d=\"M4 7h10M4 12h16M4 17h7\" stroke=\"#fff\" stroke-width=\"2.4\" stroke-linecap=\"round\" fill=\"none\"/></svg></div>\
 <h1>tasklane</h1><p class=\"muted\">Issues in, reviewed changes out. Sign in to manage it.</p>{message}\
 <form method=\"post\" action=\"/login\"><div class=\"field\"><label for=\"token\">Admin token</label><input id=\"token\" type=\"password\" name=\"token\" autocomplete=\"current-password\" autofocus required></div>\
