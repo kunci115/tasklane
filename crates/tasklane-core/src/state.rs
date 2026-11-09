@@ -26,6 +26,57 @@ pub enum State {
 }
 
 impl State {
+    pub const ALL: [State; 19] = [
+        New,
+        NeedsInfo,
+        DuplicateProposed,
+        Triaged,
+        AwaitingApproval,
+        Queued,
+        Developing,
+        Rescoring,
+        PrOpen,
+        CiRunning,
+        Reviewing,
+        MergeReady,
+        Merged,
+        Failed,
+        Stopped,
+        ClosedStale,
+        ClosedDuplicate,
+        ClosedRejected,
+        ClosedDone,
+    ];
+
+    /// The snake_case name stored in the database.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            New => "new",
+            NeedsInfo => "needs_info",
+            DuplicateProposed => "duplicate_proposed",
+            Triaged => "triaged",
+            AwaitingApproval => "awaiting_approval",
+            Queued => "queued",
+            Developing => "developing",
+            Rescoring => "rescoring",
+            PrOpen => "pr_open",
+            CiRunning => "ci_running",
+            Reviewing => "reviewing",
+            MergeReady => "merge_ready",
+            Merged => "merged",
+            Failed => "failed",
+            Stopped => "stopped",
+            ClosedStale => "closed_stale",
+            ClosedDuplicate => "closed_duplicate",
+            ClosedRejected => "closed_rejected",
+            ClosedDone => "closed_done",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<State> {
+        State::ALL.into_iter().find(|st| st.as_str() == s)
+    }
+
     pub fn is_terminal(self) -> bool {
         matches!(
             self,
@@ -124,6 +175,18 @@ pub fn transition(from: State, to: State, actor: Actor) -> Result<(), Transition
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_round_trip_and_match_serde() {
+        for s in State::ALL {
+            assert_eq!(State::parse(s.as_str()), Some(s));
+            assert_eq!(
+                serde_json::to_value(s).unwrap(),
+                serde_json::Value::String(s.as_str().into())
+            );
+        }
+        assert_eq!(State::parse("nope"), None);
+    }
 
     #[test]
     fn happy_path_is_allowed() {

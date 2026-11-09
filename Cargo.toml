@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/tasklane-queue", "crates/tasklane-core", "crates/tasklane-plugin", "crates/tasklane-server"]
+members = ["crates/tasklane-orchestrator", "crates/tasklane-queue", "crates/tasklane-core", "crates/tasklane-plugin", "crates/tasklane-server"]
 
 [workspace.package]
 version = "0.0.1"
@@ -12,6 +12,7 @@ repository = "https://github.com/kunci115/tasklane"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "process", "io-util", "time", "sync"] }
 axum = "0.8"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "json", "macros"] }
+sha2 = "0.10"

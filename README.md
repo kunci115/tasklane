@@ -17,6 +17,7 @@ Ticket-driven AI agent pipeline: a problem is reported, triaged, approved by a h
 |---|---|
 | `crates/tasklane-core` | Pure domain rules: ticket states, who may move them, risk levels (tested) |
 | `crates/tasklane-queue` | Postgres job queue: `SKIP LOCKED` claim, leases, heartbeat, fencing tokens, reaper (tested against a real Postgres) |
+| `crates/tasklane-orchestrator` | Worker that claims a job, calls plug-ins as child processes, and moves the ticket through the state machine in one fenced transaction (triage step so far) |
 | `crates/tasklane-plugin` | Wire protocol for plug-ins (JSON lines over stdio) |
 | `crates/tasklane-server` | HTTP server (health endpoint and console placeholder) |
 | `plugins/` | Plug-in programs, any language; `engine-claude` is a Python skeleton |

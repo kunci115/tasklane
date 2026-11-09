@@ -1,0 +1,20 @@
+[package]
+name = "tasklane-orchestrator"
+description = "Claims jobs, calls plug-ins, moves tickets through the state machine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tasklane-core = { path = "../tasklane-core" }
+tasklane-plugin = { path = "../tasklane-plugin" }
+tasklane-queue = { path = "../tasklane-queue" }
+sqlx.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+log = "0.4"

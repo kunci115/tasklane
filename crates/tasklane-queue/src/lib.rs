@@ -31,6 +31,13 @@ pub struct ClaimedJob {
     owner: String,
 }
 
+impl ClaimedJob {
+    /// The worker name this job was claimed under.
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+}
+
 #[derive(Debug, FromRow)]
 struct ClaimRow {
     id: i64,
