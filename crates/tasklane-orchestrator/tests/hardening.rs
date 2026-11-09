@@ -950,3 +950,49 @@ async fn no_new_development_starts_while_too_many_pull_requests_wait_for_ci() {
         "development did not start"
     );
 }
+
+#[tokio::test]
+async fn the_model_may_propose_a_duplicate_only_when_asked_to_and_only_from_the_listed_tickets() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    // off by default: the model is never asked
+    let w = world(pool.clone(), |_| {}).await;
+    let first = ticket(&w, "T-plain").await;
+    sqlx::query("UPDATE tickets SET title = 'Something entirely different' WHERE id = $1")
+        .bind(first)
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    let off = ticket(&w, "modeldup-off").await;
+    drive(&w).await;
+    assert_ne!(state(&w.pool, off).await, "duplicate_proposed");
+    assert!(!w.state_dir().join("dup_calls.log").exists());
+
+    let Some(pool2) = test_pool().await else {
+        return;
+    };
+    let w = world(pool2, |c| c.duplicate_model = true).await;
+    let first = ticket(&w, "T-plain").await;
+    sqlx::query("UPDATE tickets SET title = 'Something entirely different' WHERE id = $1")
+        .bind(first)
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    drive(&w).await;
+    let yes = ticket(&w, "modeldup-yes").await;
+    let invented = ticket(&w, "hallucinate-it").await;
+    drive(&w).await;
+    assert_eq!(state(&w.pool, yes).await, "duplicate_proposed");
+    let of: String = sqlx::query_scalar("SELECT duplicate_of FROM tickets WHERE id = $1")
+        .bind(yes)
+        .fetch_one(&w.pool)
+        .await
+        .unwrap();
+    assert_eq!(of, "T-plain");
+    assert_ne!(
+        state(&w.pool, invented).await,
+        "duplicate_proposed",
+        "a ticket the model invented is never proposed"
+    );
+}

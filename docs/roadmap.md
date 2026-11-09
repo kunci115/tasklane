@@ -14,7 +14,7 @@ Each part of the architecture ([docs/design](design) and the C4 diagrams in [doc
 | Admission control (parallel development, CI queue depth), retry and token budgets, stale tickets | Built |
 | Console: setup, approvals, tickets, repositories, live 3D map, replay, health | Built |
 | Chat bridge (Telegram): `/ask`, `/task`, approvals by button, outcomes announced to the reporter's group | Built; tested against a fake API only |
-| Duplicate proposals (a person decides) | Built |
+| Duplicate proposals (word overlap, optional model suggestion; a person decides) | Built |
 | Per-repository memory (notes written by people) and `.tasklane.yml` that can only tighten | Built |
 | Two installs on one repository (ownership claim) | Built; run for real |
 | Agent sandbox: Docker container, egress allowlist proxy, optional screenshots with Obscura | Built; Obscura tested with a stand-in only |
@@ -28,7 +28,6 @@ Each part of the architecture ([docs/design](design) and the C4 diagrams in [doc
 | A second ticket source (GitLab or Gitea) and a second agent engine | Proves the plug-in interfaces; the best way to contribute |
 | Reviewer agent that looks at screenshots of the change | Needs a runner step that starts the preview at the pull request's head |
 | Merge queue support (drive GitHub's native queue instead of refusing) | Today a repository with a merge queue fails the ticket with a clear message |
-| Model-assisted duplicate suggestions | Today: word overlap, a person decides |
 | Update with rollback, Kubernetes manifests, a public container image | Operations |
 
 ## Not in this repository

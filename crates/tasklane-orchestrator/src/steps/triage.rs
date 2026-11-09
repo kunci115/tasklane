@@ -179,13 +179,18 @@ async fn propose_duplicate(
     if checked || title.is_empty() {
         return Ok(None);
     }
-    let Some(c) = crate::duplicates::find(o.pool(), t.id, title).await? else {
+    let found = match crate::duplicates::find(o.pool(), t.id, title).await? {
+        Some(c) => Some((c.reference, c.score)),
+        None => model_duplicate(o, job, t, title).await,
+    };
+    let Some((reference, score)) = found else {
         sqlx::query("UPDATE tickets SET duplicate_checked = true WHERE id = $1")
             .bind(t.id)
             .execute(o.pool())
             .await?;
         return Ok(None);
     };
+    let c = crate::duplicates::Candidate { reference, score };
     let mut tx = o.begin(job).await?;
     o.set_state(
         &mut tx,
@@ -221,4 +226,47 @@ async fn propose_duplicate(
         ticket_id: t.id,
         to: State::DuplicateProposed,
     }))
+}
+
+/// Opt-in (`TASKLANE_DUPLICATE_MODEL=1`): ask the model whether the ticket repeats one of the most
+/// recent tickets. It can only name one of the listed tickets, and a person still decides.
+async fn model_duplicate(
+    o: &Orchestrator,
+    job: &ClaimedJob,
+    t: &crate::ctx::Ticket,
+    title: &str,
+) -> Option<(String, f64)> {
+    if !o.cfg.duplicate_model || o.check_budget(t.id).await.is_err() {
+        return None;
+    }
+    let recent = crate::duplicates::recent(o.pool(), t.id).await.ok()?;
+    if recent.is_empty() {
+        return None;
+    }
+    let candidates: Vec<Value> = recent
+        .iter()
+        .map(|(r, ti)| json!({"ref": r, "title": ti}))
+        .collect();
+    let out = o
+        .engine
+        .call(
+            "run",
+            json!({
+                "role": "duplicate",
+                "ticket": {"service": t.service, "ref": t.external_ref, "title": title, "body": "", "comments": []},
+                "candidates": candidates,
+                "profile": {},
+                "budget": {"max_secs": o.cfg.call_timeout.as_secs(), "max_tokens": 20000},
+                "read_only": true
+            }),
+            o.cfg.call_timeout,
+        )
+        .await
+        .ok()?;
+    let _ = o.record_run(job, "duplicate", &out).await;
+    let named = out.get("duplicate_of").and_then(Value::as_str)?;
+    recent
+        .iter()
+        .any(|(r, _)| r == named)
+        .then(|| (named.to_string(), 0.0))
 }

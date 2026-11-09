@@ -51,7 +51,7 @@ On **Repositories**, open a repository's settings to record short notes ("the st
 
 ## Duplicates
 
-When a new ticket's title closely matches an earlier ticket of the same repository (the same significant words, not a similar topic), it is held as **Possible duplicate** before any model run. A person answers on the ticket page: close it as a duplicate, or handle it as a new ticket (it is then never proposed again). The model never decides this.
+When a new ticket's title closely matches an earlier ticket of the same repository (the same significant words, not a similar topic), it is held as **Possible duplicate** before any model run. A person answers on the ticket page: close it as a duplicate, or handle it as a new ticket (it is then never proposed again). The model never decides this. With `TASKLANE_DUPLICATE_MODEL=1` the model may also *suggest* a duplicate among the 30 most recent tickets; it can only name one of those, and a person still answers.
 
 ## Two installs on one repository
 
@@ -137,6 +137,7 @@ The console covers everything a normal install needs. Environment variables are 
 | `TASKLANE_CI_TIMEOUT_SECS` | no | How long a pull request's checks may stay pending before the ticket fails, default 3600. |
 | `TASKLANE_MAX_IN_CI` | no | No new development starts while this many pull requests are waiting for CI, default 5. |
 | `TASKLANE_METRICS_TOKEN` | no | Turns on `/metrics` (Prometheus text format: tickets by state, queue jobs by status, repositories by mode, model tokens and runs). Needs 16 characters or more; a scraper sends it as `Authorization: Bearer <token>`. Without it the endpoint does not exist. |
+| `TASKLANE_DUPLICATE_MODEL` | no | `1` also asks the model whether a new ticket repeats one of the 30 most recent tickets of the repository, when the word match found nothing. It can only name a listed ticket and a person still decides. Costs a small model run per new ticket; off by default. |
 | `TASKLANE_MAX_DEV` | no | Development runs at once, default 1. Raise it only after you measure your CI capacity. |
 | `TASKLANE_USER_DAILY_LIMIT` | no | Reports per reporter per day, default 10. |
 | `TASKLANE_SYNC_SECS` | no | Polling interval for the sync backstop, default 60, minimum 5. |

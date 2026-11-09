@@ -56,6 +56,14 @@ def run(params):
     with open(os.path.join(STATE, "profile.log"), "a") as f:
         f.write(json.dumps({"role": role, "system": (params.get("profile") or {}).get("system", "")}) + "\n")
     ref = params["ticket"]["ref"]
+    if role == "duplicate":
+        with open(os.path.join(STATE, "dup_calls.log"), "a") as f:
+            f.write(ref + "\n")
+        if "modeldup" in ref:
+            return {"duplicate_of": params["candidates"][0]["ref"], "reason": "same"}
+        if "hallucinate" in ref:
+            return {"duplicate_of": "999", "reason": "invented"}
+        return {"duplicate_of": None, "reason": ""}
     if role == "triage":
         ws = params.get("workspace")
         with open(os.path.join(STATE, "triage_ws.log"), "a") as f:

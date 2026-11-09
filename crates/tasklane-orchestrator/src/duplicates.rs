@@ -72,6 +72,20 @@ pub async fn find(
     Ok(best)
 }
 
+/// The most recent tickets of the same repository, as (ref, title), for the model to compare against.
+pub async fn recent(pool: &PgPool, ticket_id: i64) -> Result<Vec<(String, String)>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT o.external_ref, o.title
+         FROM tickets t JOIN tickets o ON o.service_id = t.service_id AND o.id <> t.id
+         WHERE t.id = $1 AND o.title IS NOT NULL AND o.id < t.id
+           AND o.state NOT IN ('closed_duplicate', 'closed_rejected', 'closed_stale')
+         ORDER BY o.id DESC LIMIT 30",
+    )
+    .bind(ticket_id)
+    .fetch_all(pool)
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

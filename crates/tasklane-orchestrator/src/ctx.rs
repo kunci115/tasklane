@@ -28,6 +28,8 @@ pub struct Config {
     pub max_dev_parallel: i64,
     /// Start no new development while this many pull requests are waiting for CI.
     pub max_in_ci: i64,
+    /// Also ask the model whether a new ticket duplicates a recent one (a person still decides).
+    pub duplicate_model: bool,
     /// Seconds between CI checks.
     pub ci_poll_secs: f64,
     /// Give up on CI that stays pending this long.
@@ -68,6 +70,7 @@ impl Config {
             data_dir,
             max_dev_parallel: 1,
             max_in_ci: 5,
+            duplicate_model: false,
             ci_poll_secs: 30.0,
             ci_timeout_secs: 3600,
             max_ci_runs: 2,
