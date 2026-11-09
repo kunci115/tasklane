@@ -1901,3 +1901,34 @@ async fn a_repository_owned_by_another_install_says_so_and_a_person_can_take_it_
         .unwrap();
     assert_eq!(state, "mine");
 }
+
+#[tokio::test]
+async fn the_ticket_list_is_paged_and_a_wildcard_in_the_search_is_literal() {
+    let Some(e) = env().await else { return };
+    let svc: i64 = sqlx::query_scalar("INSERT INTO services (kind, source, external_id, mode, facts) VALUES ('repo','test','paged/tickets','triage','{}') RETURNING id")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    for i in 0..60 {
+        sqlx::query("INSERT INTO tickets (service_id, external_ref, state, title, updated_at) VALUES ($1, $2, 'new', $3, now() - make_interval(secs => $4::int))")
+            .bind(svc)
+            .bind(format!("{i}"))
+            .bind(format!("ticket number {i:02}"))
+            .bind(i)
+            .execute(&e.pool)
+            .await
+            .unwrap();
+    }
+    let page = |q: &str| get(&format!("/tickets{q}"), Some(e.cookie.clone()));
+    let (_, _, first) = send(&e.app, page("")).await;
+    assert!(first.contains("Showing 1\u{2013}25 of 60"), "{first}");
+    assert!(first.contains("ticket number 00") && !first.contains("ticket number 25"));
+    let (_, _, last) = send(&e.app, page("?page=3")).await;
+    assert!(last.contains("Showing 51\u{2013}60 of 60"));
+    let (_, _, beyond) = send(&e.app, page("?page=99")).await;
+    assert!(beyond.contains("Showing 51\u{2013}60 of 60"));
+    let (_, _, found) = send(&e.app, page("?q=number+4")).await;
+    assert!(found.contains("Showing 1\u{2013}10 of 10"), "{found}");
+    let (_, _, wild) = send(&e.app, page("?q=%25")).await;
+    assert!(wild.contains("No tickets match"), "{wild}");
+}

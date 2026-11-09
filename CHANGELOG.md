@@ -2,6 +2,8 @@
 
 ## Unreleased (0.1.0 is planned, not tagged)
 
+- The Tickets list is paged (25 per page) with the search kept across pages; a `%` or `_` in the search is taken literally.
+- A prompt-injection test set runs against every agent role: crafted ticket, comment, diff and question text cannot close its block or change the tool list.
 - Security fix, found in a real run: pressing Retry on a failed ticket could send a pull request straight to merge even though the reviewer had asked for changes. The reviewed head is now recorded, and a retry merges only a head a reviewer approved; anything else goes back through CI and review.
 - The developer role may run `chmod +x` / `chmod -x` (the executable bit is part of a change); nothing else of chmod.
 - Docker sandbox fix, found in a real run: the container ran as user 10001 and could not write the checkout, so the agent changed nothing. It now runs as the checkout's owner (never root). A "no change" failure now carries what the agent said, and the developer rules tell it to make every change it can.

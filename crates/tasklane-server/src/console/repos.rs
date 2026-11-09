@@ -22,7 +22,7 @@ pub struct ListQuery {
 }
 
 /// `%`, `_` and `\` mean something in a LIKE pattern; the search text is meant literally.
-fn like_literal(s: &str) -> String {
+pub(super) fn like_literal(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace('%', "\\%")
         .replace('_', "\\_")

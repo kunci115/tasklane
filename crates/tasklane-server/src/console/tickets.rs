@@ -10,7 +10,8 @@ use serde_json::Value;
 use sqlx::Row;
 use tasklane_orchestrator::approval::{decide, retry_or_close, Decision, Principal};
 
-use super::ui::{ago, empty, head, icon, level_pill, render, state_pill};
+use super::repos::like_literal;
+use super::ui::{ago, empty, head, icon, level_pill, pager, render, state_pill, url_encode};
 use super::{csrf_ok, forbidden, guard, redirect, AppState};
 use crate::esc;
 
@@ -722,7 +723,10 @@ pub async fn detail(
 pub struct ListQuery {
     view: Option<String>,
     q: Option<String>,
+    page: Option<u32>,
 }
+
+const PER_PAGE: u32 = 25;
 
 pub async fn list(
     State(st): State<Arc<AppState>>,
@@ -763,16 +767,31 @@ pub async fn list(
         q.q.as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
-            .map(|s| format!("%{}%", s.replace('%', "")));
+            .map(|s| format!("%{}%", like_literal(s)));
+    let states_v = states.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let total: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM tickets t JOIN services s ON s.id = t.service_id
+         WHERE (cardinality($1::text[]) = 0 OR t.state = ANY($1))
+           AND ($2::text IS NULL OR t.title ILIKE $2 OR t.external_ref ILIKE $2 OR s.external_id ILIKE $2)",
+    )
+    .bind(&states_v)
+    .bind(needle.as_deref())
+    .fetch_one(st.orch.pool())
+    .await
+    .unwrap_or(0);
+    let pages = ((total + i64::from(PER_PAGE) - 1) / i64::from(PER_PAGE)).max(1) as u32;
+    let page = q.page.filter(|p| *p >= 1).unwrap_or(1).min(pages);
     let rows = sqlx::query(
         "SELECT t.id, t.state, t.level, t.external_ref, coalesce(t.title,'') AS title, s.external_id, extract(epoch FROM now()-t.updated_at)::bigint AS secs
          FROM tickets t JOIN services s ON s.id = t.service_id
          WHERE (cardinality($1::text[]) = 0 OR t.state = ANY($1))
            AND ($2::text IS NULL OR t.title ILIKE $2 OR t.external_ref ILIKE $2 OR s.external_id ILIKE $2)
-         ORDER BY t.updated_at DESC LIMIT 200",
+         ORDER BY t.updated_at DESC, t.id DESC LIMIT $3 OFFSET $4",
     )
-    .bind(states.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+    .bind(&states_v)
     .bind(needle.as_deref())
+    .bind(i64::from(PER_PAGE))
+    .bind(i64::from(page - 1) * i64::from(PER_PAGE))
     .fetch_all(st.orch.pool())
     .await
     .unwrap_or_default();
@@ -822,6 +841,20 @@ pub async fn list(
             ));
         }
         b.push_str("</tbody></table></div></div>");
+        let search = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
+        b.push_str(&pager(
+            &format!(
+                "/tickets?view={}{}",
+                url_encode(view),
+                search
+                    .map(|s| format!("&q={}", url_encode(s)))
+                    .unwrap_or_default()
+            ),
+            page,
+            pages,
+            total,
+            PER_PAGE,
+        ));
     }
     render(&st, &sess.csrf, "tickets", "Tickets", &b)
         .await
