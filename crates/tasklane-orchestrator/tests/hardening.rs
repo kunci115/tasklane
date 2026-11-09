@@ -6,7 +6,7 @@ use common::*;
 use std::time::Duration;
 
 use tasklane_orchestrator::approval::{
-    decide, resume_kind, retry_or_close, ApprovalError, Decision, Principal,
+    decide, resolve_duplicate, resume_kind, retry_or_close, ApprovalError, Decision, Principal,
 };
 use tasklane_orchestrator::host::{PluginClient, PluginSpec};
 use tasklane_orchestrator::workspace::Workspaces;
@@ -710,4 +710,65 @@ async fn a_retry_never_merges_a_head_the_reviewer_did_not_approve() {
         count(&w.pool, "SELECT count(*) FROM jobs WHERE kind = 'merge'").await,
         1
     );
+}
+
+#[tokio::test]
+async fn a_ticket_that_looks_like_an_earlier_one_is_proposed_as_a_duplicate_and_a_person_decides() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    add_principal(&w.pool, "boss", "owner").await;
+    let first = ticket(&w, "T-plain").await;
+    sqlx::query("UPDATE tickets SET title = 'Login page fails on Safari' WHERE id = $1")
+        .bind(first)
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    let dup = ticket(&w, "login-page-fails-on-safari").await;
+    let other = ticket(&w, "T-other").await;
+    drive(&w).await;
+    assert_eq!(state(&w.pool, dup).await, "duplicate_proposed");
+    assert_ne!(
+        state(&w.pool, other).await,
+        "duplicate_proposed",
+        "an unrelated ticket is triaged as usual"
+    );
+    let of: String = sqlx::query_scalar("SELECT duplicate_of FROM tickets WHERE id = $1")
+        .bind(dup)
+        .fetch_one(&w.pool)
+        .await
+        .unwrap();
+    assert_eq!(of, "T-plain");
+    // a stranger cannot decide
+    assert!(matches!(
+        resolve_duplicate(&w.pool, dup, &console("nobody"), true).await,
+        Err(ApprovalError::NotAllowed(_))
+    ));
+    // rejecting sends it to triage, and the same proposal is not made twice
+    assert_eq!(
+        resolve_duplicate(&w.pool, dup, &console("boss"), false)
+            .await
+            .unwrap()
+            .as_str(),
+        "new"
+    );
+    drive(&w).await;
+    assert_ne!(state(&w.pool, dup).await, "duplicate_proposed");
+    assert_ne!(state(&w.pool, dup).await, "new");
+    // confirming closes it
+    let dup2 = ticket(&w, "login-page-fails-on-safari-again").await;
+    drive(&w).await;
+    assert_eq!(state(&w.pool, dup2).await, "duplicate_proposed");
+    assert_eq!(
+        resolve_duplicate(&w.pool, dup2, &console("boss"), true)
+            .await
+            .unwrap()
+            .as_str(),
+        "closed_duplicate"
+    );
+    assert!(matches!(
+        resolve_duplicate(&w.pool, dup2, &console("boss"), true).await,
+        Err(ApprovalError::WrongState(_))
+    ));
 }

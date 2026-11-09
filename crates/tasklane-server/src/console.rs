@@ -38,6 +38,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/fragments/ticket/{id}", get(tickets::live_fragment))
         .route("/tickets/{id}/decide", post(tickets::decide_form))
         .route("/tickets/{id}/retry", post(tickets::retry_form))
+        .route("/tickets/{id}/duplicate", post(tickets::duplicate_form))
         .route("/services", get(repos::page))
         .route("/services/{id}/mode", post(repos::set_mode))
         .route("/services/{id}/profile", post(repos::set_profile))

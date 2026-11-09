@@ -244,3 +244,68 @@ pub async fn retry_or_close(
     tx.commit().await?;
     Ok(to)
 }
+
+/// A person answers a duplicate proposal: close the ticket as a duplicate, or send it to triage
+/// as an ordinary ticket. Only the roles that may approve can do this.
+pub async fn resolve_duplicate(
+    pool: &PgPool,
+    ticket_id: i64,
+    who: &Principal,
+    confirm: bool,
+) -> Result<State, ApprovalError> {
+    let mut tx = pool.begin().await?;
+    let role: Option<String> =
+        sqlx::query_scalar("SELECT role FROM principals WHERE channel = $1 AND ref = $2")
+            .bind(&who.channel)
+            .bind(&who.reference)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if !matches!(role.as_deref(), Some("owner") | Some("team_approver")) {
+        return Err(ApprovalError::NotAllowed(
+            "you are not registered as an approver".into(),
+        ));
+    }
+    let state: Option<String> =
+        sqlx::query_scalar("SELECT state FROM tickets WHERE id = $1 FOR UPDATE")
+            .bind(ticket_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some(state) = state else {
+        return Err(ApprovalError::UnknownTicket);
+    };
+    let state = State::parse(&state).unwrap_or(State::Failed);
+    if state != State::DuplicateProposed {
+        return Err(ApprovalError::WrongState(state));
+    }
+    let to = if confirm {
+        State::ClosedDuplicate
+    } else {
+        State::New
+    };
+    transition(State::DuplicateProposed, to, Actor::Approver)?;
+    sqlx::query("UPDATE tickets SET state = $2, updated_at = now() WHERE id = $1")
+        .bind(ticket_id)
+        .bind(to.as_str())
+        .execute(&mut *tx)
+        .await?;
+    if !confirm {
+        sqlx::query("INSERT INTO jobs (ticket_id, kind) VALUES ($1, 'triage')")
+            .bind(ticket_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    sqlx::query(
+        "INSERT INTO audit_events (actor, action, ticket_id, detail) VALUES ($1, $2, $3, '{}')",
+    )
+    .bind(format!("{}:{}", who.channel, who.reference))
+    .bind(if confirm {
+        "ticket.duplicate_confirmed"
+    } else {
+        "ticket.duplicate_rejected"
+    })
+    .bind(ticket_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(to)
+}

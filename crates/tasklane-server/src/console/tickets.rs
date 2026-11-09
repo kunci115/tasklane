@@ -8,7 +8,9 @@ use axum::response::{Html, IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::Value;
 use sqlx::Row;
-use tasklane_orchestrator::approval::{decide, retry_or_close, Decision, Principal};
+use tasklane_orchestrator::approval::{
+    decide, resolve_duplicate, retry_or_close, Decision, Principal,
+};
 
 use super::repos::like_literal;
 use super::ui::{ago, empty, head, icon, level_pill, pager, render, state_pill, url_encode};
@@ -497,12 +499,13 @@ struct Detail {
     ci_runs: i16,
     attempts: i16,
     reporter: Option<String>,
+    duplicate_of: Option<String>,
 }
 
 async fn load(st: &AppState, id: i64) -> Option<Detail> {
     let r = sqlx::query(
         "SELECT t.state, t.level, t.level_reasons, t.plan_hash, t.external_ref, t.title, t.branch, t.pr_ref, t.last_error, t.plan_text, t.diff_text, t.head_sha,
-                s.external_id, extract(epoch FROM now()-t.created_at)::bigint AS age, t.ci_runs, t.dev_attempts, t.reporter_ref
+                s.external_id, extract(epoch FROM now()-t.created_at)::bigint AS age, t.ci_runs, t.dev_attempts, t.reporter_ref, t.duplicate_of
          FROM tickets t JOIN services s ON s.id = t.service_id WHERE t.id = $1",
     )
     .bind(id)
@@ -528,6 +531,7 @@ async fn load(st: &AppState, id: i64) -> Option<Detail> {
         ci_runs: r.get("ci_runs"),
         attempts: r.get("dev_attempts"),
         reporter: r.get("reporter_ref"),
+        duplicate_of: r.get("duplicate_of"),
     })
 }
 
@@ -667,6 +671,16 @@ pub async fn detail(
             ));
         }
     }
+    if d.state == "duplicate_proposed" {
+        b.push_str(&format!(
+            "<div class=\"decide\"><h2 style=\"margin:0 0 .3rem\">{} Is this a duplicate?</h2><p style=\"margin:.2rem 0\">It looks like ticket <strong>#{}</strong> in the same repository. Nothing happens until a person answers.</p>\
+<form method=\"post\" action=\"/tickets/{id}/duplicate\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><div class=\"btns\"><button class=\"btn ok\" name=\"action\" value=\"confirm\">{} Yes, close it as a duplicate</button><button class=\"btn\" name=\"action\" value=\"reject\">No, handle it as a new ticket</button></div></form></div>",
+            icon("shield"),
+            esc(d.duplicate_of.as_deref().unwrap_or("?")),
+            sess.csrf,
+            icon("check")
+        ));
+    }
     if d.state == "failed" {
         b.push_str(&format!(
             "<div class=\"decide\" style=\"border-color:var(--bad);background:linear-gradient(0deg,var(--panel),var(--bad-bg))\"><h2 style=\"margin:0 0 .3rem\">{} This ticket stopped</h2><p style=\"margin:.2rem 0\">{}</p>\
@@ -739,7 +753,7 @@ pub async fn list(
     };
     let view = q.view.as_deref().unwrap_or("all");
     let states: &[&str] = match view {
-        "you" => &["awaiting_approval", "failed"],
+        "you" => &["awaiting_approval", "failed", "duplicate_proposed"],
         "working" => &[
             "new",
             "needs_info",
@@ -923,6 +937,48 @@ pub async fn decide_form(
 pub struct RetryIn {
     csrf: String,
     action: String,
+}
+
+pub async fn duplicate_form(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Form(f): Form<RetryIn>,
+) -> Response {
+    if !csrf_ok(&st, &headers, &f.csrf).await {
+        return forbidden();
+    }
+    let who = Principal {
+        channel: "console".into(),
+        reference: "admin".into(),
+    };
+    let confirm = f.action == "confirm";
+    match resolve_duplicate(st.orch.pool(), id, &who, confirm).await {
+        Ok(_) => {
+            st.orch
+                .say_on(
+                    id,
+                    if confirm {
+                        "A person confirmed that this is a duplicate; it is closed here."
+                    } else {
+                        "A person said this is not a duplicate; it goes on as a new ticket."
+                    },
+                )
+                .await;
+            redirect(&format!("/tickets/{id}"))
+        }
+        Err(e) => {
+            message(
+                &st,
+                &f.csrf,
+                StatusCode::CONFLICT,
+                "That did not go through",
+                &e.to_string(),
+                &format!("/tickets/{id}"),
+            )
+            .await
+        }
+    }
 }
 
 pub async fn retry_form(

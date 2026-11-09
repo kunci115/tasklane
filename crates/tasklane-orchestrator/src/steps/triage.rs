@@ -27,6 +27,9 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
     o.check_budget(t.id).await?;
     let item = o.item(&t).await?;
     let (title, body) = (text_of(&item, "title"), text_of(&item, "body"));
+    if let Some(r) = propose_duplicate(o, job, &t, &title).await? {
+        return Ok(r);
+    }
     o.queue
         .checkpoint(job, &json!({"stage": "fetched"}))
         .await?;
@@ -150,4 +153,63 @@ async fn triage_checkout(
     let url = o.repo_url(t, Some(&token)).await?;
     o.ws.prepare_readonly(&t.service, &url, &t.base_branch(), job.id)
         .await
+}
+
+/// Before spending a model run: does this ticket look like an earlier one? If so a person is asked.
+/// A rejected proposal is never made again (`duplicate_checked`).
+async fn propose_duplicate(
+    o: &Orchestrator,
+    job: &ClaimedJob,
+    t: &crate::ctx::Ticket,
+    title: &str,
+) -> Result<Option<RunResult>, Error> {
+    let checked: bool = sqlx::query_scalar("SELECT duplicate_checked FROM tickets WHERE id = $1")
+        .bind(t.id)
+        .fetch_one(o.pool())
+        .await?;
+    if checked || title.is_empty() {
+        return Ok(None);
+    }
+    let Some(c) = crate::duplicates::find(o.pool(), t.id, title).await? else {
+        sqlx::query("UPDATE tickets SET duplicate_checked = true WHERE id = $1")
+            .bind(t.id)
+            .execute(o.pool())
+            .await?;
+        return Ok(None);
+    };
+    let mut tx = o.begin(job).await?;
+    o.set_state(
+        &mut tx,
+        t.id,
+        State::New,
+        State::DuplicateProposed,
+        Actor::Orchestrator,
+    )
+    .await?;
+    sqlx::query("UPDATE tickets SET duplicate_of = $2, duplicate_checked = true WHERE id = $1")
+        .bind(t.id)
+        .bind(&c.reference)
+        .execute(&mut *tx)
+        .await?;
+    o.audit(
+        &mut tx,
+        t.id,
+        "ticket.duplicate_proposed",
+        json!({"of": c.reference, "similarity": (c.score * 100.0).round() / 100.0}),
+    )
+    .await?;
+    o.finish_job(&mut tx, job).await?;
+    tx.commit().await?;
+    o.say(
+        t,
+        &format!(
+            "This looks like a duplicate of #{}. A person will confirm or reject that; nothing else happens until then.",
+            c.reference
+        ),
+    )
+    .await;
+    Ok(Some(RunResult::Moved {
+        ticket_id: t.id,
+        to: State::DuplicateProposed,
+    }))
 }

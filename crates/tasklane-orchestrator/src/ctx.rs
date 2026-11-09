@@ -688,6 +688,13 @@ impl Orchestrator {
     }
 
     /// Post a short status on the ticket. Never fails the step.
+    /// Write a status line on a ticket, by its id (used by the console after a person decides).
+    pub async fn say_on(&self, ticket_id: i64, text: &str) {
+        if let Ok(t) = self.load_ticket(ticket_id).await {
+            self.say(&t, text).await;
+        }
+    }
+
     pub(crate) async fn say(&self, t: &Ticket, text: &str) {
         let r = self
             .source

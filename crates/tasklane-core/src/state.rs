@@ -114,6 +114,8 @@ const EDGES: &[(State, State, &[Actor])] = &[
     (NeedsInfo, ClosedStale, &[Timer]),
     (DuplicateProposed, ClosedDuplicate, &[Approver]),
     (DuplicateProposed, Triaged, &[Approver]),
+    // Not a duplicate after all: the ticket is triaged normally.
+    (DuplicateProposed, New, &[Approver]),
     // Triaged -> Queued is only for level 1; see `transition_checked` for the level guard.
     (Triaged, Queued, &[Orchestrator]),
     (Triaged, AwaitingApproval, &[Orchestrator]),

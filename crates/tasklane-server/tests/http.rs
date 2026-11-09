@@ -1932,3 +1932,56 @@ async fn the_ticket_list_is_paged_and_a_wildcard_in_the_search_is_literal() {
     let (_, _, wild) = send(&e.app, page("?q=%25")).await;
     assert!(wild.contains("No tickets match"), "{wild}");
 }
+
+#[tokio::test]
+async fn a_duplicate_proposal_is_answered_in_the_console_and_needs_csrf() {
+    let Some(e) = env().await else { return };
+    let t = seed_ticket(&e, "31", "Login page fails", "duplicate_proposed", 1).await;
+    sqlx::query("UPDATE tickets SET duplicate_of = '7' WHERE id = $1")
+        .bind(t)
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    let (_, _, page) = send(
+        &e.app,
+        get(&format!("/tickets/{t}"), Some(e.cookie.clone())),
+    )
+    .await;
+    assert!(
+        page.contains("Is this a duplicate?") && page.contains("#7"),
+        "{page}"
+    );
+    let path = format!("/tickets/{t}/duplicate");
+    assert_eq!(
+        send(
+            &e.app,
+            form(
+                &path,
+                "csrf=bad&action=confirm".into(),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        send(
+            &e.app,
+            form(
+                &path,
+                format!("csrf={}&action=confirm", e.csrf),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    let state: String = sqlx::query_scalar("SELECT state FROM tickets WHERE id = $1")
+        .bind(t)
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(state, "closed_duplicate");
+}

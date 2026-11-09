@@ -58,7 +58,12 @@ pub async fn live(st: &AppState) -> String {
     let tickets = load(st).await;
     let you: Vec<&T> = tickets
         .iter()
-        .filter(|t| matches!(t.state.as_str(), "awaiting_approval" | "failed"))
+        .filter(|t| {
+            matches!(
+                t.state.as_str(),
+                "awaiting_approval" | "failed" | "duplicate_proposed"
+            )
+        })
         .collect();
     let work = |t: &&T| {
         matches!(
