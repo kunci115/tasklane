@@ -331,7 +331,7 @@ async fn a_plugin_that_died_is_started_again_on_the_next_call() {
     let dir = tempfile::tempdir().unwrap();
     let marker = dir.path().join("started");
     let script = format!(
-        "import sys,json,os\nopen({m:?},'a').write('x')\nfor l in sys.stdin:\n r=json.loads(l)\n print(json.dumps({{'id':r['id'],'ok':True,'result':{{'n':len(open({m:?}).read())}}}}),flush=True)\n os._exit(0)\n",
+        "import sys,json,os\nopen({m:?},'a').write('x')\nfor l in sys.stdin:\n r=json.loads(l)\n print(json.dumps({{'id':r['id'],'ok':True,'result':{{'n':len(open({m:?}).read())}}}}),flush=True)\n if r['op']!='describe':\n  os._exit(0)\n",
         m = marker.display().to_string()
     );
     let p = PluginClient::spawn(&PluginSpec {
@@ -875,4 +875,34 @@ async fn a_repository_file_can_only_tighten_what_tasklane_allows() {
         "new",
         "mode_cap watch holds the work"
     );
+}
+
+#[tokio::test]
+async fn a_plugin_that_declares_an_unknown_protocol_major_is_refused_before_any_work() {
+    let Some(_) = test_pool().await else {
+        return;
+    };
+    let t = Duration::from_secs(10);
+    // a plug-in on the protocol the core knows is used
+    let ok = PluginClient::spawn(&spec(&[("FAKE_PROTOCOL_MAJOR", "1".into())])).unwrap();
+    assert!(ok
+        .call("get_item", serde_json::json!({"ref": "a"}), t)
+        .await
+        .is_ok());
+    // one that declares another major is refused, whatever the operation
+    let bad = PluginClient::spawn(&spec(&[("FAKE_PROTOCOL_MAJOR", "2".into())])).unwrap();
+    let err = bad
+        .call("get_item", serde_json::json!({"ref": "a"}), t)
+        .await
+        .unwrap_err();
+    assert!(!err.is_transient(), "{err}");
+    assert!(err.to_string().contains("protocol 2"), "{err}");
+    // describe itself still answers, so the console can say what is wrong
+    assert!(bad.call("describe", serde_json::json!({}), t).await.is_ok());
+    // one that does not say is accepted (older plug-ins)
+    let silent = PluginClient::spawn(&spec(&[])).unwrap();
+    assert!(silent
+        .call("get_item", serde_json::json!({"ref": "a"}), t)
+        .await
+        .is_ok());
 }

@@ -54,6 +54,7 @@ async fn env() -> Option<Env> {
         .unwrap()
         .log_statements(log::LevelFilter::Off);
     let mut admin = opts.connect().await.unwrap();
+    drop_dead_test_databases(&mut admin).await;
     sqlx::query(&format!("CREATE DATABASE \"{name}\""))
         .execute(&mut admin)
         .await
@@ -2060,4 +2061,24 @@ async fn notes_for_a_repository_are_added_listed_and_removed_with_csrf() {
         .await
         .unwrap();
     assert_eq!(left, 0);
+}
+
+/// Drop the databases earlier test runs left behind (`tl_<kind>_<pid>_<n>`) whose test process is
+/// gone, so a long-lived test Postgres does not fill up with thousands of them.
+async fn drop_dead_test_databases(admin: &mut sqlx::PgConnection) {
+    let names: Vec<String> =
+        sqlx::query_scalar("SELECT datname FROM pg_database WHERE datname LIKE 'tl\\_%'")
+            .fetch_all(&mut *admin)
+            .await
+            .unwrap_or_default();
+    for n in names {
+        let pid = n.split('_').nth(2).and_then(|p| p.parse::<u32>().ok());
+        if let Some(pid) = pid {
+            if !std::path::Path::new(&format!("/proc/{pid}")).exists() {
+                let _ = sqlx::query(&format!("DROP DATABASE IF EXISTS \"{n}\" WITH (FORCE)"))
+                    .execute(&mut *admin)
+                    .await;
+            }
+        }
+    }
 }

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The core refuses a plug-in that declares a `protocol_major` it does not know (as docs/design/05-plugin-protocol.md always said). A plug-in that does not declare one is still accepted.
+- Test databases left by earlier runs are dropped automatically (their process is gone), so a long-lived test Postgres no longer fills up.
 - The chat group a ticket was reported from (`/task`) is told how it ended or what it needs: merged, stopped, needs information, possible duplicate, closed. Each outcome is announced once.
 - The orchestrator crate rebuilds when a migration file is added (a stale embedded schema could otherwise hide a new migration).
 - Behaviour change: approving a ticket in a `triage` repository no longer switches the repository to `full`. `triage` now means what it says (every ticket asks); you switch a repository to `full` yourself.

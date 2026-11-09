@@ -128,11 +128,14 @@ def handle(op, params):
         return owner_call(op, params)
     if op == "describe":
         # like the real plug-ins: report what the environment they were started with says
-        return {"name": "fake", "version": "0.0.0", "role": "test",
+        out = {"name": "fake", "version": "0.0.0", "role": "test",
                 "sandbox": os.environ.get("TASKLANE_SANDBOX", "none"),
                 "unsandboxed_allowed": os.environ.get("TASKLANE_ALLOW_UNSANDBOXED") == "1",
                 "credential": bool(os.environ.get("ANTHROPIC_API_KEY")),
                 "configured": bool(os.environ.get("GITHUB_APP_ID"))}
+        if os.environ.get("FAKE_PROTOCOL_MAJOR"):
+            out["protocol_major"] = int(os.environ["FAKE_PROTOCOL_MAJOR"])
+        return out
     if op == "app_manifest_convert":
         if params["code"].startswith("bad"):
             raise ValueError("code refused")

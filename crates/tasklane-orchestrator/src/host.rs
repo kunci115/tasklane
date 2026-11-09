@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 use tasklane_plugin::{ErrorKind, PluginError, Request, Response};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
@@ -47,6 +47,8 @@ impl CallError {
 type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<Response>>>>;
 
 struct Live {
+    /// Did this process declare a protocol version the core knows? Checked once, on the first call.
+    verdict: tokio::sync::OnceCell<Result<(), String>>,
     stdin: Mutex<ChildStdin>,
     pending: Pending,
     alive: Arc<AtomicBool>,
@@ -91,6 +93,7 @@ fn start(spec: &PluginSpec) -> Result<Arc<Live>, CallError> {
         reader_pending.lock().await.clear();
     });
     Ok(Arc::new(Live {
+        verdict: tokio::sync::OnceCell::new(),
         stdin: Mutex::new(stdin),
         pending,
         alive,
@@ -134,7 +137,52 @@ impl PluginClient {
         timeout: Duration,
     ) -> Result<Value, CallError> {
         let live = self.current().await?;
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        if op != "describe" {
+            // The core refuses a plug-in that declares a protocol major it does not know
+            // (docs/design/05-plugin-protocol.md). A plug-in that does not say is accepted.
+            let verdict = live
+                .verdict
+                .get_or_init(|| async {
+                    match Self::raw_call(
+                        &self.next_id,
+                        &live,
+                        "describe",
+                        json!({}),
+                        Duration::from_secs(5),
+                    )
+                    .await
+                    {
+                        Ok(v) => match v.get("protocol_major").and_then(Value::as_u64) {
+                            Some(m) if m != u64::from(tasklane_plugin::PROTOCOL_MAJOR) => {
+                                Err(format!(
+                                    "the plug-in speaks protocol {m}; this tasklane speaks {}",
+                                    tasklane_plugin::PROTOCOL_MAJOR
+                                ))
+                            }
+                            _ => Ok(()),
+                        },
+                        Err(_) => Ok(()),
+                    }
+                })
+                .await;
+            if let Err(message) = verdict {
+                return Err(CallError::Plugin(PluginError {
+                    kind: ErrorKind::Permanent,
+                    message: message.clone(),
+                }));
+            }
+        }
+        Self::raw_call(&self.next_id, &live, op, params, timeout).await
+    }
+
+    async fn raw_call(
+        next_id: &AtomicU64,
+        live: &Arc<Live>,
+        op: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Value, CallError> {
+        let id = next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         live.pending.lock().await.insert(id, tx);
 
