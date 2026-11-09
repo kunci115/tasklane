@@ -1,45 +1,119 @@
 #!/usr/bin/env python3
-"""Fake source + engine plug-in for tests. Behaviour is chosen by the ticket ref."""
+"""Fake source + engine plug-in for tests. Behaviour is chosen by the ticket ref and by files in FAKE_STATE_DIR."""
 import json
 import os
+import subprocess
 import sys
 import time
+
+STATE = os.environ.get("FAKE_STATE_DIR", "")
+REMOTE = os.environ.get("FAKE_REMOTE_ROOT", "")
+
+
+def flag(name):
+    return os.path.exists(os.path.join(STATE, name))
+
+
+def once(name):
+    """True the first time it is called for a marker that the test armed as `arm_<name>`."""
+    arm, done = os.path.join(STATE, "arm_" + name), os.path.join(STATE, "done_" + name)
+    if os.path.exists(arm) and not os.path.exists(done):
+        open(done, "w").close()
+        return True
+    return False
+
+
+def remote_head(service, branch):
+    out = subprocess.run(["git", f"--git-dir={REMOTE}/{service}.git", "rev-parse", f"refs/heads/{branch}"],
+                         capture_output=True, text=True)
+    return out.stdout.strip()
 
 
 def item(ref):
     body = "The button colour is wrong."
     if "risky" in ref:
         body = "Needs a database migration and a password reset flow."
-    if "secret" in ref:
-        body = "Rotate the api key."
-    return {"title": f"Fix {ref}", "body": body}
+    return {"title": f"Fix {ref}", "body": body, "comments": []}
 
 
 def run(params):
-    ref = params["ref"]
-    if "slow" in ref:
-        time.sleep(2.5)
-    if "crash" in ref:
-        os._exit(1)
-    if "badjson" in ref:
-        return {"nonsense": True}
-    level = 3 if "l3" in ref else 1
-    questions = ["Which page?"] if "ask" in ref else []
-    return {"level": level, "plan": f"plan for {ref}", "questions": questions}
+    role = params.get("role", "triage")
+    ref = params["ticket"]["ref"]
+    if role == "triage":
+        if "slow" in ref:
+            time.sleep(2.5)
+        if "crash" in ref:
+            os._exit(1)
+        if "badjson" in ref:
+            return {"nonsense": True}
+        level = 3 if "l3" in ref else 1
+        questions = ["Which page?"] if "ask" in ref else []
+        return {"level": level, "plan": f"plan for {ref}", "questions": questions}
+    if role == "dev":
+        ws = params["workspace"]
+        if flag("feedback_log") is False:
+            pass
+        with open(os.path.join(STATE, "dev_calls.log"), "a") as f:
+            f.write(json.dumps({"ref": ref, "feedback": params.get("feedback")}) + "\n")
+        if "nochange" in ref:
+            return {"summary": "did nothing"}
+        if "protected" in ref:
+            os.makedirs(os.path.join(ws, ".github", "workflows"), exist_ok=True)
+            open(os.path.join(ws, ".github", "workflows", "ci.yml"), "w").write(f"changed {time.time()}\n")
+        if "big" in ref:
+            open(os.path.join(ws, "big.txt"), "w").write("".join(f"line {i}\n" for i in range(900)))
+        open(os.path.join(ws, "fix.txt"), "w").write(f"fix for {ref} at {time.time()}\n")
+        return {"summary": f"fixed {ref}"}
+    if role == "reviewer":
+        if "changes" in ref and once("changes"):
+            return {"verdict": "changes", "notes": "please add a test"}
+        if "escalate" in ref and once("escalate"):
+            return {"verdict": "escalate", "notes": "touches billing"}
+        return {"verdict": "approve", "notes": "looks fine"}
+    raise ValueError(role)
+
+
+def handle(op, params):
+    if op == "get_item":
+        return item(params["ref"])
+    if op == "run":
+        return run(params)
+    if op == "echo":
+        time.sleep(params.get("delay", 0))
+        return params
+    if op == "mint_run_token":
+        return {"token": "tok-" + "-".join(params["permissions"]), "expires_at": "later"}
+    if op == "repo_url":
+        return {"url": f"file://{REMOTE}/{params['service']}.git"}
+    if op == "comment":
+        with open(os.path.join(STATE, "comments.log"), "a") as f:
+            f.write(json.dumps({"ref": params["ref"], "body": params["body"]}) + "\n")
+        return {"id": "1"}
+    if op == "open_pr":
+        open(os.path.join(STATE, "pr_branch"), "w").write(params["branch"])
+        return {"pr": "7"}
+    if op == "get_checks":
+        branch = open(os.path.join(STATE, "pr_branch")).read()
+        head = remote_head(params["service"], branch)
+        if once("ci_pending"):
+            return {"head_sha": head, "state": "pending", "checks": []}
+        if once("ci_red") or flag("ci_always_red"):
+            return {"head_sha": head, "state": "failure", "checks": [{"name": "tests", "state": "failure"}]}
+        return {"head_sha": head, "state": "success", "checks": [{"name": "tests", "state": "success"}]}
+    if op == "merge_pr":
+        branch = open(os.path.join(STATE, "pr_branch")).read()
+        if once("head_moves") or remote_head(params["service"], branch) != params["expected_head_sha"]:
+            return {"merged": False, "reason": "head_moved"}
+        open(os.path.join(STATE, "merged"), "w").write(params["token"])
+        return {"merged": True, "sha": "abc"}
+    raise KeyError(op)
 
 
 for line in sys.stdin:
     req = json.loads(line)
-    rid, op, params = req["id"], req["op"], req.get("params") or {}
-    if op == "get_item":
-        resp = {"id": rid, "ok": True, "result": item(params["ref"])}
-    elif op == "run":
-        resp = {"id": rid, "ok": True, "result": run(params)}
-    elif op == "echo":
-        # out-of-order test: answer after `delay` seconds
-        time.sleep(params.get("delay", 0))
-        resp = {"id": rid, "ok": True, "result": params}
-    else:
-        resp = {"id": rid, "ok": False, "error": {"kind": "permanent", "message": f"unknown op {op}"}}
+    try:
+        resp = {"id": req["id"], "ok": True, "result": handle(req["op"], req.get("params") or {})}
+    except KeyError as e:
+        resp = {"id": req["id"], "ok": False, "error": {"kind": "permanent", "message": f"unknown op {e}"}}
     sys.stdout.write(json.dumps(resp) + "\n")
     sys.stdout.flush()

@@ -107,3 +107,11 @@ Before `developing` starts: `active_dev_runs < K` and `ci_queue_depth < T`. `K =
 ## 8. Device actions
 
 Device actions are not tickets' code changes. They follow `04-threat-model.md` and `03-plugin-interfaces.md` (device adapter): the broker assigns the level from a fixed action table, L2/L3 need an approval token signed by the gate and bound to the exact device and parameters with an expiry, and a kill switch disables all device actions.
+
+## 9. Implementation notes (kept in sync with the code)
+
+- Job kinds: `triage`, `develop`, `pr`, `ci`, `review`, `merge`. An approval enqueues the kind that resumes the work: `merge` if a pull request exists, `pr` if a branch exists, otherwise `develop`. For that, three extra edges exist: `queued -> rescoring`, `queued -> merge_ready`, and `merge_ready -> ci_running` (a head that moved before the merge is checked and reviewed again).
+- The orchestrator may move any live ticket to `failed` when a step cannot continue or attempts run out; the reason is stored in `tickets.last_error` and posted on the ticket.
+- A pull request with no checks at all is treated as pending, not green, unless `allow_no_checks` is set.
+- Waiting (CI pending, no free development slot) uses `defer`, which does not use up an attempt.
+- A diff that touches a protected path, or has more changed lines than the limit, raises the level to at least 2 and asks again for approval, bound to a hash of that exact diff.

@@ -325,3 +325,30 @@ async fn reaper_and_heartbeat_racing_never_both_win() {
             .unwrap();
     }
 }
+
+#[tokio::test]
+async fn deferring_waits_without_using_an_attempt_and_is_fenced() {
+    let Some(db) = test_db().await else { return };
+    let q = Queue::new(db.pool.clone(), 1);
+    let t = seed_ticket(&db.pool, 1).await;
+    q.enqueue(t, "ci", 0, 0.0).await.unwrap();
+    let a = q.claim("A", 60.0, &[]).await.unwrap().unwrap();
+    q.defer(&a, 3600.0).await.unwrap();
+    assert!(
+        q.claim("A", 60.0, &[]).await.unwrap().is_none(),
+        "deferred job is not due"
+    );
+    assert!(
+        matches!(q.defer(&a, 1.0).await, Err(Error::LeaseLost)),
+        "second defer by the same stale claim"
+    );
+    sqlx::query("UPDATE jobs SET run_after = now()")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let b = q.claim("B", 60.0, &[]).await.unwrap().unwrap();
+    assert_eq!(
+        b.attempts, 1,
+        "waiting must not use up attempts (max is 1 here)"
+    );
+}

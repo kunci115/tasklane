@@ -1,4 +1,4 @@
-//! The orchestrator: one worker loop that claims jobs from the queue, calls
+//! The orchestrator: a worker loop that claims jobs from the queue, calls
 //! plug-in programs, and moves tickets through the state machine.
 //!
 //! Rules this crate keeps (docs/design/01-flow-and-state-machine.md):
@@ -7,11 +7,21 @@
 //! * Every transition goes through `tasklane_core::transition`.
 //! * The final level is the deterministic floor, possibly raised by the model.
 //! * Plug-ins get only the environment they are given; nothing is inherited.
+//! * The agent never pushes or merges; this crate's git and source calls do,
+//!   with tokens that live for one run.
 
+pub mod approval;
+mod ctx;
 pub mod host;
-mod triage;
+mod steps;
+pub mod workspace;
 
-pub use triage::{Config, Orchestrator, RunResult};
+pub use ctx::{Config, Orchestrator, RunResult};
+
+/// Apply every migration in `migrations/` to the database.
+pub async fn migrate(pool: &sqlx::PgPool) -> Result<(), sqlx::migrate::MigrateError> {
+    sqlx::migrate!("../../migrations").run(pool).await
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -27,4 +37,16 @@ pub enum Error {
     Transition(#[from] tasklane_core::TransitionError),
     #[error("unknown ticket state in database: {0}")]
     UnknownState(String),
+    #[error("git: {0}")]
+    Git(String),
+    /// The ticket was not in the state this step expects (someone else moved it).
+    #[error("ticket {ticket_id} is {found:?}, step needed {wanted}")]
+    WrongState {
+        ticket_id: i64,
+        found: tasklane_core::State,
+        wanted: &'static str,
+    },
+    /// A step reached a dead end that retrying will not fix; the ticket goes to `failed`.
+    #[error("{0}")]
+    Fatal(String),
 }

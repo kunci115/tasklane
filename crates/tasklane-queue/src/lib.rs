@@ -202,6 +202,25 @@ impl Queue {
         }
     }
 
+    /// Put a running job back without counting this claim as an attempt, to run
+    /// again after `delay_secs` (used to wait for CI or for a free development slot).
+    pub async fn defer(&self, job: &ClaimedJob, delay_secs: f64) -> Result<(), Error> {
+        let r = sqlx::query(
+            "UPDATE jobs
+             SET status = 'queued', attempts = attempts - 1,
+                 run_after = now() + make_interval(secs => $4),
+                 lease_owner = NULL, lease_until = NULL
+             WHERE id = $1 AND fence = $2 AND lease_owner = $3 AND status = 'running'",
+        )
+        .bind(job.id)
+        .bind(job.fence)
+        .bind(&job.owner)
+        .bind(delay_secs)
+        .execute(&self.pool)
+        .await?;
+        held(r.rows_affected())
+    }
+
     /// Free every job whose lease ran out. Safe to run from many processes.
     pub async fn reap(&self) -> Result<ReapReport, Error> {
         let rows: Vec<(String,)> = sqlx::query_as(

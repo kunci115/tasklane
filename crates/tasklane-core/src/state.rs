@@ -134,6 +134,11 @@ const EDGES: &[(State, State, &[Actor])] = &[
     (Reviewing, AwaitingApproval, &[Orchestrator]),
     (MergeReady, Merged, &[Runner]),
     (Merged, ClosedDone, &[Approver]),
+    // Approved work resumes where it stopped: a rescored diff goes on to its PR,
+    // a reviewer escalation goes on to the merge, and a moved head is checked again.
+    (Queued, Rescoring, &[Orchestrator]),
+    (Queued, MergeReady, &[Orchestrator]),
+    (MergeReady, CiRunning, &[Runner]),
     (Failed, Queued, &[Approver]),
     (Failed, ClosedRejected, &[Approver]),
 ];
@@ -164,6 +169,10 @@ pub fn transition(from: State, to: State, actor: Actor) -> Result<(), Transition
             return Ok(());
         }
         return Err(TransitionError::NotAllowed { from, to, actor });
+    }
+    // The orchestrator may fail any live ticket whose retries ran out.
+    if to == Failed && actor == Orchestrator && from != Failed {
+        return Ok(());
     }
     match EDGES.iter().find(|(f, t, _)| *f == from && *t == to) {
         None => Err(TransitionError::NoSuchEdge { from, to }),
@@ -247,6 +256,21 @@ mod tests {
                 Err(TransitionError::Terminal { from: s })
             );
             assert!(transition(s, Stopped, Console).is_err());
+        }
+    }
+
+    #[test]
+    fn only_the_orchestrator_can_fail_a_live_ticket() {
+        for from in State::ALL {
+            let live = !from.is_terminal() && from != Stopped && from != Failed;
+            assert_eq!(
+                transition(from, Failed, Orchestrator).is_ok(),
+                live || from == Developing || from == CiRunning,
+                "{from:?}"
+            );
+            if live {
+                assert!(transition(from, Failed, Timer).is_err(), "{from:?}");
+            }
         }
     }
 

@@ -22,7 +22,7 @@ Errors use `kind`: `transient`, `permanent`, `unauthorized`, `rate_limited`. Exp
 | `set_labels` | `{service, ref, add: [string], remove: [string]}` | `{}` |
 | `detect_facts` | `{service}` | `{language?: string, test_command?: string, environments: [string], protected_paths: [string]}` (best guesses; the registry can override) |
 | `repo_url` | `{service, token?: string}` | `{url}`: a git URL; with a token it embeds the credential for one push or clone. Never logged. |
-| `mint_run_token` | `{service, permissions: ["contents:write","pull_requests:write"], ttl_secs: int}` | `{token, expires_at}`: limited to that one service, short-lived |
+| `mint_run_token` | `{service, permissions: ["contents:write","pull_requests:write"], ttl_secs: int}` (also `contents:read` for fetching private repos; the form is `name:level`) | `{token, expires_at}`: limited to that one service, short-lived |
 | `open_pr` | `{service, branch, base, title, body, token}` | `{pr}` (pull request id as string) |
 | `get_checks` | `{service, pr}` | `{head_sha, state: "pending"\|"success"\|"failure", checks: [{name, state}]}` |
 | `merge_pr` | `{service, pr, expected_head_sha, token}` | `{merged: bool, sha?: string, reason?: "head_moved"\|"checks_failing"\|"conflict"\|"not_mergeable"}` |
@@ -47,6 +47,7 @@ Rules: `merge_pr` must return `merged: false, reason: "head_moved"` when the PR 
   "workspace": "/path/to/worktree (dev, reviewer, ask; absent for triage)",
   "diff": "unified diff text (reviewer only)",
   "question": "text (ask only)",
+  "feedback": "text (dev only): why the previous attempt failed (CI output, reviewer notes)",
   "budget": {"max_secs": 900, "max_tokens": 200000},
   "read_only": true
 }
