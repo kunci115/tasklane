@@ -25,7 +25,7 @@ Open an issue, get a reviewed pull request. A person approves anything risky.</p
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/overview.png" alt="tasklane console: tickets that need you, and a live pipeline board" width="860">
+  <img src="docs/demo.gif" alt="tasklane console: a ticket waiting for approval with the exact diff, then the live 3D map of agents" width="860">
 </p>
 
 **tasklane** is a self-hosted pipeline that turns GitHub issues into reviewed pull requests with an AI coding agent, and keeps a human in charge of every risky step. It watches your repositories, plans the fix, asks a person to approve when the change is risky, lets the agent write the change in an isolated git workspace, runs your CI, has a second agent review the diff, and merges **only the exact commit that was reviewed**. It never touches production.
