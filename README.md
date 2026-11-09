@@ -16,6 +16,7 @@ Ticket-driven AI agent pipeline: a problem is reported, triaged, approved by a h
 | Path | What |
 |---|---|
 | `crates/tasklane-core` | Pure domain rules: ticket states, who may move them, risk levels (tested) |
+| `crates/tasklane-queue` | Postgres job queue: `SKIP LOCKED` claim, leases, heartbeat, fencing tokens, reaper (tested against a real Postgres) |
 | `crates/tasklane-plugin` | Wire protocol for plug-ins (JSON lines over stdio) |
 | `crates/tasklane-server` | HTTP server (health endpoint and console placeholder) |
 | `plugins/` | Plug-in programs, any language; `engine-claude` is a Python skeleton |
@@ -25,7 +26,8 @@ Ticket-driven AI agent pipeline: a problem is reported, triaged, approved by a h
 ## Develop
 
 ```bash
-cargo test --workspace                          # Rust: core, protocol, server
+TASKLANE_TEST_DATABASE_URL=postgres://tasklane:tasklane@127.0.0.1:5432/postgres \
+  cargo test --workspace                        # Rust; queue tests need Postgres (skipped without it)
 python3 -m unittest discover -s plugins/engine-claude
 docker compose up -d db                         # Postgres with the schema loaded
 TASKLANE_BIND=127.0.0.1:8080 cargo run -p tasklane-server
