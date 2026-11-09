@@ -227,7 +227,31 @@ class Reading(Base):
             {"user": {"login": "bob"}, "body": "hi", "created_at": "2026-01-01T00:00:00Z"}])
         self.assertEqual(self.ok("get_item", {"service": "acme/one", "ref": "5"}), {
             "title": "T", "body": "B", "author": "ann", "labels": ["bug", "p1"], "state": "closed",
+            "is_pull_request": False, "author_trusted": False,
             "comments": [{"author": "bob", "body": "hi", "at": "2026-01-01T00:00:00Z"}]})
+
+    def issue(self, **kw):
+        base = {"title": "T", "body": "B", "user": {"login": "ann"}, "state": "open", "labels": []}
+        base.update(kw)
+        self.fake.routes[("GET", "/repos/acme/one/issues/5")] = (200, {}, base)
+        self.fake.routes[("GET", "/repos/acme/one/issues/5/comments")] = (200, {}, [])
+        return self.ok("get_item", {"service": "acme/one", "ref": "5"})
+
+    def test_collaborators_are_trusted_strangers_are_not(self):
+        for assoc, want in [("OWNER", True), ("MEMBER", True), ("COLLABORATOR", True),
+                            ("CONTRIBUTOR", False), ("FIRST_TIME_CONTRIBUTOR", False), ("NONE", False)]:
+            self.fake.routes[("GET", "/app")] = (200, {}, {"slug": "tasklane-test"})
+            self.assertEqual(self.issue(author_association=assoc)["author_trusted"], want, assoc)
+
+    def test_the_apps_own_issues_are_trusted_another_bot_is_not(self):
+        self.fake.routes[("GET", "/app")] = (200, {}, {"slug": "tasklane-test"})
+        self.assertTrue(self.issue(user={"login": "tasklane-test[bot]"}, author_association="NONE")["author_trusted"])
+        self.assertFalse(self.issue(user={"login": "evil-app[bot]"}, author_association="NONE")["author_trusted"])
+
+    def test_pull_requests_are_flagged(self):
+        self.fake.routes[("GET", "/app")] = (200, {}, {"slug": "t"})
+        self.assertTrue(self.issue(pull_request={"url": "x"})["is_pull_request"])
+        self.assertFalse(self.issue()["is_pull_request"])
 
     def test_get_checks(self):
         self.fake.routes[("GET", "/repos/acme/one/pulls/3")] = (200, {}, {"head": {"sha": "abc"}})
@@ -373,6 +397,26 @@ class RunTokens(Base):
         self.assertEqual(put["headers"]["authorization"], "Bearer " + PASSED_TOKEN)
         self.assertEqual(self.auth_of("GET", "/repos/acme/one/pulls/8"), "Bearer " + PASSED_TOKEN)
 
+    def test_open_pr_returns_the_existing_pull_request_instead_of_failing(self):
+        R = self.fake.routes
+        R[("POST", "/repos/acme/one/pulls")] = (422, {}, {"message": "A pull request already exists for acme:feat."})
+        R[("GET", "/repos/acme/one/pulls")] = (200, {}, [{"number": 12}])
+        r = self.ok("open_pr", {"service": "acme/one", "branch": "feat", "base": "main", "title": "T", "token": PASSED_TOKEN})
+        self.assertEqual(r, {"pr": "12"})
+        # a different 422 is still an error
+        R[("POST", "/repos/acme/one/pulls")] = (422, {}, {"message": "Validation Failed"})
+        self.assertEqual(self.err("open_pr", {"service": "acme/one", "branch": "feat", "base": "main", "title": "T", "token": PASSED_TOKEN})["kind"], "permanent")
+
+    def test_merge_pr_is_idempotent_after_a_crash(self):
+        self.fake.routes[("GET", "/repos/acme/one/pulls/8")] = (200, {}, {"head": {"sha": "aaa"}, "state": "closed", "merged": True, "merge_commit_sha": "mmm"})
+        r = self.ok("merge_pr", {"service": "acme/one", "pr": "8", "expected_head_sha": "aaa", "token": PASSED_TOKEN})
+        self.assertEqual(r, {"merged": True, "sha": "mmm"})
+        self.assertEqual(self.fake.seen("PUT", "/repos/acme/one/pulls/8/merge"), [])
+        # closed without a merge is not mergeable
+        self.fake.routes[("GET", "/repos/acme/one/pulls/8")] = (200, {}, {"head": {"sha": "aaa"}, "state": "closed", "merged": False})
+        r = self.ok("merge_pr", {"service": "acme/one", "pr": "8", "expected_head_sha": "aaa", "token": PASSED_TOKEN})
+        self.assertEqual(r, {"merged": False, "reason": "not_mergeable"})
+
     def test_merge_pr_head_moved_does_not_merge(self):
         self.pr_route("bbb")
         r = self.ok("merge_pr", {"service": "acme/one", "pr": "8", "expected_head_sha": "aaa", "token": PASSED_TOKEN})
@@ -424,6 +468,20 @@ class Webhooks(Base):
         r = self.send("ping", {"zen": "x", "repository": {"full_name": "acme/one"}})
         self.assertFalse(r["ok"])
         self.assertEqual(r["error"]["kind"], "permanent")
+
+
+class WebhookPullRequests(Webhooks):
+    def test_comments_and_issue_events_on_pull_requests_are_not_ticket_events(self):
+        repo = {"full_name": "acme/one"}
+        for event, payload in [
+            ("issue_comment", {"repository": repo, "action": "created", "issue": {"number": 4, "pull_request": {"url": "x"}}}),
+            ("issues", {"repository": repo, "action": "labeled", "issue": {"number": 4, "pull_request": {"url": "x"}}}),
+        ]:
+            r = self.send(event, payload)
+            self.assertFalse(r["ok"], event)
+            self.assertEqual(r["error"]["kind"], "permanent")
+        ok = self.send("issue_comment", {"repository": repo, "action": "created", "issue": {"number": 4}})
+        self.assertTrue(ok["ok"])
 
 
 class ErrorMapping(Base):

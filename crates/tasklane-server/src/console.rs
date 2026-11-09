@@ -14,7 +14,7 @@ use serde::Deserialize;
 use sqlx::Row;
 use tasklane_orchestrator::approval::{decide, Decision, Principal};
 
-use crate::auth::{ct_eq, hmac_hex};
+use crate::auth::ct_eq;
 use crate::{esc, AppState};
 
 pub fn routes() -> Router<Arc<AppState>> {
@@ -28,28 +28,50 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/chat", get(chat_page))
         .route("/chat/groups", post(add_group))
         .route("/chat/groups/{id}/delete", post(delete_group))
+        .route("/logout", post(logout))
+        .route("/tickets/{id}/retry", post(retry_form))
         .route("/pause", post(pause))
         .route("/resume", post(resume))
 }
 
-fn session_value(st: &AppState) -> String {
-    hmac_hex(st.admin_token.as_bytes(), "session")
-}
-fn csrf_value(st: &AppState) -> String {
-    hmac_hex(st.admin_token.as_bytes(), "csrf")
+/// A signed-in console session, stored server-side with its own CSRF token.
+struct Session {
+    csrf: String,
 }
 
-fn logged_in(st: &AppState, headers: &HeaderMap) -> bool {
-    let want = session_value(st);
+fn cookie_value(headers: &HeaderMap) -> Option<String> {
     headers
         .get(COOKIE)
         .and_then(|v| v.to_str().ok())
-        .map(|c| {
+        .and_then(|c| {
             c.split(';')
                 .filter_map(|p| p.trim().strip_prefix("tl="))
-                .any(|v| ct_eq(v, &want))
+                .next()
+                .map(str::to_string)
         })
-        .unwrap_or(false)
+}
+
+async fn session(st: &AppState, headers: &HeaderMap) -> Option<Session> {
+    let id = cookie_value(headers)?;
+    if id.len() != 64 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let csrf: Option<String> = sqlx::query_scalar(
+        "SELECT csrf FROM console_sessions WHERE id = $1 AND expires_at > now()",
+    )
+    .bind(&id)
+    .fetch_optional(st.orch.pool())
+    .await
+    .ok()
+    .flatten();
+    csrf.map(|csrf| Session { csrf })
+}
+
+/// 32 random bytes as hex, from the operating system.
+fn random_hex() -> String {
+    let mut buf = [0u8; 32];
+    getrandom::fill(&mut buf).expect("operating system randomness");
+    buf.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn redirect(to: &str) -> Response {
@@ -80,8 +102,40 @@ struct LoginIn {
 }
 
 async fn login(State(st): State<Arc<AppState>>, Form(f): Form<LoginIn>) -> Response {
+    // After five wrong tokens the door stays shut for five minutes.
+    {
+        let mut t = st.login_throttle.lock().unwrap_or_else(|e| e.into_inner());
+        if t.1.elapsed() > std::time::Duration::from_secs(300) {
+            *t = (0, std::time::Instant::now());
+        }
+        if t.0 >= 5 {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                page(
+                    "Sign in",
+                    "<h1>Sign in</h1><p>Too many wrong tokens. Try again in a few minutes.</p>",
+                ),
+            )
+                .into_response();
+        }
+    }
     if !ct_eq(&f.token, &st.admin_token) {
+        let mut t = st.login_throttle.lock().unwrap_or_else(|e| e.into_inner());
+        if t.0 == 0 {
+            t.1 = std::time::Instant::now();
+        }
+        t.0 += 1;
         return (StatusCode::UNAUTHORIZED, page("Sign in", "<h1>Sign in</h1><p>That token is not right.</p><p><a href=\"/login\">Try again</a></p>")).into_response();
+    }
+    let (id, csrf) = (random_hex(), random_hex());
+    if sqlx::query("INSERT INTO console_sessions (id, csrf, expires_at) VALUES ($1, $2, now() + interval '8 hours')")
+        .bind(&id)
+        .bind(&csrf)
+        .execute(st.orch.pool())
+        .await
+        .is_err()
+    {
+        return (StatusCode::INTERNAL_SERVER_ERROR, page("Error", "<p>Could not start a session.</p>")).into_response();
     }
     let secure = if st.secure_cookies { "; Secure" } else { "" };
     (
@@ -89,12 +143,48 @@ async fn login(State(st): State<Arc<AppState>>, Form(f): Form<LoginIn>) -> Respo
         [
             (
                 SET_COOKIE,
-                format!(
-                    "tl={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800{secure}",
-                    session_value(&st)
-                ),
+                format!("tl={id}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800{secure}"),
             ),
             (LOCATION, "/".to_string()),
+        ],
+    )
+        .into_response()
+}
+
+#[derive(Deserialize)]
+struct CsrfOnlyIn {
+    csrf: String,
+}
+
+async fn logout(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Form(f): Form<CsrfOnlyIn>,
+) -> Response {
+    let Some(sess) = session(&st, &headers).await else {
+        return redirect("/login");
+    };
+    if !ct_eq(&f.csrf, &sess.csrf) {
+        return (
+            StatusCode::FORBIDDEN,
+            page("Refused", "<p>Form token is not valid.</p>"),
+        )
+            .into_response();
+    }
+    if let Some(id) = cookie_value(&headers) {
+        let _ = sqlx::query("DELETE FROM console_sessions WHERE id = $1")
+            .bind(id)
+            .execute(st.orch.pool())
+            .await;
+    }
+    (
+        StatusCode::SEE_OTHER,
+        [
+            (
+                SET_COOKIE,
+                "tl=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0".to_string(),
+            ),
+            (LOCATION, "/login".to_string()),
         ],
     )
         .into_response()
@@ -110,9 +200,9 @@ async fn home(
     headers: HeaderMap,
     Query(q): Query<HomeQuery>,
 ) -> Response {
-    if !logged_in(&st, &headers) {
+    let Some(sess) = session(&st, &headers).await else {
         return redirect("/login");
-    }
+    };
     let pool = st.orch.pool();
     let paused = st.orch.is_paused().await.unwrap_or(false);
     let rows = sqlx::query(
@@ -128,10 +218,11 @@ async fn home(
     b.push_str(&format!(
         "<form method=\"post\" action=\"{}\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><p>Work is <strong>{}</strong>. <button>{}</button></p></form>",
         if paused { "/resume" } else { "/pause" },
-        csrf_value(&st),
+        sess.csrf,
         if paused { "paused" } else { "running" },
         if paused { "Resume" } else { "Pause everything" }
     ));
+    b.push_str(&format!("<form method=\"post\" action=\"/logout\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><button>Sign out</button></form>", sess.csrf));
     b.push_str("<p>Show: <a href=\"/\">all</a> | <a href=\"/?state=awaiting_approval\">waiting for approval</a> | <a href=\"/?state=failed\">failed</a></p>");
     b.push_str("<table><tr><th>#</th><th>Repository</th><th>Ticket</th><th>State</th><th>Level</th><th>Updated</th></tr>");
     for r in rows {
@@ -162,12 +253,12 @@ async fn ticket_page(
     headers: HeaderMap,
     Path(id): Path<i64>,
 ) -> Response {
-    if !logged_in(&st, &headers) {
+    let Some(sess) = session(&st, &headers).await else {
         return redirect("/login");
-    }
+    };
     let pool = st.orch.pool();
     let Some(r) = sqlx::query(
-        "SELECT t.state, t.level, t.level_reasons::text AS reasons, t.plan_hash, t.external_ref, t.title, t.branch, t.pr_ref, t.last_error, s.external_id
+        "SELECT t.state, t.level, t.level_reasons::text AS reasons, t.plan_hash, t.external_ref, t.title, t.branch, t.pr_ref, t.last_error, t.plan_text, t.diff_text, s.external_id
          FROM tickets t JOIN services s ON s.id = t.service_id WHERE t.id = $1",
     )
     .bind(id)
@@ -200,10 +291,26 @@ async fn ticket_page(
 <form method=\"post\" action=\"/tickets/{id}/decide\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"plan_hash\" value=\"{}\">\
 <button name=\"decision\" value=\"approve\">Approve</button><button name=\"decision\" value=\"reject\">Reject</button></form>",
                 esc(&h[..16.min(h.len())]),
-                csrf_value(&st),
+                sess.csrf,
                 esc(h)
             ));
         }
+    }
+    if let Some(plan) = r.get::<Option<String>, _>("plan_text") {
+        b.push_str(&format!("<h2>Plan</h2><pre>{}</pre>", esc(&plan)));
+    }
+    if let Some(diff) = r.get::<Option<String>, _>("diff_text") {
+        b.push_str(&format!(
+            "<h2>Change (what an approval covers)</h2><pre>{}</pre>",
+            esc(&diff)
+        ));
+    }
+    if state == "failed" {
+        b.push_str(&format!(
+            "<h2>This ticket stopped</h2><form method=\"post\" action=\"/tickets/{id}/retry\"><input type=\"hidden\" name=\"csrf\" value=\"{}\">\
+<button name=\"action\" value=\"retry\">Try again</button><button name=\"action\" value=\"close\">Close it</button></form>",
+            sess.csrf
+        ));
     }
     b.push_str(
         "<h2>History</h2><table><tr><th>When</th><th>Who</th><th>What</th><th>Detail</th></tr>",
@@ -239,7 +346,10 @@ async fn decide_form(
     Path(id): Path<i64>,
     Form(f): Form<DecideIn>,
 ) -> Response {
-    if !logged_in(&st, &headers) || !ct_eq(&f.csrf, &csrf_value(&st)) {
+    if session(&st, &headers)
+        .await
+        .is_none_or(|s| !ct_eq(&f.csrf, &s.csrf))
+    {
         return (
             StatusCode::FORBIDDEN,
             page(
@@ -275,9 +385,9 @@ async fn decide_form(
 }
 
 async fn services_page(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    if !logged_in(&st, &headers) {
+    let Some(sess) = session(&st, &headers).await else {
         return redirect("/login");
-    }
+    };
     let rows =
         sqlx::query("SELECT id, external_id, mode, archived FROM services ORDER BY external_id")
             .fetch_all(st.orch.pool())
@@ -294,7 +404,7 @@ async fn services_page(State(st): State<Arc<AppState>>, headers: HeaderMap) -> R
             esc(&r.get::<String, _>("external_id")),
             if archived { " (archived)" } else { "" },
             esc(&mode),
-            csrf_value(&st)
+            sess.csrf
         ));
     }
     b.push_str("</table>");
@@ -313,7 +423,10 @@ async fn set_mode(
     Path(id): Path<i64>,
     Form(f): Form<ModeIn>,
 ) -> Response {
-    if !logged_in(&st, &headers) || !ct_eq(&f.csrf, &csrf_value(&st)) {
+    if session(&st, &headers)
+        .await
+        .is_none_or(|s| !ct_eq(&f.csrf, &s.csrf))
+    {
         return (
             StatusCode::FORBIDDEN,
             page("Refused", "<p>Session or form token is not valid.</p>"),
@@ -359,7 +472,10 @@ async fn resume(
     toggle(st, headers, f, false).await
 }
 async fn toggle(st: Arc<AppState>, headers: HeaderMap, f: CsrfOnly, paused: bool) -> Response {
-    if !logged_in(&st, &headers) || !ct_eq(&f.csrf, &csrf_value(&st)) {
+    if session(&st, &headers)
+        .await
+        .is_none_or(|s| !ct_eq(&f.csrf, &s.csrf))
+    {
         return (
             StatusCode::FORBIDDEN,
             page("Refused", "<p>Session or form token is not valid.</p>"),
@@ -381,9 +497,9 @@ async fn toggle(st: Arc<AppState>, headers: HeaderMap, f: CsrfOnly, paused: bool
 }
 
 async fn chat_page(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    if !logged_in(&st, &headers) {
+    let Some(sess) = session(&st, &headers).await else {
         return redirect("/login");
-    }
+    };
     let pool = st.orch.pool();
     let groups = sqlx::query("SELECT g.id, g.channel, g.group_ref, g.daily_cap, s.external_id FROM chat_groups g JOIN services s ON s.id = g.service_id ORDER BY g.id").fetch_all(pool).await.unwrap_or_default();
     let services =
@@ -400,10 +516,10 @@ async fn chat_page(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Respo
             esc(&g.get::<String, _>("group_ref")),
             esc(&g.get::<String, _>("external_id")),
             g.get::<i32, _>("daily_cap"),
-            csrf_value(&st)
+            sess.csrf
         ));
     }
-    b.push_str(&format!("</table><h2>Register a group</h2><form method=\"post\" action=\"/chat/groups\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><label>Group id <input name=\"group_ref\" required></label> <label>Repository <select name=\"service_id\">", csrf_value(&st)));
+    b.push_str(&format!("</table><h2>Register a group</h2><form method=\"post\" action=\"/chat/groups\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><label>Group id <input name=\"group_ref\" required></label> <label>Repository <select name=\"service_id\">", sess.csrf));
     for sv in services {
         b.push_str(&format!(
             "<option value=\"{}\">{}</option>",
@@ -428,7 +544,10 @@ async fn add_group(
     headers: HeaderMap,
     Form(f): Form<GroupIn>,
 ) -> Response {
-    if !logged_in(&st, &headers) || !ct_eq(&f.csrf, &csrf_value(&st)) {
+    if session(&st, &headers)
+        .await
+        .is_none_or(|s| !ct_eq(&f.csrf, &s.csrf))
+    {
         return (
             StatusCode::FORBIDDEN,
             page("Refused", "<p>Session or form token is not valid.</p>"),
@@ -469,7 +588,10 @@ async fn delete_group(
     Path(id): Path<i64>,
     Form(f): Form<CsrfOnly>,
 ) -> Response {
-    if !logged_in(&st, &headers) || !ct_eq(&f.csrf, &csrf_value(&st)) {
+    if session(&st, &headers)
+        .await
+        .is_none_or(|s| !ct_eq(&f.csrf, &s.csrf))
+    {
         return (
             StatusCode::FORBIDDEN,
             page("Refused", "<p>Session or form token is not valid.</p>"),
@@ -481,4 +603,47 @@ async fn delete_group(
         .execute(st.orch.pool())
         .await;
     redirect("/chat")
+}
+
+#[derive(Deserialize)]
+struct RetryIn {
+    csrf: String,
+    action: String,
+}
+
+async fn retry_form(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Form(f): Form<RetryIn>,
+) -> Response {
+    if session(&st, &headers)
+        .await
+        .is_none_or(|s| !ct_eq(&f.csrf, &s.csrf))
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            page("Refused", "<p>Session or form token is not valid.</p>"),
+        )
+            .into_response();
+    }
+    let who = Principal {
+        channel: "console".into(),
+        reference: "admin".into(),
+    };
+    match tasklane_orchestrator::approval::retry_or_close(
+        st.orch.pool(),
+        id,
+        &who,
+        f.action == "close",
+    )
+    .await
+    {
+        Ok(_) => redirect(&format!("/tickets/{id}")),
+        Err(e) => (
+            StatusCode::CONFLICT,
+            page("Not done", &format!("<p>{}</p>", esc(&e.to_string()))),
+        )
+            .into_response(),
+    }
 }

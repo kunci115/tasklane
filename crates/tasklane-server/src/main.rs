@@ -52,7 +52,7 @@ async fn run(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     let (stop_tx, stop_rx) = watch::channel(false);
     let mut tasks = runtime::spawn_workers(&orch, s.workers, &stop_rx);
-    tasks.push(runtime::spawn_reaper(&orch, &stop_rx));
+    tasks.push(runtime::spawn_reaper(&orch, s.retention_days, &stop_rx));
     tasks.push(runtime::spawn_sync(&orch, s.sync_every, &stop_rx));
 
     if let Some(spec) = &s.chat {
@@ -71,6 +71,7 @@ async fn run(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
         jwt_secrets: s.jwt_secrets.clone(),
         user_daily_limit: s.user_daily_limit,
         secure_cookies: s.secure_cookies,
+        login_throttle: std::sync::Mutex::new((0, std::time::Instant::now())),
     });
     let app = api::routes().merge(console::routes()).with_state(state);
     let listener = tokio::net::TcpListener::bind(&s.bind).await?;

@@ -12,6 +12,8 @@ SCRIPT = Path(__file__).with_name("engine_claude.py")
 def talk(*requests, env=None, raw=None):
     e = dict(os.environ)
     e.pop("TASKLANE_SANDBOX", None)
+    e.pop("TASKLANE_ALLOW_UNSANDBOXED", None)
+    e["TASKLANE_ALLOW_UNSANDBOXED"] = "1"  # most tests exercise roles, not the sandbox gate
     e.update(env or {})
     data = raw if raw is not None else "\n".join(json.dumps(r) for r in requests) + "\n"
     p = subprocess.run([sys.executable, "-I", str(SCRIPT)], input=data, env=e,
@@ -290,3 +292,39 @@ class Docker(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SandboxGate(unittest.TestCase):
+    def ask(self, env):
+        params = {"role": "ask", "ticket": {"service": "o/r", "ref": "1", "title": "", "body": ""}, "question": "q"}
+        (r,) = talk({"id": 1, "op": "run", "params": params}, env=env)
+        return r
+
+    def test_every_role_is_refused_without_a_sandbox_or_an_explicit_opt_in(self):
+        r = self.ask({"TASKLANE_ALLOW_UNSANDBOXED": ""})
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["error"]["kind"], "permanent")
+        self.assertIn("refusing to run without a sandbox", r["error"]["message"])
+
+    def test_the_opt_in_must_be_exactly_one(self):
+        self.assertFalse(self.ask({"TASKLANE_ALLOW_UNSANDBOXED": "yes"})["ok"])
+
+
+class Hardening(unittest.TestCase):
+    def test_token_shapes_are_scrubbed_from_text(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("engine_claude", SCRIPT)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        raw = "tokens ghs_abcdefghijklmnopqrstuvwx and sk-ant-abc123def456 and https://x-access-token:SEKRET@github.com/o/r.git ok"
+        out = m.scrub(raw, env={})
+        for leaked in ("ghs_abcdefghijklmnopqrstuvwx", "sk-ant-abc123def456", "SEKRET"):
+            self.assertNotIn(leaked, out)
+        self.assertIn("ok", out)
+
+    def test_a_diff_longer_than_the_limit_is_never_approved(self):
+        params = {"role": "reviewer", "ticket": {"service": "o/r", "ref": "1", "title": "", "body": ""}, "diff": "+" + "x" * 200_001}
+        (r,) = talk({"id": 1, "op": "run", "params": params})
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["result"]["verdict"], "escalate")
+        self.assertIn("too large", r["result"]["notes"])

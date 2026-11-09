@@ -24,6 +24,7 @@ pub struct Settings {
     pub secure_cookies: bool,
     pub max_dev_parallel: i64,
     pub allow_no_checks: bool,
+    pub retention_days: i64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -101,6 +102,17 @@ impl Settings {
                 "must be at least 24 characters".into(),
             ));
         }
+        if admin_token
+            .chars()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            < 8
+        {
+            return Err(ConfigError::Invalid(
+                "TASKLANE_ADMIN_TOKEN",
+                "looks too repetitive; use a long random string".into(),
+            ));
+        }
         let mut jwt_secrets = HashMap::new();
         for pair in get(vars, "TASKLANE_JWT_SECRETS")
             .unwrap_or_default()
@@ -144,6 +156,7 @@ impl Settings {
             secure_cookies: public.starts_with("https://"),
             max_dev_parallel: num(vars, "TASKLANE_MAX_DEV", 1i64)?.max(1),
             allow_no_checks: get(vars, "TASKLANE_ALLOW_NO_CHECKS").as_deref() == Some("1"),
+            retention_days: num(vars, "TASKLANE_RETENTION_DAYS", 365i64)?.max(7),
         })
     }
 }

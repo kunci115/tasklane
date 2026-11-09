@@ -26,22 +26,27 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
     o.ws.push(&t.service, &url, &branch).await?;
     o.queue.checkpoint(job, &json!({"stage": "pushed"})).await?;
 
-    let item = o.item(&t).await?;
-    let title = format!("{} (#{})", text_of(&item, "title"), t.external_ref);
-    let body = format!("Automated change for #{}.\n\nThis pull request was produced by tasklane and is reviewed and merged by it only after CI passes.", t.external_ref);
-    let pr = o
-        .source
-        .call(
-            "open_pr",
-            json!({"service": t.service, "branch": branch, "base": t.base_branch(), "title": title, "body": body, "token": token}),
-            o.cfg.call_timeout,
-        )
-        .await?;
-    let pr_ref = pr
-        .get("pr")
-        .and_then(Value::as_str)
-        .ok_or_else(|| Error::BadOutput("open_pr without pr".into()))?
-        .to_string();
+    let pr_ref = match &t.pr_ref {
+        // A re-developed branch updates the pull request that already exists.
+        Some(existing) => existing.clone(),
+        None => {
+            let item = o.item(&t).await?;
+            let title = format!("{} (#{})", text_of(&item, "title"), t.external_ref);
+            let body = format!("Automated change for #{}.\n\nThis pull request was produced by tasklane and is reviewed and merged by it only after CI passes.", t.external_ref);
+            let pr = o
+                .source
+                .call(
+                    "open_pr",
+                    json!({"service": t.service, "branch": branch, "base": t.base_branch(), "title": title, "body": body, "token": token}),
+                    o.cfg.call_timeout,
+                )
+                .await?;
+            pr.get("pr")
+                .and_then(Value::as_str)
+                .ok_or_else(|| Error::BadOutput("open_pr without pr".into()))?
+                .to_string()
+        }
+    };
 
     let mut tx = o.begin(job).await?;
     if t.state == State::Queued {
@@ -70,7 +75,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         Actor::Runner,
     )
     .await?;
-    sqlx::query("UPDATE tickets SET pr_ref = $2 WHERE id = $1")
+    sqlx::query("UPDATE tickets SET pr_ref = $2, pushed_head = head_sha WHERE id = $1")
         .bind(t.id)
         .bind(&pr_ref)
         .execute(&mut *tx)

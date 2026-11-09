@@ -184,6 +184,24 @@ async fn the_daily_question_cap_holds_per_group() {
 }
 
 #[tokio::test]
+async fn failed_questions_count_against_the_daily_cap_too() {
+    let Some(e) = env().await else { return };
+    std::fs::write(e.dir.path().join("state/ask_fails"), "").unwrap();
+    for _ in 0..2 {
+        e.bridge.handle_event(&cmd("-100", "1", "ask", "q")).await;
+    }
+    std::fs::remove_file(e.dir.path().join("state/ask_fails")).unwrap();
+    e.bridge
+        .handle_event(&cmd("-100", "1", "ask", "now it would work"))
+        .await;
+    assert!(
+        e.last_text().contains("used its questions for today"),
+        "{}",
+        e.last_text()
+    );
+}
+
+#[tokio::test]
 async fn a_failed_answer_says_so_without_leaking_the_error() {
     let Some(e) = env().await else { return };
     std::fs::write(e.dir.path().join("state/ask_fails"), "").unwrap();

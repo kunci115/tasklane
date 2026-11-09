@@ -16,3 +16,4 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "proces
 axum = "0.8"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "json", "macros", "migrate"] }
 sha2 = "0.10"
+base64 = "0.22"

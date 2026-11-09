@@ -56,17 +56,36 @@ pub fn spawn_workers(
 
 pub fn spawn_reaper(
     orch: &Arc<Orchestrator>,
+    retention_days: i64,
     stop: &watch::Receiver<bool>,
 ) -> tokio::task::JoinHandle<()> {
     let (orch, mut stop) = (orch.clone(), stop.clone());
     tokio::spawn(async move {
+        let mut tick: u64 = 0;
         loop {
-            match orch.queue().reap().await {
-                Ok(r) if r.requeued + r.failed > 0 => {
-                    eprintln!("reaper: {} requeued, {} failed", r.requeued, r.failed)
+            match orch.queue().reap_detailed().await {
+                Ok((r, dead)) => {
+                    if r.requeued + r.failed > 0 {
+                        eprintln!("reaper: {} requeued, {} failed", r.requeued, r.failed);
+                    }
+                    for (job, ticket) in dead {
+                        if let Err(e) = orch
+                            .fail_orphaned(job, ticket, "the worker died or hung on every attempt")
+                            .await
+                        {
+                            eprintln!("reaper: ticket {ticket}: {e}");
+                        }
+                    }
                 }
-                Ok(_) => {}
                 Err(e) => eprintln!("reaper: {e}"),
+            }
+            tick += 1;
+            if tick % 120 == 1 {
+                // hourly housekeeping: leftover checkouts and old bookkeeping rows
+                orch.sweep_workspaces().await;
+                if let Err(e) = orch.prune_old_rows(retention_days).await {
+                    eprintln!("housekeeping: {e}");
+                }
             }
             if sleep_or_stop(Duration::from_secs(30), &mut stop).await {
                 return;

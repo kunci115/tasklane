@@ -40,6 +40,8 @@ type TicketRow = (
     Option<String>,
     Option<String>,
     Option<String>,
+    Option<String>,
+    Option<String>,
 );
 
 fn role_allows(role: &str, level: Level) -> bool {
@@ -73,12 +75,12 @@ pub async fn decide(
         ));
     };
     let row: Option<TicketRow> = sqlx::query_as(
-        "SELECT state, level, plan_hash, branch, pr_ref FROM tickets WHERE id = $1 FOR UPDATE",
+        "SELECT state, level, plan_hash, branch, pr_ref, head_sha, pushed_head FROM tickets WHERE id = $1 FOR UPDATE",
     )
     .bind(ticket_id)
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((state, level, current_hash, branch, pr_ref)) = row else {
+    let Some((state, level, current_hash, branch, pr_ref, head_sha, pushed_head)) = row else {
         return Err(ApprovalError::UnknownTicket);
     };
     let state = State::parse(&state).unwrap_or(State::Failed);
@@ -101,13 +103,12 @@ pub async fn decide(
     let (to, kind) = match decision {
         Decision::Reject => (State::ClosedRejected, None),
         Decision::Approve => {
-            let kind = if pr_ref.is_some() {
-                "merge"
-            } else if branch.is_some() {
-                "pr"
-            } else {
-                "develop"
-            };
+            let kind = resume_kind(
+                branch.as_deref(),
+                pr_ref.as_deref(),
+                head_sha.as_deref(),
+                pushed_head.as_deref(),
+            );
             (State::Queued, Some(kind))
         }
     };
@@ -147,6 +148,92 @@ pub async fn decide(
             .execute(&mut *tx)
             .await?;
     }
+    tx.commit().await?;
+    Ok(to)
+}
+
+/// Which job continues the work after an approval or a retry. Work that exists
+/// only locally must be pushed first; only a pushed, unchanged head can be merged.
+pub fn resume_kind(
+    branch: Option<&str>,
+    pr_ref: Option<&str>,
+    head: Option<&str>,
+    pushed: Option<&str>,
+) -> &'static str {
+    match (branch, pr_ref) {
+        (_, Some(_)) if head.is_some() && head == pushed => "merge",
+        (Some(_), _) => "pr",
+        _ => "develop",
+    }
+}
+
+/// A person puts a failed ticket back to work (or closes it). Attempt counters
+/// start again; the reason of the failure stays on the ticket until work succeeds.
+pub async fn retry_or_close(
+    pool: &PgPool,
+    ticket_id: i64,
+    who: &Principal,
+    close: bool,
+) -> Result<State, ApprovalError> {
+    let mut tx = pool.begin().await?;
+    let role: Option<String> =
+        sqlx::query_scalar("SELECT role FROM principals WHERE channel = $1 AND ref = $2")
+            .bind(&who.channel)
+            .bind(&who.reference)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if !matches!(role.as_deref(), Some("owner") | Some("team_approver")) {
+        return Err(ApprovalError::NotAllowed(
+            "you are not registered as an approver".into(),
+        ));
+    }
+    let row: Option<TicketRow> = sqlx::query_as("SELECT state, level, plan_hash, branch, pr_ref, head_sha, pushed_head FROM tickets WHERE id = $1 FOR UPDATE")
+        .bind(ticket_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let Some((state, _level, _hash, branch, pr_ref, head, pushed)) = row else {
+        return Err(ApprovalError::UnknownTicket);
+    };
+    let state = State::parse(&state).unwrap_or(State::Failed);
+    if state != State::Failed {
+        return Err(ApprovalError::WrongState(state));
+    }
+    let to = if close {
+        State::ClosedRejected
+    } else {
+        State::Queued
+    };
+    transition(State::Failed, to, Actor::Approver)?;
+    sqlx::query("UPDATE tickets SET state = $2, ci_runs = 0, dev_attempts = 0, updated_at = now() WHERE id = $1")
+        .bind(ticket_id)
+        .bind(to.as_str())
+        .execute(&mut *tx)
+        .await?;
+    if !close {
+        let kind = resume_kind(
+            branch.as_deref(),
+            pr_ref.as_deref(),
+            head.as_deref(),
+            pushed.as_deref(),
+        );
+        sqlx::query("INSERT INTO jobs (ticket_id, kind) VALUES ($1, $2)")
+            .bind(ticket_id)
+            .bind(kind)
+            .execute(&mut *tx)
+            .await?;
+    }
+    sqlx::query(
+        "INSERT INTO audit_events (actor, action, ticket_id, detail) VALUES ($1, $2, $3, '{}')",
+    )
+    .bind(format!("{}:{}", who.channel, who.reference))
+    .bind(if close {
+        "ticket.closed_by_person"
+    } else {
+        "ticket.retried_by_person"
+    })
+    .bind(ticket_id)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(to)
 }

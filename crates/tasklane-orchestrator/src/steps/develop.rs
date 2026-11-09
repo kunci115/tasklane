@@ -1,12 +1,71 @@
 use serde_json::{json, Value};
-use tasklane_core::{Actor, Level, State};
+use tasklane_core::{floor_from_text, protected_hits, Actor, Level, State};
 use tasklane_queue::ClaimedJob;
 
 use super::{sha256_hex, text_of};
 use crate::{Error, Orchestrator, RunResult};
 
+/// What a diff needs from a person, by deterministic rules.
+pub(crate) struct DiffCheck {
+    pub lines: usize,
+    pub needs_person: bool,
+    pub reasons: Vec<String>,
+}
+
+pub(crate) fn check_diff(
+    o: &Orchestrator,
+    facts: &Value,
+    diff: &str,
+    files: &[String],
+) -> DiffCheck {
+    let extra: Vec<String> = facts
+        .get("protected_paths")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let hits = protected_hits(files, &extra);
+    let lines = diff
+        .lines()
+        .filter(|l| {
+            (l.starts_with('+') || l.starts_with('-'))
+                && !l.starts_with("+++")
+                && !l.starts_with("---")
+        })
+        .count();
+    let mut reasons = Vec::new();
+    if !hits.is_empty() {
+        reasons.push(format!("touches protected paths: {}", hits.join(", ")));
+    }
+    if lines > o.cfg.max_diff_lines {
+        reasons.push(format!(
+            "diff has {lines} changed lines (limit {})",
+            o.cfg.max_diff_lines
+        ));
+    }
+    if diff.len() > o.cfg.max_diff_bytes {
+        reasons.push(format!(
+            "diff is {} bytes (limit {})",
+            diff.len(),
+            o.cfg.max_diff_bytes
+        ));
+    }
+    DiffCheck {
+        lines,
+        needs_person: !reasons.is_empty(),
+        reasons,
+    }
+}
+
+pub(crate) fn cap(s: &str) -> String {
+    s.chars().take(200_000).collect()
+}
+
 /// Runs the development agent in a fresh worktree, commits what it did, scores
-/// the real diff, and either asks for approval again or hands over to the PR step.
+/// the real diff, and either asks for approval of that exact diff or hands over to the PR step.
 pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult, Error> {
     let t = o.load_ticket(job.ticket_id).await?;
     if !matches!(t.state, State::Queued | State::Developing) {
@@ -61,6 +120,68 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         tx.commit().await?;
     }
 
+    // The ticket may have been edited, or commented on, since it was triaged and approved.
+    // Run the text rules again on what the agent is about to read.
+    let item = o.item(&t).await?;
+    let (title, body) = (text_of(&item, "title"), text_of(&item, "body"));
+    let comments = item
+        .get("comments")
+        .cloned()
+        .unwrap_or(Value::Array(vec![]));
+    let comment_text: String = comments
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|c| c.get("body").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_default();
+    let (text_floor, text_why) = floor_from_text(&format!("{title}\n{body}\n{comment_text}"));
+    if text_floor.needs_human() && t.level.is_none_or(|l| text_floor > l) {
+        let level = text_floor.max(t.level.unwrap_or(Level::L1));
+        let mut tx = o.begin(job).await?;
+        o.set_state(
+            &mut tx,
+            t.id,
+            State::Developing,
+            State::Rescoring,
+            Actor::Orchestrator,
+        )
+        .await?;
+        o.set_state(
+            &mut tx,
+            t.id,
+            State::Rescoring,
+            State::AwaitingApproval,
+            Actor::Runner,
+        )
+        .await?;
+        let text = format!("{title}\n{body}\n{comment_text}");
+        sqlx::query("UPDATE tickets SET level = $2, level_reasons = $3, plan_hash = $4, plan_text = $5 WHERE id = $1")
+            .bind(t.id)
+            .bind(i16::from(u8::from(level)))
+            .bind(json!(text_why))
+            .bind(sha256_hex(&text))
+            .bind(cap(&format!("The ticket text changed after triage and now matches: {}.\n\n{text}", text_why.join(", "))))
+            .execute(&mut *tx)
+            .await?;
+        o.audit(
+            &mut tx,
+            t.id,
+            "ticket.text_changed",
+            json!({"level": u8::from(level), "reasons": text_why}),
+        )
+        .await?;
+        o.finish_job(&mut tx, job).await?;
+        tx.commit().await?;
+        o.say(&t, &format!("The ticket text changed since it was approved and now matches: {}. It needs approval again before I change anything.", text_why.join(", "))).await;
+        return Ok(RunResult::Moved {
+            ticket_id: t.id,
+            to: State::AwaitingApproval,
+        });
+    }
+
     let base = t.base_branch();
     let branch = t.work_branch();
     let read_token = o.run_token(&t, &["contents:read"]).await?;
@@ -72,16 +193,13 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         .checkpoint(job, &json!({"stage": "workspace"}))
         .await?;
 
-    let item = o.item(&t).await?;
-    let (title, body) = (text_of(&item, "title"), text_of(&item, "body"));
     let out = o
         .engine
         .call(
             "run",
             json!({
                 "role": "dev",
-                "ticket": {"service": t.service, "ref": t.external_ref, "title": title, "body": body,
-                           "comments": item.get("comments").cloned().unwrap_or(Value::Array(vec![]))},
+                "ticket": {"service": t.service, "ref": t.external_ref, "title": title, "body": body, "comments": comments},
                 "profile": t.agent_profile,
                 "workspace": prepared.worktree,
                 "feedback": t.last_error,
@@ -90,7 +208,14 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
             }),
             o.cfg.dev_timeout,
         )
-        .await?;
+        .await;
+    let out = match out {
+        Ok(v) => v,
+        Err(e) => {
+            o.ws.remove_worktree(&prepared).await;
+            return Err(e.into());
+        }
+    };
     let summary = out
         .get("summary")
         .and_then(Value::as_str)
@@ -99,11 +224,12 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
 
     let committed =
         o.ws.commit_all(
-            &prepared.worktree,
+            &prepared,
             &format!("tasklane: {title} ({})", t.external_ref),
         )
-        .await?;
+        .await;
     o.ws.remove_worktree(&prepared).await;
+    let committed = committed?;
     if !committed && o.ws.diff(&t.service, &base, &branch).await?.0.is_empty() {
         return Err(Error::BadOutput(
             "the development agent made no change".into(),
@@ -115,49 +241,16 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         .checkpoint(job, &json!({"stage": "committed", "head": head}))
         .await?;
 
-    // Re-score the real diff with deterministic rules.
-    let protected: Vec<String> = t
-        .facts
-        .get("protected_paths")
-        .and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
-    let hit: Vec<&String> = files
-        .iter()
-        .filter(|f| protected.iter().any(|p| f.starts_with(p.as_str())))
-        .collect();
-    let lines = diff
-        .lines()
-        .filter(|l| {
-            (l.starts_with('+') || l.starts_with('-'))
-                && !l.starts_with("+++")
-                && !l.starts_with("---")
-        })
-        .count();
-    let mut level = t.level.unwrap_or(Level::L2);
-    let mut why: Vec<String> = Vec::new();
-    if !hit.is_empty() {
-        level = level.max(Level::L2);
-        why.push(format!(
-            "touches protected paths: {}",
-            hit.iter()
-                .map(|s| s.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
-    }
-    if lines > o.cfg.max_diff_lines {
-        level = level.max(Level::L2);
-        why.push(format!(
-            "diff has {lines} changed lines (limit {})",
-            o.cfg.max_diff_lines
-        ));
-    }
-    let raised = level > t.level.unwrap_or(Level::L1) && level.needs_human();
+    // Re-score the real diff with deterministic rules. A diff that needs a person
+    // is approved as that exact diff, whatever was approved before.
+    let chk = check_diff(o, &t.facts, &diff, &files);
+    let diff_hash = sha256_hex(&diff);
+    let ask = chk.needs_person && t.plan_hash.as_deref() != Some(diff_hash.as_str());
+    let level = if chk.needs_person {
+        t.level.unwrap_or(Level::L2).max(Level::L2)
+    } else {
+        t.level.unwrap_or(Level::L1)
+    };
 
     let mut tx = o.begin(job).await?;
     o.set_state(
@@ -168,14 +261,14 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         Actor::Orchestrator,
     )
     .await?;
-    sqlx::query("UPDATE tickets SET branch = $2, head_sha = $3, last_error = NULL WHERE id = $1")
+    sqlx::query("UPDATE tickets SET branch = $2, head_sha = $3, last_error = NULL, diff_text = $4 WHERE id = $1")
         .bind(t.id)
         .bind(&branch)
         .bind(&head)
+        .bind(cap(&diff))
         .execute(&mut *tx)
         .await?;
-    let to = if raised {
-        // The approval on file covered a plan, not this diff. Ask again, bound to this diff.
+    let to = if ask {
         o.set_state(
             &mut tx,
             t.id,
@@ -187,7 +280,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         sqlx::query("UPDATE tickets SET level = $2, plan_hash = $3 WHERE id = $1")
             .bind(t.id)
             .bind(i16::from(u8::from(level)))
-            .bind(sha256_hex(&diff))
+            .bind(&diff_hash)
             .execute(&mut *tx)
             .await?;
         State::AwaitingApproval
@@ -195,12 +288,12 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         o.enqueue(&mut tx, t.id, "pr", 0.0).await?;
         State::Rescoring
     };
-    o.audit(&mut tx, t.id, "ticket.developed", json!({"files": files, "lines": lines, "level": u8::from(level), "reasons": why, "to": to.as_str()})).await?;
+    o.audit(&mut tx, t.id, "ticket.developed", json!({"files": files, "lines": chk.lines, "level": u8::from(level), "reasons": chk.reasons, "to": to.as_str()})).await?;
     o.finish_job(&mut tx, job).await?;
     tx.commit().await?;
 
-    if raised {
-        o.say(&t, &format!("The change is ready but {}. A person with the right role must approve this exact change before I open a pull request.\n\nSummary: {summary}", why.join("; "))).await;
+    if ask {
+        o.say(&t, &format!("The change is ready but {}. A person with the right role must approve this exact change (see the console) before I open a pull request.\n\nSummary: {summary}", chk.reasons.join("; "))).await;
     }
     Ok(RunResult::Moved {
         ticket_id: t.id,

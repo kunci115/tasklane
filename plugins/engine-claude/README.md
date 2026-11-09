@@ -81,3 +81,7 @@ flag, so it is not used.
 - Direct mode does not stop the dev role reaching the network through allowed tools beyond what
   the CLI permission rules block.
 - The model provider sees the prompts (threat model T6).
+
+## Sandbox gate
+
+Every role refuses to run unless `TASKLANE_SANDBOX=docker` or `TASKLANE_ALLOW_UNSANDBOXED=1` (exactly `1`). Without the sandbox the CLI runs as the same user as its parent and can read the parent's environment and files. A reviewer asked to judge a diff longer than 200,000 characters answers `escalate` instead of approving something it did not fully read. Results have known token shapes (GitHub, Anthropic, AWS, private keys, URLs with credentials) and configured credentials removed.

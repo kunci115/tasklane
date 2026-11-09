@@ -223,22 +223,36 @@ impl Queue {
 
     /// Free every job whose lease ran out. Safe to run from many processes.
     pub async fn reap(&self) -> Result<ReapReport, Error> {
-        let rows: Vec<(String,)> = sqlx::query_as(
+        Ok(self.reap_detailed().await?.0)
+    }
+
+    /// Like `reap`, and also returns `(job id, ticket id)` of every job that was
+    /// failed for good, so the caller can fail the ticket and tell a person.
+    pub async fn reap_detailed(&self) -> Result<(ReapReport, Vec<(i64, i64)>), Error> {
+        let rows: Vec<(String, i64, i64)> = sqlx::query_as(
             "UPDATE jobs
              SET status = CASE WHEN attempts >= $1 THEN 'failed' ELSE 'queued' END,
                  run_after = now() + make_interval(secs => LEAST(10 * power(2, GREATEST(attempts - 1, 0)), 3600)),
                  lease_owner = NULL, lease_until = NULL
              WHERE status = 'running' AND lease_until < now()
-             RETURNING status",
+             RETURNING status, id, ticket_id",
         )
         .bind(self.max_attempts)
         .fetch_all(&self.pool)
         .await?;
-        let failed = rows.iter().filter(|(s,)| s == "failed").count() as u64;
-        Ok(ReapReport {
-            requeued: rows.len() as u64 - failed,
-            failed,
-        })
+        let dead: Vec<(i64, i64)> = rows
+            .iter()
+            .filter(|(s, _, _)| s == "failed")
+            .map(|(_, j, t)| (*j, *t))
+            .collect();
+        let failed = dead.len() as u64;
+        Ok((
+            ReapReport {
+                requeued: rows.len() as u64 - failed,
+                failed,
+            },
+            dead,
+        ))
     }
 }
 

@@ -8,7 +8,7 @@ use crate::{Error, Orchestrator};
 impl Orchestrator {
     /// Answer `question` about `service` (a registry `external_id`). `asker` is
     /// only recorded in the audit log.
-    pub async fn ask(&self, service: &str, question: &str, asker: &str) -> Result<String, Error> {
+    pub async fn ask(&self, service: &str, question: &str, _asker: &str) -> Result<String, Error> {
         let row: Option<(i64, Value, Value)> = sqlx::query_as("SELECT id, facts, agent_profile FROM services WHERE source = $1 AND external_id = $2 AND NOT archived")
             .bind(&self.cfg.source_name)
             .bind(service)
@@ -73,11 +73,6 @@ impl Orchestrator {
             .and_then(Value::as_str)
             .ok_or_else(|| Error::BadOutput("ask without answer".into()))?
             .to_string();
-        sqlx::query("INSERT INTO audit_events (actor, action, detail) VALUES ($1, 'chat.ask', $2)")
-            .bind(asker)
-            .bind(json!({"service": service, "question_chars": question.chars().count()}))
-            .execute(&self.pool)
-            .await?;
         Ok(answer)
     }
 }

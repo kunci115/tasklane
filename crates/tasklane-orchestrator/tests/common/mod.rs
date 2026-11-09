@@ -109,7 +109,7 @@ pub async fn world(pool: PgPool, tweak: impl FnOnce(&mut Config)) -> World {
         &format!("git init -q --bare -b main {}", remote.display()),
     );
     let seed = dir.path().join("seed");
-    sh(dir.path(), &format!("git init -q -b main {0} && cd {0} && git config user.email a@b.c && git config user.name t && echo hi > README && git add . && git commit -q -m init && git push -q {1} main", seed.display(), remote.display()));
+    sh(dir.path(), &format!("git init -q -b main {0} && cd {0} && git config user.email a@b.c && git config user.name t && echo hi > README && mkdir -p .github/workflows && echo 'on: push' > .github/workflows/ci.yml && git add . && git commit -q -m init && git push -q {1} main", seed.display(), remote.display()));
 
     let env = [
         (

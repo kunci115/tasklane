@@ -54,25 +54,28 @@ Everything is an environment variable. The daemon refuses to start with a clear 
 | `TASKLANE_USER_DAILY_LIMIT` | no | Reports per reporter per day, default 10. |
 | `TASKLANE_SYNC_SECS` | no | Polling interval for the sync backstop, default 60, minimum 5. |
 | `TASKLANE_SOURCE_NAME` | no | Registry name of the source, default `github`. |
+| `TASKLANE_RETENTION_DAYS` | no | Audit rows older than this are deleted (default 365, minimum 7). Finished jobs are deleted after 30 days. |
 | `TASKLANE_ALLOW_NO_CHECKS` | no | `1` treats a pull request with no CI checks as green. Default off. |
 
-Plug-in specific variables are documented in `plugins/source-github/README.md` and `plugins/engine-claude/README.md`.
+The agent-engine plug-in has its own switch, `TASKLANE_ALLOW_UNSANDBOXED=1`, explained in section 7. Plug-in specific variables are documented in `plugins/source-github/README.md` and `plugins/engine-claude/README.md`.
 
 ## 3. How a repository becomes active
 
 1. The sync job lists every repository the App can see. New ones start in **triage** mode (archived ones in **watch**).
 2. New issues in a **triage** repository are read and planned by the agent. Nothing is changed until a person approves a ticket; the **first approval turns the repository to full mode** automatically.
-3. In **full** mode, a ticket that the rules and the agent both rate level 1 runs through to a merge without a person. Levels 2 and 3 wait for approval first.
+3. In **full** mode, a ticket that the rules and the agent both rate level 1 runs through to a merge without a person, **if its author is a collaborator** (owner, member or collaborator of the repository, or tasklane itself acting for a reporter). An issue from anyone else always waits for approval. Levels 2 and 3 wait for approval first.
 4. Change a repository's mode at any time in the console, under "Repositories". **watch** stops all activity for it.
 
 Issues that existed before you installed the App are not imported (the first poll only sets a baseline). Create a new issue, or use the report button.
 
 ## 4. Approving, pausing, failing
 
-- A ticket that needs a person shows as **waiting for approval** in the console and carries a comment on the issue. The approval is bound to a hash of the exact plan or diff shown; if the plan changes, the old approval is refused.
+- A ticket that needs a person shows as **waiting for approval** in the console and carries a comment on the issue. The ticket page shows the plan and, once there is one, the full diff. The approval is bound to a hash of exactly that text; if it changes, the old approval is refused.
+- **Approvals are asked for twice when needed.** A plan can be approved, and then the developed change still stops for approval of the diff itself if it touches protected paths (CI config, Dockerfiles, migrations, secrets, infrastructure, and a repository's own list) or is large. The ticket text is also scored again just before development, so a comment added after approval cannot smuggle in a riskier job.
+- The protected-path rules always apply, even for a repository whose own list is empty; a repository's list only adds to them (`crates/tasklane-core/src/paths.rs`). Moving a protected file away counts as touching it.
 - Levels: 1 runs by itself, 2 needs a `team_approver` or `owner`, 3 needs an `owner`. The console admin is an owner. Add people in the `principals` table (`channel`, `ref`, `role`).
 - **Pause everything** in the console stops all job pickup instantly; running jobs finish their current step. Resume restarts.
-- A ticket that cannot continue (CI red twice, the agent changed nothing three times, a branch that moved under review) goes to **failed**, with the reason on the ticket. Nothing retries forever.
+- A ticket that cannot continue (CI red twice, the agent changed nothing three times, a branch that moved under review, a worker that kept dying) goes to **failed**. The public issue only says that a person is needed; the reason is in the console, where **Try again** and **Close it** are on the ticket page. Nothing retries forever.
 
 ## 5. The report button (for your own apps)
 
@@ -109,12 +112,17 @@ Anyone in a registered group can read what `/ask` can read from that repository.
 
 ## 7. Security model and honest limits
 
-- Agents hold no tokens, never push, never merge. The daemon pushes and merges with per-run tokens.
-- Risk levels come from fixed rules on the ticket text and the real diff (protected paths, size); the model can raise a level, never lower it. The rules are starting defaults in `crates/tasklane-core/src/floor.rs` and are deliberately broad.
-- Ticket text, comments, diffs and chat messages are treated as untrusted input.
-- **The development agent runs code-editing tools on your server. By default (`TASKLANE_SANDBOX` unset) it runs as the same user and in the same container as the daemon, which holds the database URL and tokens in its environment and files. Do not run untrusted repositories or untrusted reporters that way.** Use the Docker sandbox mode of the engine plug-in (`plugins/engine-claude/README.md`) with an egress-limited network, or run tasklane on a host that holds nothing else.
+- Agents hold no tokens, never push, never merge. The daemon pushes and merges with per-run tokens, passed to git through its environment, not on a command line. Git never runs inside the agent's directory in the ordinary way: it is pointed at a trusted git directory with every program-running config key switched off.
+- Risk levels come from fixed rules on the ticket text and the real diff; the model can raise a level, never lower it. The rules are starting defaults in `crates/tasklane-core/src/floor.rs` and `paths.rs`, deliberately broad.
+- Ticket text, comments, diffs and chat messages are untrusted input.
+- **The agent engine refuses to run without a sandbox.** Every role runs model-driven file tools on your server. Without isolation they run as the daemon's user and can read its environment, its database URL and its keys (for example through `/proc`), and a question in a chat group could return them. Either:
+  - set `TASKLANE_SANDBOX=docker` (plus `TASKLANE_SANDBOX_IMAGE` and `TASKLANE_SANDBOX_NETWORK`; see `plugins/engine-claude/README.md`), which needs the Docker socket and an egress-limited network and has so far only been checked by its command line, never by a real run; or
+  - set `TASKLANE_ALLOW_UNSANDBOXED=1`, only on a host that holds nothing else, with repositories and reporters you fully trust.
+  Answers returned to chat have known token shapes and configured keys removed, which is a safety net, not a boundary.
+- Anyone who can open an issue on a repository tasklane watches can cause **triage** (a read-only model run, so cost). Their tickets never run unattended, but there is no spam limit on issues created directly on the source; use the source's own controls (private repositories, restricted issue creation).
 - The shipped plug-ins are tested against fakes (a fake GitHub API, a fake Claude CLI, a fake Telegram API). Nothing in this repository has been verified against the live services; do a supervised dry run on a throwaway repository first.
-- Logs go to stderr and contain job and ticket ids, not secrets. There are no metrics endpoints yet.
+- The console signs in with one admin token and uses server-side sessions (8 hours, random id, per-session form token, sign-out, lockout after five wrong tokens). It has no user accounts: everyone who has the token is the owner.
+- Logs go to stderr and contain job and ticket ids, not secrets. There are no metrics endpoints yet. A plug-in that crashes is started again on the next call; `/readyz` only checks the database.
 
 ## 8. Backup, upgrade, troubleshooting
 

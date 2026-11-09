@@ -141,6 +141,29 @@ impl Orchestrator {
         if archived || mode == "watch" {
             return Ok(Noted::Nothing);
         }
+        let known: Option<i64> = sqlx::query_scalar(
+            "SELECT id FROM tickets WHERE service_id = $1 AND external_ref = $2",
+        )
+        .bind(service_id)
+        .bind(reference)
+        .fetch_optional(&self.pool)
+        .await?;
+        if known.is_none() {
+            // Only open issues become tickets: not pull requests (events for them look like issues), not closed ones.
+            let item = self
+                .source
+                .call(
+                    "get_item",
+                    json!({"service": service, "ref": reference}),
+                    self.cfg.call_timeout,
+                )
+                .await?;
+            if item.get("is_pull_request").and_then(Value::as_bool) == Some(true)
+                || item.get("state").and_then(Value::as_str) == Some("closed")
+            {
+                return Ok(Noted::Nothing);
+            }
+        }
         let mut tx = self.pool.begin().await?;
         let created: Option<(i64,)> = sqlx::query_as(
             "INSERT INTO tickets (service_id, external_ref) VALUES ($1, $2)

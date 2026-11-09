@@ -36,6 +36,8 @@ pub struct Config {
     pub max_dev_attempts: i16,
     /// A diff with more changed lines than this raises the level to at least 2.
     pub max_diff_lines: usize,
+    /// A diff larger than this many bytes counts as big too (long lines cannot hide in few lines).
+    pub max_diff_bytes: usize,
     /// Treat a pull request with no checks at all as green. Off by default: a PR
     /// whose checks have not registered yet must not be merged on an empty list.
     pub allow_no_checks: bool,
@@ -58,6 +60,7 @@ impl Config {
             max_ci_runs: 2,
             max_dev_attempts: 3,
             max_diff_lines: 800,
+            max_diff_bytes: 200_000,
             allow_no_checks: false,
             token_ttl_secs: 3600,
         }
@@ -201,6 +204,17 @@ impl Orchestrator {
         else {
             return Ok(RunResult::Idle);
         };
+        // A repository switched to `watch` stops all activity, including tickets already in flight.
+        let mode: Option<String> = sqlx::query_scalar(
+            "SELECT s.mode FROM tickets t JOIN services s ON s.id = t.service_id WHERE t.id = $1",
+        )
+        .bind(job.ticket_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        if mode.as_deref() == Some("watch") {
+            self.queue.defer(&job, 120.0).await?;
+            return Ok(RunResult::Waiting);
+        }
         let work = async {
             match job.kind.as_str() {
                 "triage" => steps::triage::run(self, &job).await,
@@ -447,6 +461,65 @@ impl Orchestrator {
         )
         .await;
         Ok(RunResult::GaveUp)
+    }
+
+    /// Fail a ticket whose last job was given up by the reaper (the worker kept dying).
+    pub async fn fail_orphaned(
+        &self,
+        job_id: i64,
+        ticket_id: i64,
+        reason: &str,
+    ) -> Result<(), Error> {
+        let t = self.load_ticket(ticket_id).await?;
+        if t.state.is_terminal() || t.state == State::Failed {
+            return Ok(());
+        }
+        let mut tx = self.pool.begin().await?;
+        if self
+            .set_state(&mut tx, t.id, t.state, State::Failed, Actor::Orchestrator)
+            .await
+            .is_err()
+        {
+            return Ok(());
+        }
+        sqlx::query("UPDATE tickets SET last_error = $2 WHERE id = $1")
+            .bind(t.id)
+            .bind(reason)
+            .execute(&mut *tx)
+            .await?;
+        self.audit(
+            &mut tx,
+            t.id,
+            "ticket.failed",
+            json!({"from": t.state.as_str(), "job": job_id, "reason": reason}),
+        )
+        .await?;
+        tx.commit().await?;
+        self.say(
+            &t,
+            "tasklane stopped on this ticket and needs a person. The details are in the console.",
+        )
+        .await;
+        Ok(())
+    }
+
+    /// Remove checkouts left behind by crashed runs.
+    pub async fn sweep_workspaces(&self) {
+        self.ws.sweep(Duration::from_secs(3600)).await;
+    }
+
+    /// Old bookkeeping rows: finished jobs, audit events, console sessions, chat hints.
+    pub async fn prune_old_rows(&self, retention_days: i64) -> Result<(), Error> {
+        sqlx::query("DELETE FROM audit_events WHERE at < now() - make_interval(days => $1::int)")
+            .bind(retention_days)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM jobs WHERE status IN ('done','failed') AND created_at < now() - interval '30 days'").execute(&self.pool).await?;
+        sqlx::query("DELETE FROM console_sessions WHERE expires_at < now()")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM sync_state WHERE key LIKE 'chat_hint:%' AND updated_at < now() - interval '7 days'").execute(&self.pool).await?;
+        Ok(())
     }
 
     /// Post a short status on the ticket. Never fails the step.

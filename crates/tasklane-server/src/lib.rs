@@ -20,6 +20,8 @@ pub struct AppState {
     pub jwt_secrets: HashMap<String, String>,
     pub user_daily_limit: i64,
     pub secure_cookies: bool,
+    /// (failed sign-ins, when the count started)
+    pub login_throttle: std::sync::Mutex<(u32, std::time::Instant)>,
 }
 
 pub fn now_unix() -> i64 {

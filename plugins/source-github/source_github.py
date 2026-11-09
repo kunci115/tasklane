@@ -437,6 +437,33 @@ def op_list_changes(params):
             "cursor": json.dumps({"base": cur["base"], "repos": new_repos}, sort_keys=True)}
 
 
+_app_login = {"value": None}
+
+
+def own_bot_login():
+    """Login of this App's bot user (issues created through tasklane are authored by it)."""
+    if _app_login["value"] is None:
+        slug = (api("GET", "/app", auth=make_jwt()).data or {}).get("slug", "")
+        _app_login["value"] = f"{slug}[bot]" if slug else ""
+    return _app_login["value"]
+
+
+TRUSTED_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
+
+
+def author_trusted(issue):
+    """True for people with a real relationship to the repository and for tasklane's own
+    issues (created from the report button or chat, where the gateway already checked the reporter)."""
+    user = issue.get("user") or {}
+    if issue.get("author_association") in TRUSTED_ASSOCIATIONS:
+        return True
+    try:
+        mine = own_bot_login()
+    except PluginError:
+        return False
+    return bool(mine) and user.get("login") == mine
+
+
 def op_get_item(params):
     svc, ref = p_service(params), p_num(params, "ref")
     issue = app_api("GET", f"/repos/{svc}/issues/{ref}").data or {}
@@ -445,6 +472,8 @@ def op_get_item(params):
             "author": (issue.get("user") or {}).get("login", ""),
             "labels": [l["name"] if isinstance(l, dict) else str(l) for l in issue.get("labels", [])],
             "state": "closed" if issue.get("state") == "closed" else "open",
+            "is_pull_request": "pull_request" in issue,
+            "author_trusted": author_trusted(issue),
             "comments": [{"author": (c.get("user") or {}).get("login", ""),
                           "body": c.get("body") or "", "at": c.get("created_at", "")}
                          for c in comments]}
@@ -587,7 +616,16 @@ def op_open_pr(params):
     svc, tok = p_service(params), need_token(params)
     body = {"title": p_str(params, "title"), "head": p_str(params, "branch"),
             "base": p_str(params, "base"), "body": params.get("body") or ""}
-    d = api("POST", f"/repos/{svc}/pulls", auth=tok, body=body).data or {}
+    try:
+        d = api("POST", f"/repos/{svc}/pulls", auth=tok, body=body).data or {}
+    except PluginError as e:
+        if e.status != 422 or "already exists" not in e.message.lower():
+            raise
+        owner = svc.split("/")[0]
+        found = api("GET", f"/repos/{svc}/pulls?state=open&head={q(owner)}:{q(body['head'])}", auth=tok).data or []
+        if not found:
+            raise
+        d = found[0]
     return {"pr": str(d["number"])}
 
 
@@ -622,7 +660,12 @@ def op_merge_pr(params):
     head = (d.get("head") or {}).get("sha")
     if head != expected:
         return {"merged": False, "reason": "head_moved"}
-    if d.get("merged") or d.get("state") == "closed":
+    if d.get("merged"):
+        out = {"merged": True}
+        if d.get("merge_commit_sha"):
+            out["sha"] = d["merge_commit_sha"]
+        return out
+    if d.get("state") == "closed":
         return {"merged": False, "reason": "not_mergeable"}
     try:
         r = api("PUT", f"/repos/{svc}/pulls/{pr}/merge", auth=tok,
@@ -673,9 +716,13 @@ def op_verify_webhook(params):
         raise permanent(f"webhook event '{event}' has no repository")
     action = payload.get("action")
     if event == "issues":
+        if "pull_request" in (payload.get("issue") or {}):
+            raise permanent("pull request is not a ticket event")
         ref = payload.get("issue", {}).get("number")
         kind = "label" if action in ("labeled", "unlabeled") else "issue"
     elif event == "issue_comment":
+        if "pull_request" in (payload.get("issue") or {}):
+            raise permanent("comment on a pull request is not a ticket event")
         ref, kind = payload.get("issue", {}).get("number"), "comment"
     elif event == "pull_request":
         ref = (payload.get("pull_request") or {}).get("number") or payload.get("number")

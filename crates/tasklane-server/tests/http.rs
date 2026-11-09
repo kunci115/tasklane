@@ -16,7 +16,7 @@ use sqlx::{ConnectOptions, PgPool};
 use tasklane_orchestrator::host::{PluginClient, PluginSpec};
 use tasklane_orchestrator::{Config, Orchestrator, RunResult};
 use tasklane_queue::Queue;
-use tasklane_server::auth::{hmac_hex, sign_hs256};
+use tasklane_server::auth::sign_hs256;
 use tasklane_server::{api, console, now_unix, AppState};
 use tower::ServiceExt;
 
@@ -33,6 +33,8 @@ struct Env {
     app: Router,
     orch: Arc<Orchestrator>,
     dir: tempfile::TempDir,
+    cookie: String,
+    csrf: String,
 }
 
 async fn env() -> Option<Env> {
@@ -98,13 +100,30 @@ async fn env() -> Option<Env> {
         jwt_secrets: HashMap::from([("shop".to_string(), SECRET.to_string())]),
         user_daily_limit: 2,
         secure_cookies: false,
+        login_throttle: std::sync::Mutex::new((0, std::time::Instant::now())),
     });
     let app = api::routes().merge(console::routes()).with_state(state);
+    let (st, h, _) = send(&app, form("/login", format!("token={ADMIN}"), None)).await;
+    assert_eq!(st, StatusCode::SEE_OTHER);
+    let cookie = h[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let csrf: String = sqlx::query_scalar("SELECT csrf FROM console_sessions WHERE id = $1")
+        .bind(cookie.trim_start_matches("tl="))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     Some(Env {
         pool,
         app,
         orch,
         dir,
+        cookie,
+        csrf,
     })
 }
 
@@ -133,12 +152,6 @@ fn report(tok: &str, title: &str) -> Request<Body> {
             json!({"title": title, "body": "it broke"}).to_string(),
         ))
         .unwrap()
-}
-fn csrf() -> String {
-    hmac_hex(ADMIN.as_bytes(), "csrf")
-}
-fn session() -> String {
-    format!("tl={}", hmac_hex(ADMIN.as_bytes(), "session"))
 }
 fn form(path: &str, body: String, cookie: Option<String>) -> Request<Body> {
     let mut r =
@@ -331,7 +344,7 @@ async fn the_console_needs_the_admin_token() {
         "{cookie}"
     );
     assert_eq!(
-        send(&e.app, get("/", Some(session()))).await.0,
+        send(&e.app, get("/", Some(e.cookie.clone()))).await.0,
         StatusCode::OK
     );
 }
@@ -341,7 +354,7 @@ async fn ticket_text_is_escaped_in_the_console() {
     let Some(e) = env().await else { return };
     sqlx::query("INSERT INTO tickets (service_id, external_ref, title) SELECT id, '1', '<script>alert(1)</script>' FROM services WHERE external_id = 'org/repo'")
         .execute(&e.pool).await.unwrap();
-    let (_, _, home) = send(&e.app, get("/", Some(session()))).await;
+    let (_, _, home) = send(&e.app, get("/", Some(e.cookie.clone()))).await;
     assert!(
         home.contains("&lt;script&gt;alert(1)&lt;/script&gt;") && !home.contains("<script>alert"),
         "{home}"
@@ -353,9 +366,12 @@ async fn approving_in_the_console_needs_csrf_and_the_current_plan_then_work_star
     let Some(e) = env().await else { return };
     let (t,): (i64,) = sqlx::query_as("INSERT INTO tickets (service_id, external_ref, state, level, plan_hash) SELECT id, '7', 'awaiting_approval', 2, 'abc123' FROM services WHERE external_id = 'org/repo' RETURNING id")
         .fetch_one(&e.pool).await.unwrap();
-    let page = send(&e.app, get(&format!("/tickets/{t}"), Some(session())))
-        .await
-        .2;
+    let page = send(
+        &e.app,
+        get(&format!("/tickets/{t}"), Some(e.cookie.clone())),
+    )
+    .await
+    .2;
     assert!(page.contains("Approve") && page.contains("abc123"));
 
     let path = format!("/tickets/{t}/decide");
@@ -365,7 +381,7 @@ async fn approving_in_the_console_needs_csrf_and_the_current_plan_then_work_star
             form(
                 &path,
                 "csrf=nope&plan_hash=abc123&decision=approve".into(),
-                Some(session())
+                Some(e.cookie.clone())
             )
         )
         .await
@@ -377,7 +393,7 @@ async fn approving_in_the_console_needs_csrf_and_the_current_plan_then_work_star
             &e.app,
             form(
                 &path,
-                format!("csrf={}&plan_hash=abc123&decision=approve", csrf()),
+                format!("csrf={}&plan_hash=abc123&decision=approve", e.csrf),
                 None
             )
         )
@@ -390,8 +406,8 @@ async fn approving_in_the_console_needs_csrf_and_the_current_plan_then_work_star
         &e.app,
         form(
             &path,
-            format!("csrf={}&plan_hash=stale&decision=approve", csrf()),
-            Some(session()),
+            format!("csrf={}&plan_hash=stale&decision=approve", e.csrf),
+            Some(e.cookie.clone()),
         ),
     )
     .await;
@@ -409,8 +425,8 @@ async fn approving_in_the_console_needs_csrf_and_the_current_plan_then_work_star
             &e.app,
             form(
                 &path,
-                format!("csrf={}&plan_hash=abc123&decision=approve", csrf()),
-                Some(session())
+                format!("csrf={}&plan_hash=abc123&decision=approve", e.csrf),
+                Some(e.cookie.clone())
             )
         )
         .await
@@ -437,15 +453,18 @@ async fn pause_stops_all_work_and_resume_restarts_it() {
     let t: i64 = sqlx::query_scalar("INSERT INTO tickets (service_id, external_ref) SELECT id, '9' FROM services WHERE external_id = 'org/repo' RETURNING id").fetch_one(&e.pool).await.unwrap();
     e.orch.queue().enqueue(t, "triage", 0, 0.0).await.unwrap();
     assert_eq!(
-        send(&e.app, form("/pause", "csrf=bad".into(), Some(session())))
-            .await
-            .0,
+        send(
+            &e.app,
+            form("/pause", "csrf=bad".into(), Some(e.cookie.clone()))
+        )
+        .await
+        .0,
         StatusCode::FORBIDDEN
     );
     assert_eq!(
         send(
             &e.app,
-            form("/pause", format!("csrf={}", csrf()), Some(session()))
+            form("/pause", format!("csrf={}", e.csrf), Some(e.cookie.clone()))
         )
         .await
         .0,
@@ -459,7 +478,11 @@ async fn pause_stops_all_work_and_resume_restarts_it() {
     assert_eq!(
         send(
             &e.app,
-            form("/resume", format!("csrf={}", csrf()), Some(session()))
+            form(
+                "/resume",
+                format!("csrf={}", e.csrf),
+                Some(e.cookie.clone())
+            )
         )
         .await
         .0,
@@ -481,8 +504,8 @@ async fn changing_a_repository_mode_is_audited_and_validated() {
             &e.app,
             form(
                 &path,
-                format!("csrf={}&mode=turbo", csrf()),
-                Some(session())
+                format!("csrf={}&mode=turbo", e.csrf),
+                Some(e.cookie.clone())
             )
         )
         .await
@@ -494,8 +517,8 @@ async fn changing_a_repository_mode_is_audited_and_validated() {
             &e.app,
             form(
                 &path,
-                format!("csrf={}&mode=triage", csrf()),
-                Some(session())
+                format!("csrf={}&mode=triage", e.csrf),
+                Some(e.cookie.clone())
             )
         )
         .await
@@ -514,4 +537,170 @@ async fn changing_a_repository_mode_is_audited_and_validated() {
             .await
             .unwrap();
     assert_eq!(n, 1);
+}
+
+#[tokio::test]
+async fn each_sign_in_gets_its_own_random_session_and_csrf_token() {
+    let Some(e) = env().await else { return };
+    let (_, h2, _) = send(&e.app, form("/login", format!("token={ADMIN}"), None)).await;
+    let second = h2[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    assert_ne!(second, e.cookie);
+    let csrf2: String = sqlx::query_scalar("SELECT csrf FROM console_sessions WHERE id = $1")
+        .bind(second.trim_start_matches("tl="))
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert_ne!(csrf2, e.csrf);
+    // a form token from one session does not work in another
+    assert_eq!(
+        send(
+            &e.app,
+            form("/pause", format!("csrf={}", e.csrf), Some(second.clone()))
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        send(
+            &e.app,
+            form("/pause", format!("csrf={csrf2}"), Some(second))
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+}
+
+#[tokio::test]
+async fn signing_out_ends_the_session_on_the_server_and_expired_sessions_stop_working() {
+    let Some(e) = env().await else { return };
+    assert_eq!(
+        send(&e.app, get("/", Some(e.cookie.clone()))).await.0,
+        StatusCode::OK
+    );
+    sqlx::query("UPDATE console_sessions SET expires_at = now() - interval '1 second'")
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        send(&e.app, get("/", Some(e.cookie.clone()))).await.0,
+        StatusCode::SEE_OTHER,
+        "expired on the server"
+    );
+    let (_, h, _) = send(&e.app, form("/login", format!("token={ADMIN}"), None)).await;
+    let fresh = h[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let csrf: String = sqlx::query_scalar("SELECT csrf FROM console_sessions WHERE id = $1")
+        .bind(fresh.trim_start_matches("tl="))
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        send(
+            &e.app,
+            form("/logout", format!("csrf={csrf}"), Some(fresh.clone()))
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    assert_eq!(
+        send(&e.app, get("/", Some(fresh))).await.0,
+        StatusCode::SEE_OTHER,
+        "the old cookie is dead after sign-out"
+    );
+}
+
+#[tokio::test]
+async fn five_wrong_tokens_lock_sign_in_for_a_while() {
+    let Some(e) = env().await else { return };
+    for _ in 0..5 {
+        assert_eq!(
+            send(&e.app, form("/login", "token=nope".into(), None))
+                .await
+                .0,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    assert_eq!(
+        send(&e.app, form("/login", format!("token={ADMIN}"), None))
+            .await
+            .0,
+        StatusCode::TOO_MANY_REQUESTS,
+        "even the right token waits"
+    );
+}
+
+#[tokio::test]
+async fn the_approver_sees_the_plan_and_the_change_and_a_failed_ticket_can_be_retried() {
+    let Some(e) = env().await else { return };
+    let (t,): (i64,) = sqlx::query_as("INSERT INTO tickets (service_id, external_ref, state, level, plan_hash, plan_text, diff_text) SELECT id, '3', 'awaiting_approval', 2, 'abc123', 'Plan: <b>rotate</b>', '+ new line' FROM services WHERE external_id = 'org/repo' RETURNING id")
+        .fetch_one(&e.pool).await.unwrap();
+    let page = send(
+        &e.app,
+        get(&format!("/tickets/{t}"), Some(e.cookie.clone())),
+    )
+    .await
+    .2;
+    assert!(
+        page.contains("Plan: &lt;b&gt;rotate&lt;/b&gt;") && page.contains("+ new line"),
+        "{page}"
+    );
+    sqlx::query("UPDATE tickets SET state = 'failed' WHERE id = $1")
+        .bind(t)
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    let page = send(
+        &e.app,
+        get(&format!("/tickets/{t}"), Some(e.cookie.clone())),
+    )
+    .await
+    .2;
+    assert!(page.contains("Try again") && page.contains("Close it"));
+    let path = format!("/tickets/{t}/retry");
+    assert_eq!(
+        send(
+            &e.app,
+            form(
+                &path,
+                "csrf=bad&action=retry".into(),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        send(
+            &e.app,
+            form(
+                &path,
+                format!("csrf={}&action=retry", e.csrf),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    let state: String = sqlx::query_scalar("SELECT state FROM tickets WHERE id = $1")
+        .bind(t)
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(state, "queued");
 }

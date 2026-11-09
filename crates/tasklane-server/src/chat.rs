@@ -108,7 +108,14 @@ impl ChatBridge {
         .await
         .unwrap_or(None);
         if first.is_some() {
-            self.say(group, &format!("This group is not registered with tasklane. Group id: {group}. An administrator can register it in the console under Chat groups."), None).await;
+            self.say(group, &format!("This group is not registered with tasklane. Group id: {group}. An administrator can register it in the console under Chat groups, then add me again. I am leaving now."), None).await;
+            if let Err(e) = self
+                .chat
+                .call("leave", json!({"group": group}), SHORT)
+                .await
+            {
+                eprintln!("chat: leave {group}: {e}");
+            }
         }
     }
 
@@ -128,6 +135,13 @@ impl ChatBridge {
                 .await;
             return;
         }
+        let _ = sqlx::query(
+            "INSERT INTO audit_events (actor, action, detail) VALUES ($1, 'chat.ask', $2)",
+        )
+        .bind(&actor)
+        .bind(json!({"service": service, "question_chars": question.chars().count()}))
+        .execute(self.orch.pool())
+        .await;
         match self.orch.ask(service, question, &actor).await {
             Ok(answer) => {
                 self.say(group, &clip(&answer, MAX_ANSWER_CHARS), None)
@@ -283,6 +297,8 @@ impl ChatBridge {
     }
 
     pub async fn run(self: Arc<Self>, mut stop: watch::Receiver<bool>) {
+        let asks = Arc::new(tokio::sync::Semaphore::new(2));
+        let quick = Arc::new(tokio::sync::Semaphore::new(8));
         loop {
             if *stop.borrow() {
                 return;
@@ -300,7 +316,19 @@ impl ChatBridge {
                         .cloned()
                         .unwrap_or_default()
                     {
-                        self.handle_event(&ev).await;
+                        // Questions are slow; they run on their own small pool so that
+                        // approval buttons and the like are never stuck behind them.
+                        let slow = field(&ev, "kind") == "command"
+                            && field(&ev, "command").trim_start_matches('/') == "ask";
+                        let sem = if slow { asks.clone() } else { quick.clone() };
+                        let Ok(permit) = sem.acquire_owned().await else {
+                            continue;
+                        };
+                        let me = self.clone();
+                        tokio::spawn(async move {
+                            me.handle_event(&ev).await;
+                            drop(permit);
+                        });
                     }
                 }
                 Err(e) => {

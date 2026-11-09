@@ -41,7 +41,14 @@ def item(ref):
     body = "The button colour is wrong."
     if "risky" in ref:
         body = "Needs a database migration and a password reset flow."
-    return {"title": f"Fix {ref}", "body": body, "comments": comments}
+    out = {"title": f"Fix {ref}", "body": body, "comments": comments, "state": "open", "is_pull_request": False}
+    if "stranger" in ref:
+        out["author_trusted"] = False
+    if ref.startswith("pr-"):
+        out["is_pull_request"] = True
+    if ref.startswith("closed-"):
+        out["state"] = "closed"
+    return out
 
 
 def run(params):
@@ -68,6 +75,14 @@ def run(params):
         if "protected" in ref:
             os.makedirs(os.path.join(ws, ".github", "workflows"), exist_ok=True)
             open(os.path.join(ws, ".github", "workflows", "ci.yml"), "w").write(f"changed {time.time()}\n")
+        if "unicode" in ref:
+            os.makedirs(os.path.join(ws, ".github", "workflows"), exist_ok=True)
+            open(os.path.join(ws, ".github", "workflows", "\u00e9.yml"), "w").write("on: push\n")
+        if "moveaway" in ref:
+            os.rename(os.path.join(ws, ".github", "workflows", "ci.yml"), os.path.join(ws, "docs-ci.txt"))
+        if "nested" in ref:
+            os.makedirs(os.path.join(ws, "apps", "x", "migrations"), exist_ok=True)
+            open(os.path.join(ws, "apps", "x", "migrations", "0001.sql"), "w").write("select 1;\n")
         if "big" in ref:
             open(os.path.join(ws, "big.txt"), "w").write("".join(f"line {i}\n" for i in range(900)))
         open(os.path.join(ws, "fix.txt"), "w").write(f"fix for {ref} at {time.time()}\n")
@@ -102,6 +117,8 @@ def handle(op, params):
         json.dump(sent, open(os.path.join(STATE, "sent.json"), "w"))
         return {"message_id": str(len(sent))}
     if op == "leave":
+        left = read_json("left.json", []) + [params["group"]]
+        json.dump(left, open(os.path.join(STATE, "left.json"), "w"))
         return {}
     if op == "create_item":
         n = len(read_json("created.json", [])) + 100
@@ -132,6 +149,9 @@ def handle(op, params):
             f.write(json.dumps({"ref": params["ref"], "body": params["body"]}) + "\n")
         return {"id": "1"}
     if op == "open_pr":
+        # like GitHub: a second pull request for the same branch is refused
+        if flag("pr_branch"):
+            raise ValueError("A pull request already exists")
         open(os.path.join(STATE, "pr_branch"), "w").write(params["branch"])
         return {"pr": "7"}
     if op == "get_checks":
@@ -157,5 +177,7 @@ for line in sys.stdin:
         resp = {"id": req["id"], "ok": True, "result": handle(req["op"], req.get("params") or {})}
     except KeyError as e:
         resp = {"id": req["id"], "ok": False, "error": {"kind": "permanent", "message": f"unknown op {e}"}}
+    except ValueError as e:
+        resp = {"id": req["id"], "ok": False, "error": {"kind": "permanent", "message": str(e)}}
     sys.stdout.write(json.dumps(resp) + "\n")
     sys.stdout.flush()

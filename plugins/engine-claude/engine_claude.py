@@ -85,10 +85,16 @@ def secret_values(env=None):
     return [env[v] for v in CRED_VARS if env.get(v)]
 
 
+TOKEN_SHAPES = re.compile(
+    r"(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-ant-[A-Za-z0-9_\-]{10,}"
+    r"|x-access-token:[^@\s]+@|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$))")
+
+
 def scrub(text, env=None):
+    text = str(text)
     for s in secret_values(env):
         text = text.replace(s, "[redacted]")
-    return text
+    return TOKEN_SHAPES.sub("[redacted]", text)
 
 
 def escape_untrusted(text):
@@ -349,13 +355,31 @@ def finish(role, parsed, secs, exit_reason="ok"):
                 break
         if not result:
             raise EngineError("permanent", "unusable model output")
+    for key in ("answer", "summary", "notes", "plan"):
+        if isinstance(result.get(key), str):
+            result[key] = scrub(result[key])
+    if isinstance(result.get("questions"), list):
+        result["questions"] = [scrub(q) if isinstance(q, str) else q for q in result["questions"]]
     result.update({"usage": usage, "exit_reason": exit_reason})
     return result
 
 
 # ---------------------------------------------------------------- run
 
+def require_sandbox_or_opt_in():
+    """Every role runs model-driven tools on this host. Without the Docker sandbox the CLI runs as the
+    same user as the daemon and can read its environment and files, so that needs an explicit opt-in."""
+    if sandbox_mode() == "docker":
+        return
+    if os.environ.get("TASKLANE_ALLOW_UNSANDBOXED", "").strip() == "1":
+        return
+    raise EngineError("permanent",
+                      "refusing to run without a sandbox: set TASKLANE_SANDBOX=docker, or set "
+                      "TASKLANE_ALLOW_UNSANDBOXED=1 to accept the risk on a host that holds nothing else")
+
+
 def run(params):
+    require_sandbox_or_opt_in()
     role = params.get("role")
     if role not in ROLES:
         raise EngineError("permanent", "unknown role: %s" % (role,))
@@ -363,6 +387,10 @@ def run(params):
         raise EngineError("permanent", "params.ticket is required")
     if role == "reviewer" and not isinstance(params.get("diff"), str):
         raise EngineError("permanent", "params.diff is required for reviewer")
+    if role == "reviewer" and len(params["diff"]) > MAX_TEXT:
+        # Never approve what was not read: a diff longer than the limit goes to a person.
+        return {"verdict": "escalate", "notes": "the diff is too large to review in full (%d characters); a person must look at it" % len(params["diff"]),
+                "usage": {"tokens_in": 0, "tokens_out": 0, "secs": 0}, "exit_reason": "ok"}
     if role == "ask" and not isinstance(params.get("question"), str):
         raise EngineError("permanent", "params.question is required for ask")
     workspace = params.get("workspace")

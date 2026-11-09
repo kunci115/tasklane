@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,6 +15,7 @@ use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{oneshot, Mutex};
 
 /// How to start a plug-in. The child gets exactly `env` and nothing else.
+#[derive(Clone)]
 pub struct PluginSpec {
     pub program: String,
     pub args: Vec<String>,
@@ -45,47 +46,75 @@ impl CallError {
 
 type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<Response>>>>;
 
-pub struct PluginClient {
+struct Live {
     stdin: Mutex<ChildStdin>,
     pending: Pending,
-    next_id: AtomicU64,
+    alive: Arc<AtomicBool>,
     _child: Child,
+}
+
+/// A plug-in process and the pipe to it. If the process dies, the call that
+/// notices fails with `Closed` and the next call starts it again.
+pub struct PluginClient {
+    spec: PluginSpec,
+    live: Mutex<Arc<Live>>,
+    next_id: AtomicU64,
+}
+
+fn start(spec: &PluginSpec) -> Result<Arc<Live>, CallError> {
+    let mut cmd = Command::new(&spec.program);
+    cmd.args(&spec.args)
+        .env_clear()
+        .envs(spec.env.iter().map(|(k, v)| (k, v)))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .kill_on_drop(true);
+    let mut child = cmd.spawn()?;
+    let stdin = child.stdin.take().ok_or(CallError::Closed)?;
+    let stdout = child.stdout.take().ok_or(CallError::Closed)?;
+    let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+    let alive = Arc::new(AtomicBool::new(true));
+    let (reader_pending, reader_alive) = (pending.clone(), alive.clone());
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(stdout).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            // Lines that are not a valid response are ignored; the caller times out.
+            if let Ok(resp) = serde_json::from_str::<Response>(&line) {
+                if let Some(tx) = reader_pending.lock().await.remove(&resp.id) {
+                    let _ = tx.send(resp);
+                }
+            }
+        }
+        // Output closed: dropping the senders wakes every waiting call.
+        reader_alive.store(false, Ordering::SeqCst);
+        reader_pending.lock().await.clear();
+    });
+    Ok(Arc::new(Live {
+        stdin: Mutex::new(stdin),
+        pending,
+        alive,
+        _child: child,
+    }))
 }
 
 impl PluginClient {
     pub fn spawn(spec: &PluginSpec) -> Result<PluginClient, CallError> {
-        let mut cmd = Command::new(&spec.program);
-        cmd.args(&spec.args)
-            .env_clear()
-            .envs(spec.env.iter().map(|(k, v)| (k, v)))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .kill_on_drop(true);
-        let mut child = cmd.spawn()?;
-        let stdin = child.stdin.take().ok_or(CallError::Closed)?;
-        let stdout = child.stdout.take().ok_or(CallError::Closed)?;
-        let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
-        let reader_pending = pending.clone();
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                // Lines that are not a valid response are ignored; the caller times out.
-                if let Ok(resp) = serde_json::from_str::<Response>(&line) {
-                    if let Some(tx) = reader_pending.lock().await.remove(&resp.id) {
-                        let _ = tx.send(resp);
-                    }
-                }
-            }
-            // Output closed: dropping the senders wakes every waiting call.
-            reader_pending.lock().await.clear();
-        });
         Ok(PluginClient {
-            stdin: Mutex::new(stdin),
-            pending,
+            spec: spec.clone(),
+            live: Mutex::new(start(spec)?),
             next_id: AtomicU64::new(1),
-            _child: child,
         })
+    }
+
+    /// The running process, restarted first if the last one died.
+    async fn current(&self) -> Result<Arc<Live>, CallError> {
+        let mut live = self.live.lock().await;
+        if !live.alive.load(Ordering::SeqCst) {
+            eprintln!("plug-in {} stopped; starting it again", self.spec.program);
+            *live = start(&self.spec)?;
+        }
+        Ok(live.clone())
     }
 
     pub async fn call(
@@ -94,9 +123,10 @@ impl PluginClient {
         params: Value,
         timeout: Duration,
     ) -> Result<Value, CallError> {
+        let live = self.current().await?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().await.insert(id, tx);
+        live.pending.lock().await.insert(id, tx);
 
         let mut line = serde_json::to_string(&Request {
             id,
@@ -106,20 +136,21 @@ impl PluginClient {
         .expect("request is json");
         line.push('\n');
         {
-            let mut stdin = self.stdin.lock().await;
+            let mut stdin = live.stdin.lock().await;
             let written = async {
                 stdin.write_all(line.as_bytes()).await?;
                 stdin.flush().await
             }
             .await;
             if written.is_err() {
-                self.pending.lock().await.remove(&id);
+                live.alive.store(false, Ordering::SeqCst);
+                live.pending.lock().await.remove(&id);
                 return Err(CallError::Closed);
             }
         }
         match tokio::time::timeout(timeout, rx).await {
             Err(_) => {
-                self.pending.lock().await.remove(&id);
+                live.pending.lock().await.remove(&id);
                 Err(CallError::Timeout)
             }
             Ok(Err(_)) => Err(CallError::Closed),

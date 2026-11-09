@@ -34,7 +34,51 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
             "the branch moved after CI ({reviewed_head} -> {head_now})"
         )));
     }
-    let (diff, _files) = o.ws.diff(&t.service, &t.base_branch(), &branch).await?;
+    let (diff, files) = o.ws.diff(&t.service, &t.base_branch(), &branch).await?;
+    // The same deterministic rules as at development time, on the diff CI actually ran.
+    // A diff that needs a person and was not approved as this exact diff goes back to a person.
+    let chk = super::develop::check_diff(o, &t.facts, &diff, &files);
+    let diff_hash = sha256_hex(&diff);
+    if chk.needs_person && t.plan_hash.as_deref() != Some(diff_hash.as_str()) {
+        let level = t.level.unwrap_or(Level::L2).max(Level::L2);
+        let mut tx = o.begin(job).await?;
+        o.set_state(
+            &mut tx,
+            t.id,
+            State::Reviewing,
+            State::AwaitingApproval,
+            Actor::Orchestrator,
+        )
+        .await?;
+        sqlx::query("UPDATE tickets SET level = $2, plan_hash = $3, diff_text = $4 WHERE id = $1")
+            .bind(t.id)
+            .bind(i16::from(u8::from(level)))
+            .bind(&diff_hash)
+            .bind(super::develop::cap(&diff))
+            .execute(&mut *tx)
+            .await?;
+        o.audit(
+            &mut tx,
+            t.id,
+            "ticket.rescored_at_review",
+            json!({"reasons": chk.reasons, "head": reviewed_head}),
+        )
+        .await?;
+        o.finish_job(&mut tx, job).await?;
+        tx.commit().await?;
+        o.say(
+            &t,
+            &format!(
+                "Before review: {}. A person must approve this exact change.",
+                chk.reasons.join("; ")
+            ),
+        )
+        .await;
+        return Ok(RunResult::Moved {
+            ticket_id: t.id,
+            to: State::AwaitingApproval,
+        });
+    }
     let item = o.item(&t).await?;
     let out = o
         .engine
@@ -99,12 +143,15 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
                 Actor::Orchestrator,
             )
             .await?;
-            sqlx::query("UPDATE tickets SET level = $2, plan_hash = $3 WHERE id = $1")
-                .bind(t.id)
-                .bind(i16::from(u8::from(level)))
-                .bind(sha256_hex(&diff))
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query(
+                "UPDATE tickets SET level = $2, plan_hash = $3, diff_text = $4 WHERE id = $1",
+            )
+            .bind(t.id)
+            .bind(i16::from(u8::from(level)))
+            .bind(&diff_hash)
+            .bind(super::develop::cap(&diff))
+            .execute(&mut *tx)
+            .await?;
             State::AwaitingApproval
         }
         other => {

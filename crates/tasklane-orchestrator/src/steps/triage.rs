@@ -52,11 +52,17 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         .checkpoint(job, &json!({"stage": "triaged", "level": out.level}))
         .await?;
 
-    let (floor, why) = floor_from_text(&format!("{title}\n{body}"));
+    let (floor, mut why) = floor_from_text(&format!("{title}\n{body}"));
+    // Strangers can open issues on a public repository. Their tickets always need a person,
+    // whatever the level, so an outsider cannot start an unattended change.
+    let untrusted = item.get("author_trusted").and_then(Value::as_bool) == Some(false);
+    if untrusted {
+        why.push("author is not a collaborator");
+    }
     let level = Level::with_model_suggestion(floor, suggestion);
     let to = if !out.questions.is_empty() {
         State::NeedsInfo
-    } else if level.needs_human() || t.mode != "full" {
+    } else if level.needs_human() || t.mode != "full" || untrusted {
         State::AwaitingApproval
     } else {
         State::Queued
@@ -71,7 +77,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
     }
     let plan_hash = sha256_hex(&out.plan);
     let moved = sqlx::query(
-        "UPDATE tickets SET state = $2, level = $3, level_reasons = $4, plan_hash = $5, updated_at = now()
+        "UPDATE tickets SET state = $2, level = $3, level_reasons = $4, plan_hash = $5, plan_text = $6, updated_at = now()
          WHERE id = $1 AND state = 'new'",
     )
     .bind(t.id)
@@ -79,6 +85,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
     .bind(i16::from(u8::from(level)))
     .bind(json!(why))
     .bind(&plan_hash)
+    .bind(super::develop::cap(&out.plan))
     .execute(&mut *tx)
     .await?;
     if moved.rows_affected() != 1 {
