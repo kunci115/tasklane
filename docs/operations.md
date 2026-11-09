@@ -21,7 +21,7 @@ docker compose -f docker-compose.prod.yml logs tasklane      # prints the admin 
 Open `http://localhost:8080`, sign in with that token, and follow the **Getting started** card:
 
 1. **Connect GitHub.** Press the button. GitHub opens with the App already filled in; press **Create GitHub App**, then **Install** and choose only the repositories tasklane should work on. tasklane stores the App's credentials itself. You never create a key or edit a config file.
-2. **Connect the agent.** Paste a Claude API key, choose how the agent is isolated, and press **Run the test**.
+2. **Connect the agent.** Choose how it signs in: an API key, or your Claude subscription (run `claude setup-token` on a computer where you are signed in to Claude Code and paste the token; the work counts against your plan limits). Then choose how the agent is isolated and press **Run the test**.
 3. **Choose repositories.** New ones start in triage (read and plan only).
 4. Open an issue on one of them. It shows up on the Overview within a minute.
 

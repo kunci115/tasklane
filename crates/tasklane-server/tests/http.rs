@@ -1756,7 +1756,7 @@ async fn the_agent_key_is_saved_privately_validated_and_never_shown_again() {
         assert!(!body.contains("sk-ant-secret-key-value"), "{path}");
     }
     let (_, _, page) = send(&e.app, get("/connect/agent", Some(e.cookie.clone()))).await;
-    assert!(page.contains("Leave empty to keep the saved key") && page.contains("saved"));
+    assert!(page.contains("Leave empty to keep the saved one") && page.contains("saved"));
     // removing it
     assert_eq!(
         send(

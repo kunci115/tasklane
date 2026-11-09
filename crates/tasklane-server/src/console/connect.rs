@@ -589,7 +589,10 @@ pub async fn agent_form(
     b.push_str(&flash(q.msg.as_deref()));
     b.push_str(&format!(
         "<div class=\"grid g2\"><div class=\"card\"><form method=\"post\" action=\"/connect/agent\"><input type=\"hidden\" name=\"csrf\" value=\"{}\">\
-<div class=\"field\"><label for=\"key\">Claude API key {}</label><input id=\"key\" type=\"password\" name=\"key\" autocomplete=\"off\" placeholder=\"{}\" maxlength=\"400\"><div class=\"hint\">Create one in the Anthropic console. Use a key of its own with a spending limit. It is stored on the server and never shown again.</div></div>\
+<div class=\"field\"><label>How the agent signs in</label>\
+<label style=\"font-weight:400\"><input type=\"radio\" name=\"auth\" value=\"api_key\"{}> <strong>API key</strong>. Create a key of its own in the Anthropic console, with a spending limit.</label>\
+<label style=\"font-weight:400\"><input type=\"radio\" name=\"auth\" value=\"subscription\"{}> <strong>Claude subscription</strong> (no API key). On a computer where you are signed in to Claude Code, run <span class=\"mono\">claude setup-token</span> and paste the token it prints. The work counts against your plan's usage limits.</label></div>\
+<div class=\"field\"><label for=\"key\">Key or token {}</label><input id=\"key\" type=\"password\" name=\"key\" autocomplete=\"off\" placeholder=\"{}\" maxlength=\"400\"><div class=\"hint\">It is stored on the server and never shown again.</div></div>\
 <div class=\"field\"><label>Isolation</label>\
 <label style=\"font-weight:400\"><input type=\"radio\" name=\"sandbox\" value=\"docker\"{}> <strong>Docker sandbox</strong> (recommended). The agent runs in a locked-down container that holds none of your secrets. Needs the Docker socket available to tasklane (see the guide: docker-compose.sandbox.yml).</label>\
 <label style=\"font-weight:400\"><input type=\"radio\" name=\"sandbox\" value=\"none\"{}> <strong>No sandbox</strong>. The agent runs as the same user as tasklane and can read its files and secrets. Only for a machine that holds nothing else, with repositories and reporters you fully trust.</label></div>\
@@ -597,8 +600,10 @@ pub async fn agent_form(
 <div class=\"field\"><label for=\"nw\">Docker network</label><input id=\"nw\" type=\"text\" name=\"network\" value=\"{}\" placeholder=\"bridge\"><div class=\"hint\">A network that can reach only the model API, if you built one. The built-in <span class=\"mono\">bridge</span> reaches everything.</div></div></div></details>\
 <div class=\"row tight\" style=\"margin-top:1rem\"><button class=\"btn primary\">{} Save</button></div></form></div>",
         sess.csrf,
+        if agent.auth != "subscription" { " checked" } else { "" },
+        if agent.auth == "subscription" { " checked" } else { "" },
         if has_key { "<span class=\"pill ok\">saved</span>" } else { "" },
-        if has_key { "Leave empty to keep the saved key" } else { "sk-ant-..." },
+        if has_key { "Leave empty to keep the saved one" } else { "sk-ant-..." },
         sel("docker"),
         sel("none"),
         if agent.sandbox == "docker" { "open" } else { "" },
@@ -625,6 +630,7 @@ pub struct AgentIn {
     sandbox: Option<String>,
     image: Option<String>,
     network: Option<String>,
+    auth: Option<String>,
 }
 
 fn safe_ref(s: &str) -> bool {
@@ -664,6 +670,22 @@ pub async fn agent_save(
     let previous: AgentSettings = connections::get(st.orch.pool(), "agent")
         .await
         .unwrap_or_default();
+    let auth = match f.auth.as_deref().unwrap_or("") {
+        "" => previous.auth.as_str(),
+        a @ ("api_key" | "subscription") => a,
+        _ => {
+            return (StatusCode::UNPROCESSABLE_ENTITY, "Choose API key or Claude subscription.")
+                .into_response()
+        }
+    };
+    let was_sub = previous.auth == "subscription";
+    if key.is_empty() && (auth == "subscription") != was_sub && st.secrets.exists(connections::AGENT_KEY) {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "You changed how the agent signs in, so paste the matching key or token too.",
+        )
+            .into_response();
+    }
     if sandbox.is_empty() && previous.sandbox.is_empty() {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -693,9 +715,10 @@ pub async fn agent_save(
         sandbox: sandbox.to_string(),
         image: image.to_string(),
         network: network.to_string(),
+        auth: auth.to_string(),
     };
     let _ = connections::put(st.orch.pool(), "agent", &settings).await;
-    let _ = sqlx::query("INSERT INTO audit_events (actor, action, detail) VALUES ('console:admin', 'connection.agent_saved', $1)").bind(json!({"sandbox": sandbox, "key_changed": !key.is_empty()})).execute(st.orch.pool()).await;
+    let _ = sqlx::query("INSERT INTO audit_events (actor, action, detail) VALUES ('console:admin', 'connection.agent_saved', $1)").bind(json!({"sandbox": sandbox, "auth": auth, "key_changed": !key.is_empty()})).execute(st.orch.pool()).await;
     if let Err(e) = connections::apply(&st).await {
         eprintln!("restarting the engine plug-in: {e}");
     }

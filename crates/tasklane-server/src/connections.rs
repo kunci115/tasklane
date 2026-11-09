@@ -113,6 +113,21 @@ pub struct AgentSettings {
     pub image: String,
     #[serde(default)]
     pub network: String,
+    /// `api_key` (default) or `subscription`: a token from `claude setup-token`, for people who
+    /// sign in to Claude Code with their Claude plan and have no API key.
+    #[serde(default)]
+    pub auth: String,
+}
+
+impl AgentSettings {
+    /// The environment variable the Claude CLI reads the stored credential from.
+    pub fn credential_var(&self) -> &'static str {
+        if self.auth == "subscription" {
+            "CLAUDE_CODE_OAUTH_TOKEN"
+        } else {
+            "ANTHROPIC_API_KEY"
+        }
+    }
 }
 
 pub async fn get<T: for<'de> Deserialize<'de>>(pool: &PgPool, key: &str) -> Option<T> {
@@ -179,8 +194,8 @@ pub fn source_spec(base: &PluginSpec, gh: Option<&GithubConn>, secrets: &Secrets
 pub fn engine_spec(base: &PluginSpec, agent: &AgentSettings, secrets: &Secrets) -> PluginSpec {
     let mut spec = base.clone();
     if let Some(key) = secrets.read(AGENT_KEY) {
-        if !has(&spec.env, "CLAUDE_CODE_OAUTH_TOKEN") {
-            set_missing(&mut spec.env, "ANTHROPIC_API_KEY", key);
+        if !has(&spec.env, "CLAUDE_CODE_OAUTH_TOKEN") && !has(&spec.env, "ANTHROPIC_API_KEY") {
+            set_missing(&mut spec.env, agent.credential_var(), key);
         }
     }
     match agent.sandbox.as_str() {
@@ -362,6 +377,7 @@ mod tests {
             sandbox: "docker".into(),
             image: "img".into(),
             network: "net".into(),
+            auth: String::new(),
         };
         let out = engine_spec(&spec(&[]), &docker, &s);
         let get = |k: &str| out.env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
@@ -396,5 +412,19 @@ mod tests {
             !names(&engine_spec(&spec(&[]), &AgentSettings::default(), &s))
                 .contains(&"TASKLANE_ALLOW_UNSANDBOXED".to_string())
         );
+    }
+
+    #[test]
+    fn a_subscription_token_is_handed_over_as_the_cli_login_not_as_an_api_key() {
+        let d = tempfile::tempdir().unwrap();
+        let s = Secrets::new(d.path()).unwrap();
+        s.write(AGENT_KEY, "sk-ant-oat-x").unwrap();
+        let sub = AgentSettings { auth: "subscription".into(), ..Default::default() };
+        let out = engine_spec(&spec(&[]), &sub, &s);
+        let get = |k: &str| out.env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        assert_eq!(get("CLAUDE_CODE_OAUTH_TOKEN").as_deref(), Some("sk-ant-oat-x"));
+        assert_eq!(get("ANTHROPIC_API_KEY"), None);
+        let key = engine_spec(&spec(&[]), &AgentSettings::default(), &s);
+        assert!(key.env.iter().any(|(n, _)| n == "ANTHROPIC_API_KEY"));
     }
 }
