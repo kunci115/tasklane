@@ -1,0 +1,15 @@
+[package]
+name = "tasklane-server"
+description = "HTTP server: gateway, console and health endpoint"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tasklane-core = { path = "../tasklane-core" }
+axum.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

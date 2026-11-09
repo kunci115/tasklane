@@ -1,3 +1,5 @@
-# Build artefacts
+/target
 *.html
 .archify/
+__pycache__/
+.env

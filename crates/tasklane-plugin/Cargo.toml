@@ -1,0 +1,10 @@
+[package]
+name = "tasklane-plugin"
+description = "Wire protocol between the core and plug-in programs (JSON lines over stdio)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
