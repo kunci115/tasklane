@@ -31,6 +31,7 @@ Each part of the architecture ([docs/design](design) and the C4 diagrams in [doc
 |---|---|
 | More ticket sources (Gitea, Jira) | GitLab exists; others are the best way to contribute |
 | Reviewer agent that looks at screenshots of the change | Needs a runner step that starts the preview at the pull request's head |
+| Plans that list the files they will touch; a diff outside that list asks a person. Test-first as a repository rule | Idea from the "agent skills" workflow (spec, plan in small tasks, test-first, verify) |
 | Merge queue support (drive GitHub's native queue instead of refusing) | Today a repository with a merge queue fails the ticket with a clear message |
 | Update with rollback, Kubernetes manifests, a public container image | Operations |
 
