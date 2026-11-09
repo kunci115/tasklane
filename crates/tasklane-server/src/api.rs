@@ -34,7 +34,12 @@ async fn ready(State(st): State<Arc<AppState>>) -> Response {
         .fetch_one(st.orch.pool())
         .await
     {
-        Ok(_) => (StatusCode::OK, "ready").into_response(),
+        Ok(_) if st.orch.plugins_ready().await => (StatusCode::OK, "ready").into_response(),
+        Ok(_) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "a plug-in is not answering",
+        )
+            .into_response(),
         Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "database unavailable").into_response(),
     }
 }

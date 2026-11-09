@@ -41,6 +41,10 @@ pub struct Config {
     /// Treat a pull request with no checks at all as green. Off by default: a PR
     /// whose checks have not registered yet must not be merged on an empty list.
     pub allow_no_checks: bool,
+    /// Stop creating tickets from the source while this many triage jobs are already waiting
+    /// (a flood of issues cannot queue unlimited model runs). The skipped issues are picked up
+    /// again later because the sync cursor does not move past them.
+    pub max_pending_triage: i64,
     /// Lifetime of the per-run source tokens.
     pub token_ttl_secs: u64,
 }
@@ -62,6 +66,7 @@ impl Config {
             max_diff_lines: 800,
             max_diff_bytes: 200_000,
             allow_no_checks: false,
+            max_pending_triage: 25,
             token_ttl_secs: 3600,
         }
     }
@@ -501,6 +506,20 @@ impl Orchestrator {
         )
         .await;
         Ok(())
+    }
+
+    /// Both plug-ins answer? Any reply counts (even "unknown operation"); silence or a dead process does not.
+    pub async fn plugins_ready(&self) -> bool {
+        use crate::host::CallError;
+        let t = Duration::from_secs(5);
+        let alive = |r: Result<Value, CallError>| {
+            !matches!(
+                r,
+                Err(CallError::Timeout) | Err(CallError::Closed) | Err(CallError::Io(_))
+            )
+        };
+        alive(self.source.call("describe", json!({}), t).await)
+            && alive(self.engine.call("describe", json!({}), t).await)
     }
 
     /// Remove checkouts left behind by crashed runs.

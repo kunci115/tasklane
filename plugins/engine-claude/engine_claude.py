@@ -213,7 +213,9 @@ def docker_command(role, claude_argv, workspace, name, env=None):
         argv += ["-v", "%s:/work:%s" % (os.path.abspath(workspace), mode), "-w", "/work"]
     else:
         argv += ["-w", "/tmp"]
-    argv += [image, env.get("TASKLANE_SANDBOX_CLAUDE_BIN", "claude")] + claude_argv
+    # The entrypoint is overridden, so any image that contains the CLI works, even one whose own
+    # entrypoint is something else (such as the daemon image).
+    argv += ["--entrypoint", env.get("TASKLANE_SANDBOX_CLAUDE_BIN", "claude"), image] + claude_argv
     return argv
 
 

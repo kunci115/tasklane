@@ -565,3 +565,50 @@ async fn a_push_refused_for_workflow_permission_fails_at_once_with_a_clear_reaso
         .unwrap();
     assert_eq!(attempts, 1, "no pointless retries");
 }
+
+#[tokio::test]
+async fn a_flood_of_issues_does_not_queue_unlimited_model_runs_and_nothing_is_lost() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |c| c.max_pending_triage = 2).await;
+    use tasklane_orchestrator::sync::Noted;
+    let mut created = 0;
+    let mut held = 0;
+    for n in 0..5 {
+        match w
+            .orch
+            .note_issue("org/repo", &format!("{}", 200 + n))
+            .await
+            .unwrap()
+        {
+            Noted::Created => created += 1,
+            Noted::Deferred => held += 1,
+            Noted::Resumed | Noted::Nothing => {}
+        }
+    }
+    assert_eq!(
+        (created, held),
+        (2, 3),
+        "only two wait for triage; the rest are held back"
+    );
+    // once the queue drains they are picked up (the sync cursor never moved past them)
+    drive(&w).await;
+    for n in 0..5 {
+        let _ = w
+            .orch
+            .note_issue("org/repo", &format!("{}", 200 + n))
+            .await
+            .unwrap();
+    }
+    assert_eq!(count(&w.pool, "SELECT count(*) FROM tickets").await, 4);
+}
+
+#[tokio::test]
+async fn plugins_ready_is_true_for_live_plugins_even_if_they_do_not_know_describe() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    assert!(w.orch.plugins_ready().await);
+}

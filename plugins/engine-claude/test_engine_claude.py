@@ -257,7 +257,10 @@ class Docker(unittest.TestCase):
                        "--tmpfs /tmp:", "--tmpfs /home/agent:", "-e HOME=/home/agent"):
             self.assertIn(needle, j)
         self.assertEqual(argv.count("-v"), 1)
-        self.assertEqual(argv[argv.index("img:1") + 1:], ["claude", "-p", "--model", "x"])
+        self.assertEqual(argv[argv.index("img:1") + 1:], ["-p", "--model", "x"])
+        # the entrypoint is forced to the CLI, whatever the image's own entrypoint is
+        self.assertEqual(argv[argv.index("--entrypoint") + 1], "claude")
+        self.assertEqual(argv.index("--entrypoint") + 2, argv.index("img:1"))
         self.assertIn("ANTHROPIC_API_KEY", argv)
         self.assertNotIn("sk-secret", j)
         self.assertNotIn("--privileged", j)

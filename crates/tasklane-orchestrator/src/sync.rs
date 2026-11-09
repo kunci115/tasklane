@@ -99,6 +99,7 @@ impl Orchestrator {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
+        let mut deferred = false;
         for it in &items {
             if it.get("kind").and_then(Value::as_str) != Some("issue") {
                 continue;
@@ -112,10 +113,14 @@ impl Orchestrator {
             match self.note_issue(service, reference).await? {
                 Noted::Created => report.tickets_created += 1,
                 Noted::Resumed => report.tickets_resumed += 1,
+                Noted::Deferred => deferred = true,
                 Noted::Nothing => {}
             }
         }
-        // Advance the cursor only after every item was handled.
+        // Advance the cursor only after every item was handled (not while some were held back).
+        if deferred {
+            return Ok(report);
+        }
         if let Some(c) = r.get("cursor").and_then(Value::as_str) {
             sqlx::query("INSERT INTO sync_state (key, value) VALUES ('changes_cursor', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()")
                 .bind(c)
@@ -149,6 +154,14 @@ impl Orchestrator {
         .fetch_optional(&self.pool)
         .await?;
         if known.is_none() {
+            let waiting: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM jobs WHERE kind = 'triage' AND status = 'queued'",
+            )
+            .fetch_one(&self.pool)
+            .await?;
+            if waiting >= self.cfg.max_pending_triage {
+                return Ok(Noted::Deferred);
+            }
             // Only open issues become tickets: not pull requests (events for them look like issues), not closed ones.
             let item = self
                 .source
@@ -244,6 +257,8 @@ impl Orchestrator {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Noted {
+    /// Held back because too many triage jobs are waiting; looked at again on a later pass.
+    Deferred,
     Created,
     Resumed,
     Nothing,
