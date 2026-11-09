@@ -139,10 +139,15 @@ The agent can run **unsandboxed** only if you explicitly opt in; the default is 
 | Agent engine | Claude, through the Claude Code CLI, with an API key or a subscription token |
 | Isolation | Read-only agents for triage and review; developer in a git worktree, optionally inside a locked-down Docker container whose only way out is an allowlist proxy to the model API |
 | Roles | Owner and team approver, with different levels they may approve |
-| Chat | Telegram bot for questions and `/task`, with approvals by button |
-| Console | Setup, approvals, tickets, repositories, people, activity, live map, replay, health |
+| Chat | Telegram bot for questions and `/task`, approvals by button, and the outcome of each ticket reported back to the group that raised it |
+| Console | Setup, approvals, tickets (search and paging), repositories, people, activity, live map, replay, health |
+| Per-repository control | Mode (`watch`, `triage`, `full`), protected paths, agent instructions, notes for the agents, and a `.tasklane.yml` that can only tighten the rules |
+| Duplicates | A new ticket that repeats an earlier one is held for a person to confirm (optional model suggestion) |
+| Cost and limits | Model tokens counted per ticket with a budget, attempt and wall-time limits, a cap on parallel development and on pull requests waiting for CI |
+| Seeing the result | Optional screenshots of the app the agent is building, with Obscura, inside the sandbox |
+| Operations | `tasklane doctor`, Prometheus `/metrics` (opt-in), `/healthz` and `/readyz`, automatic cleanup of stale tickets and orphaned containers |
 | Queue | Postgres, `SKIP LOCKED`, leases, heartbeats, fencing tokens, reaper |
-| Extension points | Plug-ins for ticket source, agent engine, notifier, chat channel |
+| Extension points | Plug-ins for ticket source, agent engine and chat channel, with a [guide](docs/plugins.md) and a tested template |
 
 ## FAQ
 
