@@ -1,0 +1,295 @@
+{
+ "schema_version": 1,
+ "diagram_type": "architecture",
+ "meta": {
+  "title": "C4 level 3: Ticket gateway",
+  "output": "docs/architecture/c4-3a-gateway.html",
+  "locale": "en",
+  "quality_profile": "showcase"
+ },
+ "components": [
+  {
+   "id": "entry",
+   "type": "external",
+   "label": "Report entry",
+   "sublabel": "PWA, Lapor button",
+   "tag": "to build",
+   "pos": [
+    38,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "jwt",
+   "type": "security",
+   "label": "JWT check",
+   "sublabel": "signature, platform",
+   "tag": "to build",
+   "pos": [
+    240,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "lim",
+   "type": "backend",
+   "label": "User limits",
+   "sublabel": "tickets per user",
+   "tag": "to build",
+   "pos": [
+    442,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "dup",
+   "type": "backend",
+   "label": "Duplicate check",
+   "sublabel": "trigram, propose",
+   "tag": "to build",
+   "pos": [
+    644,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "iss",
+   "type": "backend",
+   "label": "Issue writer",
+   "sublabel": "via Intake App",
+   "tag": "to build",
+   "pos": [
+    846,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "gh",
+   "type": "cloud",
+   "label": "GitHub Issues",
+   "sublabel": "source of truth",
+   "tag": "exists",
+   "pos": [
+    1048,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "att",
+   "type": "database",
+   "label": "Attachments",
+   "sublabel": "private, login",
+   "tag": "to build",
+   "pos": [
+    846,
+    40
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "pg",
+   "type": "database",
+   "label": "Postgres",
+   "sublabel": "counters, dedupe",
+   "tag": "to build",
+   "pos": [
+    644,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "hook",
+   "type": "backend",
+   "label": "Webhook listener",
+   "sublabel": "signed events",
+   "tag": "to build",
+   "pos": [
+    1048,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "push",
+   "type": "external",
+   "label": "Status push",
+   "sublabel": "PWA, Telegram, WA",
+   "tag": "to build",
+   "pos": [
+    846,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "chat",
+   "type": "security",
+   "label": "Chat bridge",
+   "sublabel": "known groups only",
+   "tag": "plug-in",
+   "pos": [
+    38,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "ask",
+   "type": "external",
+   "label": "Ask run",
+   "sublabel": "read-only agent",
+   "tag": "to build",
+   "pos": [
+    240,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  }
+ ],
+ "connections": [
+  {
+   "from": "entry",
+   "to": "jwt",
+   "label": "HTTPS+JWT",
+   "variant": "security"
+  },
+  {
+   "from": "jwt",
+   "to": "lim",
+   "label": "valid"
+  },
+  {
+   "from": "lim",
+   "to": "dup",
+   "label": "within cap"
+  },
+  {
+   "from": "dup",
+   "to": "iss",
+   "label": "new or linked"
+  },
+  {
+   "from": "iss",
+   "to": "gh",
+   "label": "create issue",
+   "variant": "emphasis"
+  },
+  {
+   "from": "iss",
+   "to": "att",
+   "label": "files"
+  },
+  {
+   "from": "lim",
+   "to": "pg",
+   "label": "count",
+   "variant": "dashed"
+  },
+  {
+   "from": "dup",
+   "to": "pg",
+   "label": "search",
+   "variant": "dashed"
+  },
+  {
+   "from": "gh",
+   "to": "hook",
+   "label": "events",
+   "variant": "dashed"
+  },
+  {
+   "from": "hook",
+   "to": "push",
+   "label": "status"
+  },
+  {
+   "from": "chat",
+   "to": "ask",
+   "label": "question"
+  },
+  {
+   "from": "chat",
+   "to": "lim",
+   "label": "/task",
+   "variant": "emphasis"
+  }
+ ],
+ "cards": [
+  {
+   "dot": "cyan",
+   "title": "Input",
+   "items": [
+    "Report with signed login token and optional files",
+    "GitHub webhooks for status",
+    "Chat messages from registered groups (Telegram first); anyone in a registered group may ask or start a task"
+   ]
+  },
+  {
+   "dot": "amber",
+   "title": "Output",
+   "items": [
+    "A GitHub issue, never a silent drop",
+    "Status messages to the reporter"
+   ]
+  },
+  {
+   "dot": "violet",
+   "title": "State it owns",
+   "items": [
+    "Per-user counters, duplicate index; attachments store"
+   ]
+  },
+  {
+   "dot": "rose",
+   "title": "If it fails",
+   "items": [
+    "Bad signature: reject. GitHub down: queue the report and retry",
+    "Duplicate: the LLM may only propose a link; a human can undo",
+    "Unknown group: the bot ignores it and leaves. Group invite leaked: anyone joining can read answers, so keep groups private and watch membership alerts"
+   ]
+  }
+ ]
+}

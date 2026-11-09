@@ -1,0 +1,272 @@
+{
+ "schema_version": 1,
+ "diagram_type": "architecture",
+ "meta": {
+  "title": "C4 level 3: Agent runtime",
+  "output": "docs/architecture/c4-3c-agents.html",
+  "locale": "en",
+  "quality_profile": "showcase"
+ },
+ "components": [
+  {
+   "id": "orch",
+   "type": "external",
+   "label": "Orchestrator",
+   "sublabel": "job + repo facts",
+   "tag": "to build",
+   "pos": [
+    38,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "prep",
+   "type": "backend",
+   "label": "Workspace prep",
+   "sublabel": "bare mirror, worktree",
+   "tag": "to build",
+   "pos": [
+    240,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "tri",
+   "type": "backend",
+   "label": "Triage agent",
+   "sublabel": "read-only",
+   "tag": "to build",
+   "pos": [
+    240,
+    40
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "esc",
+   "type": "external",
+   "label": "Escalation",
+   "sublabel": "level",
+   "tag": "to build",
+   "pos": [
+    442,
+    40
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "dev",
+   "type": "backend",
+   "label": "Dev agent",
+   "sublabel": "container, no keys",
+   "tag": "to build",
+   "pos": [
+    442,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "rev",
+   "type": "backend",
+   "label": "Reviewer agent",
+   "sublabel": "read-only",
+   "tag": "to build",
+   "pos": [
+    240,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "run",
+   "type": "external",
+   "label": "Runners",
+   "sublabel": "push, PR, merge",
+   "tag": "to build",
+   "pos": [
+    442,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "broker",
+   "type": "external",
+   "label": "Tool broker",
+   "sublabel": "device ask",
+   "tag": "to build",
+   "pos": [
+    644,
+    40
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "egress",
+   "type": "security",
+   "label": "Egress allowlist",
+   "sublabel": "API + mirror only",
+   "tag": "to build",
+   "pos": [
+    644,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "llm",
+   "type": "external",
+   "label": "Claude API",
+   "sublabel": "claude -p",
+   "tag": "exists",
+   "pos": [
+    846,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "memory",
+   "type": "external",
+   "label": "Memory",
+   "sublabel": "recall, remember",
+   "tag": "exists",
+   "pos": [
+    644,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  }
+ ],
+ "connections": [
+  {
+   "from": "orch",
+   "to": "prep",
+   "label": "job",
+   "variant": "emphasis"
+  },
+  {
+   "from": "prep",
+   "to": "tri",
+   "label": "read repo"
+  },
+  {
+   "from": "tri",
+   "to": "esc",
+   "label": "level"
+  },
+  {
+   "from": "prep",
+   "to": "dev",
+   "label": "worktree",
+   "variant": "emphasis"
+  },
+  {
+   "from": "prep",
+   "to": "rev",
+   "label": "PR diff"
+  },
+  {
+   "from": "dev",
+   "to": "run",
+   "label": "diff",
+   "variant": "emphasis"
+  },
+  {
+   "from": "rev",
+   "to": "run",
+   "label": "verdict"
+  },
+  {
+   "from": "dev",
+   "to": "broker",
+   "label": "device ask",
+   "variant": "security"
+  },
+  {
+   "from": "dev",
+   "to": "egress",
+   "label": "calls",
+   "variant": "security"
+  },
+  {
+   "from": "egress",
+   "to": "llm",
+   "label": "prompts"
+  },
+  {
+   "from": "dev",
+   "to": "memory",
+   "label": "MCP",
+   "variant": "dashed"
+  }
+ ],
+ "cards": [
+  {
+   "dot": "cyan",
+   "title": "Input",
+   "items": [
+    "Job from the orchestrator with repo facts from the service registry",
+    "Ticket text and attachments (untrusted)"
+   ]
+  },
+  {
+   "dot": "amber",
+   "title": "Output",
+   "items": [
+    "Triage: level and plan. Dev: a diff. Reviewer: a verdict. Never a push or merge"
+   ]
+  },
+  {
+   "dot": "violet",
+   "title": "State it owns",
+   "items": [
+    "Per-run worktree and container; deleted when the run ends"
+   ]
+  },
+  {
+   "dot": "rose",
+   "title": "If it fails",
+   "items": [
+    "Agent hangs: lease expires, container killed, ticket goes back to the queue",
+    "Prompt injection: no secrets in the container, egress limited, only dev writes, runners check the diff"
+   ]
+  }
+ ]
+}

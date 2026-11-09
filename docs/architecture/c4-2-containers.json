@@ -1,0 +1,416 @@
+{
+ "schema_version": 1,
+ "diagram_type": "architecture",
+ "meta": {
+  "title": "C4 level 2: containers on the host (open-source stage 1)",
+  "output": "docs/architecture/c4-2-containers.html",
+  "locale": "en",
+  "quality_profile": "showcase"
+ },
+ "components": [
+  {
+   "id": "apps",
+   "type": "frontend",
+   "label": "Your apps",
+   "sublabel": "report button",
+   "tag": "plug-in",
+   "pos": [
+    1048,
+    40
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "gw",
+   "type": "security",
+   "label": "Gateway",
+   "sublabel": "JWT, limits, dedupe",
+   "tag": "to build",
+   "pos": [
+    846,
+    40
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "gh",
+   "type": "cloud",
+   "label": "Ticket source",
+   "sublabel": "GitHub first",
+   "tag": "plug-in",
+   "pos": [
+    1048,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "console",
+   "type": "frontend",
+   "label": "Console",
+   "sublabel": "wizard, queue",
+   "tag": "to build",
+   "pos": [
+    240,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "pg",
+   "type": "database",
+   "label": "Postgres",
+   "sublabel": "queue, registry, audit",
+   "tag": "to build",
+   "pos": [
+    442,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "orch",
+   "type": "backend",
+   "label": "Orchestrator",
+   "sublabel": "state machine",
+   "tag": "to build",
+   "pos": [
+    644,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "run",
+   "type": "backend",
+   "label": "Runners",
+   "sublabel": "push, PR, merge",
+   "tag": "to build",
+   "pos": [
+    846,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "llm",
+   "type": "external",
+   "label": "Agent engine",
+   "sublabel": "Claude first",
+   "tag": "plug-in",
+   "pos": [
+    38,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "eng",
+   "type": "backend",
+   "label": "Engine adapter",
+   "sublabel": "one interface",
+   "tag": "plug-in",
+   "pos": [
+    442,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "agents",
+   "type": "backend",
+   "label": "Agent containers",
+   "sublabel": "triage, dev, reviewer",
+   "tag": "to build",
+   "pos": [
+    644,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "sync",
+   "type": "backend",
+   "label": "Sync job",
+   "sublabel": "repos, envs",
+   "tag": "to build",
+   "pos": [
+    846,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "mem",
+   "type": "database",
+   "label": "Memory",
+   "sublabel": "built-in store",
+   "tag": "plug-in",
+   "pos": [
+    442,
+    430
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "broker",
+   "type": "security",
+   "label": "Tool broker",
+   "sublabel": "creds, allowlist",
+   "tag": "to build",
+   "pos": [
+    644,
+    430
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "adp",
+   "type": "backend",
+   "label": "Adapters",
+   "sublabel": "own netns",
+   "tag": "plug-in",
+   "pos": [
+    846,
+    430
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "devs",
+   "type": "external",
+   "label": "Devices",
+   "sublabel": "TCP",
+   "tag": "plug-in",
+   "pos": [
+    1048,
+    430
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "chat",
+   "type": "security",
+   "label": "Chat bridge",
+   "sublabel": "ask, /task",
+   "tag": "plug-in",
+   "pos": [
+    644,
+    40
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "tg",
+   "type": "external",
+   "label": "Chat apps",
+   "sublabel": "Telegram first",
+   "tag": "plug-in",
+   "pos": [
+    38,
+    40
+   ],
+   "size": [
+    110,
+    60
+   ]
+  }
+ ],
+ "connections": [
+  {
+   "from": "apps",
+   "to": "gw",
+   "label": "HTTPS+JWT",
+   "variant": "security"
+  },
+  {
+   "from": "gw",
+   "to": "gh",
+   "label": "new issue",
+   "variant": "emphasis"
+  },
+  {
+   "from": "gh",
+   "to": "sync",
+   "label": "events",
+   "variant": "dashed"
+  },
+  {
+   "from": "console",
+   "to": "pg",
+   "label": "edit, stop"
+  },
+  {
+   "from": "orch",
+   "to": "pg",
+   "label": "claim, lease",
+   "variant": "emphasis"
+  },
+  {
+   "from": "orch",
+   "to": "run",
+   "label": "PR, merge job"
+  },
+  {
+   "from": "run",
+   "to": "gh",
+   "label": "push, PR",
+   "variant": "emphasis"
+  },
+  {
+   "from": "orch",
+   "to": "agents",
+   "label": "run"
+  },
+  {
+   "from": "agents",
+   "to": "eng",
+   "label": "calls"
+  },
+  {
+   "from": "eng",
+   "to": "llm",
+   "label": "prompts"
+  },
+  {
+   "from": "sync",
+   "to": "orch",
+   "label": "new work",
+   "variant": "emphasis"
+  },
+  {
+   "from": "agents",
+   "to": "mem",
+   "label": "recall",
+   "variant": "dashed"
+  },
+  {
+   "from": "agents",
+   "to": "broker",
+   "label": "device ask",
+   "variant": "security"
+  },
+  {
+   "from": "broker",
+   "to": "adp",
+   "label": "allowed"
+  },
+  {
+   "from": "adp",
+   "to": "devs",
+   "label": "TCP"
+  },
+  {
+   "from": "tg",
+   "to": "chat",
+   "label": "messages",
+   "variant": "security"
+  },
+  {
+   "from": "chat",
+   "to": "gw",
+   "label": "ask, /task"
+  }
+ ],
+ "cards": [
+  {
+   "dot": "cyan",
+   "title": "Input",
+   "items": [
+    "Install: one docker compose up, then a setup wizard in the console asks for the ticket source login and the engine key; everything else is detected",
+    "Tickets from apps via the gateway or from the ticket source; approvals from people"
+   ]
+  },
+  {
+   "dot": "amber",
+   "title": "Output",
+   "items": [
+    "PRs, merges to dev/staging, status messages, device actions, audit log"
+   ]
+  },
+  {
+   "dot": "violet",
+   "title": "State it owns",
+   "items": [
+    "Postgres holds queue, registry, audit and (built-in) memory; git mirrors and worktrees on disk. a shared memory service can replace the memory plug-in"
+   ]
+  },
+  {
+   "dot": "rose",
+   "title": "If it fails",
+   "items": [
+    "One host is a single point of failure; accepted and written down",
+    "Stage 1: GitHub + Claude only. Engine adapter, ticket source, notifier and device adapters are fixed interfaces so other engines come next"
+   ]
+  }
+ ],
+ "boundaries": [
+  {
+   "kind": "region",
+   "label": "Host (one install)",
+   "wraps": [
+    "gw",
+    "console",
+    "pg",
+    "orch",
+    "run",
+    "eng",
+    "agents",
+    "sync",
+    "mem",
+    "broker",
+    "adp",
+    "chat"
+   ],
+   "pad": 18
+  }
+ ]
+}

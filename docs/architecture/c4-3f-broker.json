@@ -1,0 +1,277 @@
+{
+ "schema_version": 1,
+ "diagram_type": "architecture",
+ "meta": {
+  "title": "C4 level 3: Tool broker",
+  "output": "docs/architecture/c4-3f-broker.html",
+  "locale": "en",
+  "quality_profile": "showcase"
+ },
+ "components": [
+  {
+   "id": "ask",
+   "type": "external",
+   "label": "Service agent",
+   "sublabel": "device ask",
+   "tag": "to build",
+   "pos": [
+    38,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "val",
+   "type": "security",
+   "label": "Schema check",
+   "sublabel": "ids from registry",
+   "tag": "to build",
+   "pos": [
+    240,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "tbl",
+   "type": "database",
+   "label": "Action table",
+   "sublabel": "level, inverse, caps",
+   "tag": "to build",
+   "pos": [
+    240,
+    40
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "gate",
+   "type": "external",
+   "label": "Approval gate",
+   "sublabel": "signs token",
+   "tag": "to build",
+   "pos": [
+    442,
+    40
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "ver",
+   "type": "security",
+   "label": "Token check",
+   "sublabel": "bound, expiring",
+   "tag": "to build",
+   "pos": [
+    442,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "kill",
+   "type": "external",
+   "label": "Kill switch",
+   "sublabel": "console",
+   "tag": "to build",
+   "pos": [
+    644,
+    40
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "lim",
+   "type": "backend",
+   "label": "Limits, windows",
+   "sublabel": "per device",
+   "tag": "to build",
+   "pos": [
+    644,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "adp",
+   "type": "backend",
+   "label": "Adapters",
+   "sublabel": "redact output",
+   "tag": "later",
+   "pos": [
+    846,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "vault",
+   "type": "database",
+   "label": "Credentials",
+   "sublabel": "broker user only",
+   "tag": "to build",
+   "pos": [
+    846,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "devs",
+   "type": "external",
+   "label": "CCTV, printers",
+   "sublabel": "TCP",
+   "tag": "later",
+   "pos": [
+    1048,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "aud",
+   "type": "database",
+   "label": "Audit log",
+   "sublabel": "every action",
+   "tag": "to build",
+   "pos": [
+    644,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  }
+ ],
+ "connections": [
+  {
+   "from": "ask",
+   "to": "val",
+   "label": "request",
+   "variant": "security"
+  },
+  {
+   "from": "val",
+   "to": "tbl",
+   "label": "look up level"
+  },
+  {
+   "from": "val",
+   "to": "ver",
+   "label": "level + params"
+  },
+  {
+   "from": "gate",
+   "to": "ver",
+   "label": "signed token",
+   "variant": "security"
+  },
+  {
+   "from": "ver",
+   "to": "lim",
+   "label": "approved"
+  },
+  {
+   "from": "kill",
+   "to": "lim",
+   "label": "disable",
+   "variant": "security"
+  },
+  {
+   "from": "lim",
+   "to": "adp",
+   "label": "run",
+   "variant": "emphasis"
+  },
+  {
+   "from": "vault",
+   "to": "adp",
+   "label": "creds",
+   "variant": "security"
+  },
+  {
+   "from": "adp",
+   "to": "devs",
+   "label": "TCP"
+  },
+  {
+   "from": "lim",
+   "to": "aud",
+   "label": "log",
+   "variant": "dashed"
+  }
+ ],
+ "cards": [
+  {
+   "dot": "cyan",
+   "title": "Input",
+   "items": [
+    "A device request from a service agent: action name and device id, never a URL or command"
+   ]
+  },
+  {
+   "dot": "amber",
+   "title": "Output",
+   "items": [
+    "The action result with raw CCTV output redacted; an audit record"
+   ]
+  },
+  {
+   "dot": "violet",
+   "title": "State it owns",
+   "items": [
+    "Action table, credentials, audit log, approval tokens (short life)"
+   ]
+  },
+  {
+   "dot": "rose",
+   "title": "If it fails",
+   "items": [
+    "Unknown action or device: refuse and log",
+    "L2/L3 without a valid signed token: refuse. Device slow or down: time out, no retry loop"
+   ]
+  }
+ ],
+ "boundaries": [
+  {
+   "kind": "security-group",
+   "label": "Adapter netns, per-device IP:port",
+   "wraps": [
+    "adp",
+    "vault"
+   ],
+   "pad": 18
+  }
+ ]
+}

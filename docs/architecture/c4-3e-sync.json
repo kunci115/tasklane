@@ -1,0 +1,225 @@
+{
+ "schema_version": 1,
+ "diagram_type": "architecture",
+ "meta": {
+  "title": "C4 level 3: Sync job and service registry",
+  "output": "docs/architecture/c4-3e-sync.html",
+  "locale": "en",
+  "quality_profile": "showcase"
+ },
+ "components": [
+  {
+   "id": "gh",
+   "type": "cloud",
+   "label": "GitHub org",
+   "sublabel": "repos, issues, envs",
+   "tag": "exists",
+   "pos": [
+    38,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "app",
+   "type": "security",
+   "label": "Intake App",
+   "sublabel": "read-only here",
+   "tag": "to build",
+   "pos": [
+    240,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "poll",
+   "type": "backend",
+   "label": "Events + ETag",
+   "sublabel": "webhook first, poll",
+   "tag": "to build",
+   "pos": [
+    442,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "disc",
+   "type": "backend",
+   "label": "Discovery",
+   "sublabel": "every repo, new ones",
+   "tag": "to build",
+   "pos": [
+    644,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "det",
+   "type": "backend",
+   "label": "Detect facts",
+   "sublabel": "language, tests, envs",
+   "tag": "to build",
+   "pos": [
+    846,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "ovr",
+   "type": "external",
+   "label": "Repo override",
+   "sublabel": "optional .ai-ticket.yml",
+   "tag": "exists",
+   "pos": [
+    846,
+    40
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "reg",
+   "type": "database",
+   "label": "Service registry",
+   "sublabel": "repos, devices, profile",
+   "tag": "to build",
+   "pos": [
+    1048,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "con",
+   "type": "frontend",
+   "label": "Admin console",
+   "sublabel": "edit rows, devices",
+   "tag": "to build",
+   "pos": [
+    1048,
+    40
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "orch",
+   "type": "external",
+   "label": "Orchestrator",
+   "sublabel": "new work",
+   "tag": "to build",
+   "pos": [
+    442,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  }
+ ],
+ "connections": [
+  {
+   "from": "gh",
+   "to": "app",
+   "label": "API"
+  },
+  {
+   "from": "app",
+   "to": "poll",
+   "label": "changes"
+  },
+  {
+   "from": "poll",
+   "to": "disc",
+   "label": "repos"
+  },
+  {
+   "from": "disc",
+   "to": "det",
+   "label": "each repo"
+  },
+  {
+   "from": "ovr",
+   "to": "det",
+   "label": "overrides",
+   "variant": "dashed"
+  },
+  {
+   "from": "det",
+   "to": "reg",
+   "label": "fill",
+   "variant": "emphasis"
+  },
+  {
+   "from": "con",
+   "to": "reg",
+   "label": "edit"
+  },
+  {
+   "from": "poll",
+   "to": "orch",
+   "label": "new work",
+   "variant": "emphasis"
+  }
+ ],
+ "cards": [
+  {
+   "dot": "cyan",
+   "title": "Input",
+   "items": [
+    "GitHub events and conditional polls (304 costs nothing)",
+    "Hand edits from the console"
+   ]
+  },
+  {
+   "dot": "amber",
+   "title": "Output",
+   "items": [
+    "Registry rows: repo, language, test command, environments, mode, devices, agent profile",
+    "Jobs for new or changed issues"
+   ]
+  },
+  {
+   "dot": "violet",
+   "title": "State it owns",
+   "items": [
+    "The service registry; repos start read-only"
+   ]
+  },
+  {
+   "dot": "rose",
+   "title": "If it fails",
+   "items": [
+    "GitHub rate limit: back off, keep last known facts",
+    "Wrong guess: fix the row in the console; the override file wins over detection"
+   ]
+  }
+ ]
+}

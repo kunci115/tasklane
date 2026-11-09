@@ -1,0 +1,220 @@
+{
+ "schema_version": 1,
+ "diagram_type": "architecture",
+ "meta": {
+  "title": "C4 level 1: AI Ticket System in context (open-source stage 1)",
+  "output": "docs/architecture/c4-1-context.html",
+  "locale": "en",
+  "quality_profile": "showcase"
+ },
+ "components": [
+  {
+   "id": "reporter",
+   "type": "external",
+   "label": "Reporters",
+   "sublabel": "staff, customers",
+   "tag": "human",
+   "pos": [
+    38,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "apps",
+   "type": "frontend",
+   "label": "Your apps",
+   "sublabel": "any app with a button",
+   "tag": "plug-in",
+   "pos": [
+    240,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "sys",
+   "type": "backend",
+   "label": "AI Ticket System",
+   "sublabel": "one host, one install",
+   "tag": "to build",
+   "pos": [
+    442,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "gh",
+   "type": "cloud",
+   "label": "Ticket source",
+   "sublabel": "GitHub first",
+   "tag": "plug-in",
+   "pos": [
+    644,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "notify",
+   "type": "external",
+   "label": "Status channels",
+   "sublabel": "push, chat",
+   "tag": "plug-in",
+   "pos": [
+    442,
+    40
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "llm",
+   "type": "external",
+   "label": "Agent engine",
+   "sublabel": "Claude first",
+   "tag": "plug-in",
+   "pos": [
+    644,
+    40
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "people",
+   "type": "external",
+   "label": "Approvers",
+   "sublabel": "team, owner",
+   "tag": "human",
+   "pos": [
+    240,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "dev",
+   "type": "external",
+   "label": "Devices",
+   "sublabel": "CCTV, printers, TCP",
+   "tag": "plug-in",
+   "pos": [
+    442,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  }
+ ],
+ "connections": [
+  {
+   "from": "reporter",
+   "to": "apps",
+   "label": "reports",
+   "variant": "emphasis"
+  },
+  {
+   "from": "apps",
+   "to": "sys",
+   "label": "HTTPS+JWT",
+   "variant": "security"
+  },
+  {
+   "from": "sys",
+   "to": "gh",
+   "label": "issues, PRs",
+   "variant": "emphasis"
+  },
+  {
+   "from": "gh",
+   "to": "sys",
+   "label": "webhooks",
+   "variant": "dashed"
+  },
+  {
+   "from": "sys",
+   "to": "llm",
+   "label": "prompts"
+  },
+  {
+   "from": "sys",
+   "to": "notify",
+   "label": "status"
+  },
+  {
+   "from": "notify",
+   "to": "reporter",
+   "label": "push",
+   "variant": "dashed"
+  },
+  {
+   "from": "people",
+   "to": "sys",
+   "label": "approve",
+   "variant": "security"
+  },
+  {
+   "from": "sys",
+   "to": "dev",
+   "label": "allowed acts",
+   "variant": "security"
+  }
+ ],
+ "cards": [
+  {
+   "dot": "cyan",
+   "title": "Input",
+   "items": [
+    "Stage 1 supports GitHub and Claude only; every box tagged plug-in has a fixed interface so more can be added later",
+    "Reports from any app with a signed login token, or issues typed on the ticket source"
+   ]
+  },
+  {
+   "dot": "amber",
+   "title": "Output",
+   "items": [
+    "Issues, PRs merged to dev/staging, status messages",
+    "Device actions through the broker only"
+   ]
+  },
+  {
+   "dot": "violet",
+   "title": "State it owns",
+   "items": [
+    "One install, one organization, one host: queue, registry, audit log, memory are all built in",
+    "The ticket source stays the source of truth for tickets"
+   ]
+  },
+  {
+   "dot": "rose",
+   "title": "If it fails",
+   "items": [
+    "Host down: no new pickups; tickets stay safe in the ticket source",
+    "Production is never touched by the system; only a human promotes"
+   ]
+  }
+ ]
+}

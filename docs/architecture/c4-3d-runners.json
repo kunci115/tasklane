@@ -1,0 +1,267 @@
+{
+ "schema_version": 1,
+ "diagram_type": "architecture",
+ "meta": {
+  "title": "C4 level 3: PR runner and Merge runner",
+  "output": "docs/architecture/c4-3d-runners.html",
+  "locale": "en",
+  "quality_profile": "showcase"
+ },
+ "components": [
+  {
+   "id": "diff",
+   "type": "external",
+   "label": "Dev agent diff",
+   "sublabel": "from worktree",
+   "tag": "to build",
+   "pos": [
+    38,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "score",
+   "type": "security",
+   "label": "Re-score diff",
+   "sublabel": "path rules first",
+   "tag": "to build",
+   "pos": [
+    240,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "gate",
+   "type": "external",
+   "label": "Approval gate",
+   "sublabel": "L2 / L3 wait",
+   "tag": "to build",
+   "pos": [
+    240,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "pr",
+   "type": "backend",
+   "label": "PR runner",
+   "sublabel": "push + open PR",
+   "tag": "to build",
+   "pos": [
+    442,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "app",
+   "type": "security",
+   "label": "Runner App",
+   "sublabel": "run token, 1 repo",
+   "tag": "to build",
+   "pos": [
+    442,
+    40
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "gh",
+   "type": "cloud",
+   "label": "GitHub",
+   "sublabel": "branch + PR",
+   "tag": "exists",
+   "pos": [
+    442,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "ci",
+   "type": "backend",
+   "label": "Agent CI lane",
+   "sublabel": "isolated, no keys",
+   "tag": "exists",
+   "pos": [
+    644,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "rev",
+   "type": "external",
+   "label": "Reviewer agent",
+   "sublabel": "verdict",
+   "tag": "to build",
+   "pos": [
+    846,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "bp",
+   "type": "security",
+   "label": "Branch rules",
+   "sublabel": "required checks",
+   "tag": "exists",
+   "pos": [
+    846,
+    40
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "merge",
+   "type": "backend",
+   "label": "Merge runner",
+   "sublabel": "reviewed SHA only",
+   "tag": "to build",
+   "pos": [
+    1048,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "stg",
+   "type": "cloud",
+   "label": "Dev, staging",
+   "sublabel": "per app",
+   "tag": "per repo",
+   "pos": [
+    1048,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  }
+ ],
+ "connections": [
+  {
+   "from": "diff",
+   "to": "score",
+   "label": "diff",
+   "variant": "emphasis"
+  },
+  {
+   "from": "score",
+   "to": "gate",
+   "label": "level up",
+   "variant": "security"
+  },
+  {
+   "from": "score",
+   "to": "pr",
+   "label": "allowed",
+   "variant": "emphasis"
+  },
+  {
+   "from": "app",
+   "to": "pr",
+   "label": "run token",
+   "variant": "security"
+  },
+  {
+   "from": "pr",
+   "to": "gh",
+   "label": "push + PR"
+  },
+  {
+   "from": "gh",
+   "to": "ci",
+   "label": "Actions",
+   "variant": "dashed"
+  },
+  {
+   "from": "ci",
+   "to": "rev",
+   "label": "green"
+  },
+  {
+   "from": "rev",
+   "to": "merge",
+   "label": "verdict"
+  },
+  {
+   "from": "bp",
+   "to": "merge",
+   "label": "enforce",
+   "variant": "security"
+  },
+  {
+   "from": "merge",
+   "to": "stg",
+   "label": "merge to dev",
+   "variant": "emphasis"
+  }
+ ],
+ "cards": [
+  {
+   "dot": "cyan",
+   "title": "Input",
+   "items": [
+    "A diff from the dev agent; a verdict from the reviewer"
+   ]
+  },
+  {
+   "dot": "amber",
+   "title": "Output",
+   "items": [
+    "A branch and PR on GitHub; a merge to dev/staging"
+   ]
+  },
+  {
+   "dot": "violet",
+   "title": "State it owns",
+   "items": [
+    "Short-lived tokens per run; nothing else (state is in Postgres)"
+   ]
+  },
+  {
+   "dot": "rose",
+   "title": "If it fails",
+   "items": [
+    "Diff touches protected paths: level goes up and waits for approval",
+    "CI red twice or head SHA changed after review: no merge, back to a human"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,266 @@
+{
+ "schema_version": 1,
+ "diagram_type": "architecture",
+ "meta": {
+  "title": "C4 level 3: Orchestrator",
+  "output": "docs/architecture/c4-3b-orchestrator.html",
+  "locale": "en",
+  "quality_profile": "showcase"
+ },
+ "components": [
+  {
+   "id": "sync",
+   "type": "external",
+   "label": "Sync job",
+   "sublabel": "new work",
+   "tag": "to build",
+   "pos": [
+    38,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "pg",
+   "type": "database",
+   "label": "Postgres queue",
+   "sublabel": "tickets, leases",
+   "tag": "to build",
+   "pos": [
+    240,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "claim",
+   "type": "backend",
+   "label": "Claim loop",
+   "sublabel": "SKIP LOCKED",
+   "tag": "to build",
+   "pos": [
+    442,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "graph",
+   "type": "backend",
+   "label": "State machine",
+   "sublabel": "LangGraph",
+   "tag": "to build",
+   "pos": [
+    644,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "disp",
+   "type": "backend",
+   "label": "Dispatcher",
+   "sublabel": "start agent run",
+   "tag": "to build",
+   "pos": [
+    846,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "agents",
+   "type": "external",
+   "label": "Agent runtime",
+   "sublabel": "triage, dev, review",
+   "tag": "to build",
+   "pos": [
+    1048,
+    170
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "console",
+   "type": "external",
+   "label": "Admin console",
+   "sublabel": "stop, lanes",
+   "tag": "to build",
+   "pos": [
+    240,
+    40
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "adm",
+   "type": "security",
+   "label": "Admission",
+   "sublabel": "CI queue, K=1",
+   "tag": "to build",
+   "pos": [
+    846,
+    40
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "lease",
+   "type": "backend",
+   "label": "Lease + beat",
+   "sublabel": "fencing token",
+   "tag": "to build",
+   "pos": [
+    442,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "ckpt",
+   "type": "database",
+   "label": "Checkpoints",
+   "sublabel": "resume per step",
+   "tag": "to build",
+   "pos": [
+    644,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  },
+  {
+   "id": "reap",
+   "type": "backend",
+   "label": "Reaper",
+   "sublabel": "orphan runs",
+   "tag": "to build",
+   "pos": [
+    240,
+    300
+   ],
+   "size": [
+    110,
+    60
+   ]
+  }
+ ],
+ "connections": [
+  {
+   "from": "sync",
+   "to": "pg",
+   "label": "enqueue",
+   "variant": "emphasis"
+  },
+  {
+   "from": "claim",
+   "to": "pg",
+   "label": "claim",
+   "variant": "emphasis"
+  },
+  {
+   "from": "claim",
+   "to": "graph",
+   "label": "ticket"
+  },
+  {
+   "from": "graph",
+   "to": "disp",
+   "label": "next step"
+  },
+  {
+   "from": "adm",
+   "to": "disp",
+   "label": "slot free",
+   "variant": "emphasis"
+  },
+  {
+   "from": "disp",
+   "to": "agents",
+   "label": "run"
+  },
+  {
+   "from": "console",
+   "to": "pg",
+   "label": "stop, lane"
+  },
+  {
+   "from": "claim",
+   "to": "lease",
+   "label": "take lease"
+  },
+  {
+   "from": "graph",
+   "to": "ckpt",
+   "label": "save",
+   "variant": "dashed"
+  },
+  {
+   "from": "reap",
+   "to": "pg",
+   "label": "expired",
+   "variant": "dashed"
+  }
+ ],
+ "cards": [
+  {
+   "dot": "cyan",
+   "title": "Input",
+   "items": [
+    "New work from sync; stop and lane changes from the console",
+    "Agent results and CI status"
+   ]
+  },
+  {
+   "dot": "amber",
+   "title": "Output",
+   "items": [
+    "One step at a time: triage, escalate, wait for approval, dev, CI, re-score, review, merge"
+   ]
+  },
+  {
+   "dot": "violet",
+   "title": "State it owns",
+   "items": [
+    "Queue rows, leases with fencing tokens, checkpoints, retry counts"
+   ]
+  },
+  {
+   "dot": "rose",
+   "title": "If it fails",
+   "items": [
+    "Crash: lease expires, reaper frees it, run resumes from the last checkpoint",
+    "CI queue deep: admission holds the dev step; at most 2 CI runs per ticket, then a human"
+   ]
+  }
+ ]
+}
