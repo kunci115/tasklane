@@ -146,6 +146,11 @@ impl Orchestrator {
         if archived || mode == "watch" {
             return Ok(Noted::Nothing);
         }
+        // Another install owns this repository: leave its issues alone.
+        if let crate::Owner::Foreign(who) = self.ensure_owner(service_id, service).await? {
+            eprintln!("sync: {service} is handled by {who}; skipping issue {reference}");
+            return Ok(Noted::Nothing);
+        }
         let known: Option<i64> = sqlx::query_scalar(
             "SELECT id FROM tickets WHERE service_id = $1 AND external_ref = $2",
         )

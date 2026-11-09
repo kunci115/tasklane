@@ -1858,3 +1858,46 @@ async fn the_repository_list_is_paged_searchable_filterable_and_returns_to_the_s
         "a return value that is not a plain query string is ignored"
     );
 }
+
+#[tokio::test]
+async fn a_repository_owned_by_another_install_says_so_and_a_person_can_take_it_over() {
+    let Some(e) = env().await else { return };
+    sqlx::query("UPDATE services SET owner_state = 'foreign', owner_name = 'office_bbbb2222', owner_checked_at = now() WHERE external_id = 'org/repo'")
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    let (_, _, page) = send(&e.app, get("/services", Some(e.cookie.clone()))).await;
+    assert!(
+        page.contains("Handled by another tasklane install") && page.contains("office_bbbb2222"),
+        "{page}"
+    );
+    assert!(page.contains("This install is called"));
+    let id: i64 = sqlx::query_scalar("SELECT id FROM services WHERE external_id = 'org/repo'")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    // no cookie, no take-over
+    let (st, _, _) = send(
+        &e.app,
+        form(&format!("/services/{id}/takeover"), "csrf=x".into(), None),
+    )
+    .await;
+    assert!(st == StatusCode::SEE_OTHER || st == StatusCode::FORBIDDEN);
+    let (st, h, _) = send(
+        &e.app,
+        form(
+            &format!("/services/{id}/takeover"),
+            format!("csrf={}&ret=mode%3Dfull", e.csrf),
+            Some(e.cookie.clone()),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::SEE_OTHER);
+    assert_eq!(h[header::LOCATION], "/services?mode=full");
+    let state: String = sqlx::query_scalar("SELECT owner_state FROM services WHERE id = $1")
+        .bind(id)
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(state, "mine");
+}

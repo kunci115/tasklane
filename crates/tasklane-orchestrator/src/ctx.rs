@@ -79,6 +79,7 @@ pub struct Orchestrator {
     pub(crate) engine: PluginClient,
     pub(crate) cfg: Config,
     pub(crate) ws: Workspaces,
+    pub(crate) instance: tokio::sync::OnceCell<crate::ownership::Instance>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -155,6 +156,7 @@ impl Orchestrator {
             engine,
             cfg,
             ws,
+            instance: tokio::sync::OnceCell::new(),
         }
     }
 
@@ -248,6 +250,17 @@ impl Orchestrator {
         .await?;
         if mode.as_deref() == Some("watch") {
             self.queue.defer(&job, 120.0).await?;
+            return Ok(RunResult::Waiting);
+        }
+        // Another install owns this repository: hold the work, do not touch the repository.
+        let theirs: Option<String> = sqlx::query_scalar(
+            "SELECT s.owner_state FROM tickets t JOIN services s ON s.id = t.service_id WHERE t.id = $1 AND s.owner_state = 'foreign'",
+        )
+        .bind(job.ticket_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        if theirs.is_some() {
+            self.queue.defer(&job, 300.0).await?;
             return Ok(RunResult::Waiting);
         }
         let work = async {

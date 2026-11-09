@@ -281,3 +281,6 @@ h3:before{content:"// ";color:var(--accent);opacity:.8}
 .pager .num{color:var(--muted);border:1px solid transparent} .pager .num:hover{color:var(--ink);border-color:var(--line2);background:var(--panel2);text-decoration:none}
 .pager .cur{background:var(--accent-soft);border:1px solid var(--accent);color:var(--ink)}
 .pager .gap{color:var(--faint);padding:0 .2rem}
+
+.notice{border:1px solid var(--line2);border-radius:10px;padding:.7rem .85rem;margin:.2rem 0 .8rem;font-size:.86rem}
+.notice.warn{border-color:var(--warn);background:var(--warn-bg)}

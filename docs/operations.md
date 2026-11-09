@@ -9,6 +9,19 @@ tasklane is a single daemon plus Postgres. It reads tickets from a ticket source
 - An Anthropic API key (or a Claude Code OAuth token) for the agent.
 - A TLS reverse proxy in front of port 8080 if the console or the webhook is reachable from outside.
 
+## Two installs on one repository
+
+Two tasklane installs on the same repository would both triage every issue, comment twice and open duplicate pull requests. tasklane prevents this without any extra server:
+
+- Each install has an identity (a short name from the machine's host name, set `TASKLANE_INSTANCE_NAME` to choose one, and a random id). It is shown on the **Repositories** page.
+- The first time an issue arrives in a repository that is in `triage` or `full`, the install **claims** the repository on GitHub by creating the ref `refs/tasklane/owner/<time>-<name>_<id>`. Creating a ref is atomic, the **oldest claim wins**, and every install computes the same winner, so two installs that start at the same moment settle without talking to each other.
+- An install that does not own a repository skips its issues, holds any queued work for it and shows **Handled by another tasklane install** on the repository card. Nothing is commented or pushed.
+- A result is trusted for a few minutes (ten when you own the repository, five when you do not), so a quiet repository costs no API calls and an active one costs about one call every few minutes.
+- Putting a repository in `watch` gives the claim back. If the other install is gone for good, press **Take over** on the card: it removes the other claim and takes the repository. That is a decision for a person, never automatic, because GitHub gives no safe way to know whether the other install is only slow.
+- A source plug-in without this guard is not blocked; an empty repository (no commit to point a ref at) cannot be guarded yet.
+
+One install per organisation is the supported setup. Several people use the same console with their own roles, and more throughput comes from more workers on the same database, which the queue already handles (leases and fencing tokens).
+
 ## Quick start (Docker)
 
 ```bash

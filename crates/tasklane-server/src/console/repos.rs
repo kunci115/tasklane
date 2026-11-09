@@ -71,7 +71,7 @@ pub async fn page(
     let pages = ((total + per as i64 - 1) / per as i64).max(1) as u32;
     let page = lq.page.unwrap_or(1).clamp(1, pages);
     let rows = sqlx::query(
-        "SELECT s.id, s.external_id, s.mode, s.archived, s.facts, s.agent_profile,
+        "SELECT s.id, s.external_id, s.mode, s.archived, s.facts, s.agent_profile, s.owner_state, s.owner_name,
                 (SELECT count(*) FROM tickets t WHERE t.service_id = s.id AND t.state NOT LIKE 'closed_%' AND t.state <> 'merged') AS open,
                 (SELECT count(*) FROM tickets t WHERE t.service_id = s.id AND t.state = 'merged') AS merged,
                 (SELECT count(*) FROM tickets t WHERE t.service_id = s.id AND t.state IN ('awaiting_approval','failed')) AS attention,
@@ -147,6 +147,12 @@ pub async fn page(
         tab("triage", "Triage", *counts.get("triage").unwrap_or(&0)),
         tab("watch", "Watch", *counts.get("watch").unwrap_or(&0)),
     ));
+    if let Ok(i) = st.orch.instance().await {
+        b.push_str(&format!(
+            "<p class=\"hint\" style=\"margin:-.4rem 0 1rem\">This install is called <span class=\"mono\">{}</span>. It claims a repository on the ticket source the first time an issue arrives, so a second tasklane on the same repository stays out of its way.</p>",
+            esc(&i.tag())
+        ));
+    }
     if rows.is_empty() {
         b.push_str(&format!(
             "<div class=\"card\">{}</div>",
@@ -163,6 +169,8 @@ pub async fn page(
         let name: String = r.get("external_id");
         let mode: String = r.get("mode");
         let archived: bool = r.get("archived");
+        let owner_state: String = r.get("owner_state");
+        let owner_name: Option<String> = r.get("owner_name");
         let facts: Value = r.get("facts");
         let profile: Value = r.get("agent_profile");
         let (open, merged, attention): (i64, i64, i64) =
@@ -198,7 +206,7 @@ pub async fn page(
         b.push_str(&format!(
             "<div class=\"card repo-card\"><div class=\"row tight\" style=\"align-items:center;gap:.5rem\"><h2 style=\"margin:0\">{}</h2>{}{}{}{}</div>\
 <form method=\"post\" action=\"/services/{id}/mode\" style=\"margin:.8rem 0\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"ret\" value=\"{here}\"><div class=\"seg\" role=\"group\" aria-label=\"Mode\">{}{}{}</div></form>\
-<div class=\"row tight muted small\" style=\"gap:1rem;margin-bottom:.6rem\"><span>{open} open</span><span>{merged} merged</span>{}<span>{}</span></div>\
+{}<div class=\"row tight muted small\" style=\"gap:1rem;margin-bottom:.6rem\"><span>{open} open</span><span>{merged} merged</span>{}<span>{}</span></div>\
 <details style=\"margin-top:.7rem\"><summary class=\"btn small\">Settings and protected paths</summary><h3 style=\"margin-top:.9rem\">Protected paths</h3><div>{}</div><p class=\"hint\">Changes to these always need approval of the exact diff, on top of the built-in list (CI config, Dockerfiles, migrations, keys).</p><form method=\"post\" action=\"/services/{id}/profile\" style=\"margin-top:.8rem\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"ret\" value=\"{here}\">\
 <div class=\"field\"><label for=\"s{id}\">Instructions for the agent</label><textarea id=\"s{id}\" name=\"system\" maxlength=\"4000\" placeholder=\"For example: follow the existing code style; never change generated files.\">{}</textarea></div>\
 <div class=\"field\"><label for=\"t{id}\">Test command the agent may run</label><input id=\"t{id}\" type=\"text\" name=\"test_command\" maxlength=\"200\" value=\"{}\" placeholder=\"pytest -q\"><div class=\"hint\">One command, no parentheses or line breaks.</div></div>\
@@ -212,6 +220,12 @@ pub async fn page(
             seg("watch"),
             seg("triage"),
             seg("full"),
+            if owner_state == "foreign" {
+                format!("<div class=\"notice warn\"><strong>Handled by another tasklane install</strong> ({}). This one leaves the repository alone, so the two do not answer the same issues twice.\
+<form method=\"post\" action=\"/services/{id}/takeover\" style=\"margin-top:.5rem\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"ret\" value=\"{here}\"><button class=\"btn small danger\" data-confirm=\"Take this repository over? The other install loses it and stops acting on it.\">Take over</button></form></div>", esc(owner_name.as_deref().unwrap_or("unknown")), sess.csrf)
+            } else {
+                String::new()
+            },
             last.map(|s| format!("<span>active {}</span>", ago(s))).unwrap_or_else(|| "<span>no activity yet</span>".into()),
             if mode == "full" { "<span class=\"pill ok\">working on its own</span>" } else if mode == "watch" { "<span class=\"pill\">idle</span>" } else { "<span class=\"pill info\">asks first</span>" },
             if protected.is_empty() { "<span class=\"muted small\">none detected</span>".to_string() } else { protected },
@@ -276,7 +290,40 @@ pub async fn set_mode(
         .bind(json!({"service_id": id, "mode": f.mode}))
         .execute(st.orch.pool())
         .await;
+    if f.mode == "watch" {
+        // a repository nobody acts on gives its claim back, so another install may take it
+        let orch = st.orch.clone();
+        tokio::spawn(async move { orch.release_owner(id).await });
+    }
     back(f.ret.as_deref())
+}
+
+#[derive(Deserialize)]
+pub struct TakeoverIn {
+    csrf: String,
+    ret: Option<String>,
+}
+
+pub async fn take_over(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Form(f): Form<TakeoverIn>,
+) -> Response {
+    if !csrf_ok(&st, &headers, &f.csrf).await {
+        return forbidden();
+    }
+    match st.orch.take_over(id).await {
+        Ok(_) => back(f.ret.as_deref()),
+        Err(e) => {
+            eprintln!("take over {id}: {e}");
+            (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "The take-over did not work. The ticket source refused or could not be reached; try again in a minute.",
+            )
+                .into_response()
+        }
+    }
 }
 
 #[derive(Deserialize)]

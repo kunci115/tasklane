@@ -41,6 +41,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/services", get(repos::page))
         .route("/services/{id}/mode", post(repos::set_mode))
         .route("/services/{id}/profile", post(repos::set_profile))
+        .route("/services/{id}/takeover", post(repos::take_over))
         .route("/people", get(people::page).post(people::add))
         .route("/people/{id}/delete", post(people::delete))
         .route("/chat", get(chat_page))

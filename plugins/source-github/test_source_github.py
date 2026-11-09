@@ -526,6 +526,98 @@ class ConnectingAnApp(Base):
         self.assertEqual((r["owner"], r["owner_type"]), ("someone", "Organization"))
 
 
+class Ownership(Base):
+    """Two installs on one repository: the oldest claim wins, the other backs off."""
+
+    def setUp(self):
+        super().setUp()
+        self.refs = {}  # name -> sha
+        f = self.fake
+        f.routes[("GET", "/repos/acme/one")] = (200, {}, {"default_branch": "main"})
+        f.routes[("GET", "/repos/acme/one/git/ref/heads/main")] = (200, {}, {"object": {"sha": "a" * 40}})
+        f.routes[("GET", "/repos/acme/one/git/matching-refs/tasklane/owner/")] = lambda req: (
+            200, {}, [{"ref": "refs/tasklane/owner/" + n, "object": {"sha": v}} for n, v in sorted(self.refs.items())])
+
+        def create(req):
+            name = req["body"]["ref"][len("refs/tasklane/owner/"):]
+            if name in self.refs:
+                return 422, {}, {"message": "Reference already exists"}
+            self.refs[name] = req["body"]["sha"]
+            return 201, {}, {"ref": req["body"]["ref"]}
+        f.routes[("POST", "/repos/acme/one/git/refs")] = create
+
+    def delete_route(self, name):
+        def go(req):
+            self.refs.pop(name, None)
+            return 204, {}, None
+        self.fake.routes[("DELETE", f"/repos/acme/one/git/refs/tasklane/owner/{name}")] = go
+
+    def test_the_first_install_becomes_the_owner_and_repeating_changes_nothing(self):
+        a = self.ok("claim_repo", {"service": "acme/one", "instance": "laptop_aaaa1111"})
+        self.assertEqual((a["owner"], a["mine"], a["others"]), ("laptop_aaaa1111", True, []))
+        self.assertEqual(len(self.refs), 1)
+        self.ok("claim_repo", {"service": "acme/one", "instance": "laptop_aaaa1111"})
+        self.assertEqual(len(self.refs), 1, "a repeated claim creates no second ref")
+
+    def test_a_younger_install_sees_the_owner_and_does_not_claim(self):
+        self.refs["1700000000-office_bbbb2222"] = "a" * 40
+        r = self.ok("claim_repo", {"service": "acme/one", "instance": "laptop_aaaa1111"})
+        self.assertEqual((r["owner"], r["mine"]), ("office_bbbb2222", False))
+        self.assertEqual(list(self.refs), ["1700000000-office_bbbb2222"], "the loser leaves no claim behind")
+        self.assertEqual(self.fake.seen("POST", "/repos/acme/one/git/refs"), [])
+
+    def test_a_simultaneous_claim_is_settled_by_age_and_the_loser_removes_its_own(self):
+        # the other install claimed a second earlier, after this one listed the refs
+        calls = {"n": 0}
+        original = self.fake.routes[("GET", "/repos/acme/one/git/matching-refs/tasklane/owner/")]
+
+        def racing(req):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                self.refs["1000-office_bbbb2222"] = "a" * 40
+            return original(req)
+        self.fake.routes[("GET", "/repos/acme/one/git/matching-refs/tasklane/owner/")] = racing
+        for name in ("1000-office_bbbb2222",):
+            self.delete_route(name)
+        mine_name = None
+
+        def create(req):
+            nonlocal mine_name
+            mine_name = req["body"]["ref"][len("refs/tasklane/owner/"):]
+            self.refs[mine_name] = req["body"]["sha"]
+            self.delete_route(mine_name)
+            return 201, {}, {}
+        self.fake.routes[("POST", "/repos/acme/one/git/refs")] = create
+        r = self.ok("claim_repo", {"service": "acme/one", "instance": "laptop_aaaa1111"})
+        self.assertEqual((r["owner"], r["mine"]), ("office_bbbb2222", False))
+        self.assertNotIn(mine_name, self.refs)
+        self.assertEqual(list(self.refs), ["1000-office_bbbb2222"])
+
+    def test_release_removes_only_this_installs_claim(self):
+        self.refs["10-laptop_aaaa1111"] = "a" * 40
+        self.refs["20-office_bbbb2222"] = "a" * 40
+        self.delete_route("10-laptop_aaaa1111")
+        self.ok("release_repo", {"service": "acme/one", "instance": "laptop_aaaa1111"})
+        self.assertEqual(list(self.refs), ["20-office_bbbb2222"])
+
+    def test_a_person_can_take_a_repository_over(self):
+        self.refs["10-office_bbbb2222"] = "a" * 40
+        self.delete_route("10-office_bbbb2222")
+        r = self.ok("takeover_repo", {"service": "acme/one", "instance": "laptop_aaaa1111"})
+        self.assertEqual((r["owner"], r["mine"]), ("laptop_aaaa1111", True))
+        self.assertEqual(len(self.refs), 1)
+
+    def test_an_empty_repository_cannot_be_guarded_yet_and_is_not_blocked(self):
+        self.fake.routes[("GET", "/repos/acme/one/git/ref/heads/main")] = (409, {}, {"message": "Git Repository is empty."})
+        r = self.ok("claim_repo", {"service": "acme/one", "instance": "laptop_aaaa1111"})
+        self.assertEqual((r["mine"], r["guard"]), (True, "unavailable"))
+
+    def test_bad_instance_names_and_services_are_refused(self):
+        for bad in ["", "ab", "has space", "../x", "a" * 80]:
+            self.assertEqual(self.err("claim_repo", {"service": "acme/one", "instance": bad})["kind"], "permanent", bad)
+        self.assertEqual(self.err("claim_repo", {"service": "../x", "instance": "laptop_aaaa1111"})["kind"], "permanent")
+
+
 class WebhookPullRequests(Webhooks):
     def test_comments_and_issue_events_on_pull_requests_are_not_ticket_events(self):
         repo = {"full_name": "acme/one"}

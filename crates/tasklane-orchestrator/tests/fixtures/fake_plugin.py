@@ -105,7 +105,22 @@ def run(params):
     raise ValueError(role)
 
 
+def owner_call(op, params):
+    """The repository-ownership guard: a test arms `owner.json` with {"mine": false, "owner": "other_1234abcd"}."""
+    with open(os.path.join(STATE, "owner_calls.log"), "a") as f:
+        f.write(op + " " + params.get("service", "") + "\n")
+    if op == "release_repo":
+        return {}
+    o = read_json("owner.json", {"mine": True, "owner": params.get("instance", "")})
+    if op == "takeover_repo":
+        o = {"mine": True, "owner": params.get("instance", "")}
+        json.dump(o, open(os.path.join(STATE, "owner.json"), "w"))
+    return {"owner": o.get("owner", ""), "mine": o.get("mine", True), "others": [], "since": 0, "guard": "on"}
+
+
 def handle(op, params):
+    if op in ("claim_repo", "takeover_repo", "release_repo"):
+        return owner_call(op, params)
     if op == "describe":
         # like the real plug-ins: report what the environment they were started with says
         return {"name": "fake", "version": "0.0.0", "role": "test",

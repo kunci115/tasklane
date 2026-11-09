@@ -180,3 +180,106 @@ async fn a_reply_from_a_person_resumes_a_ticket_that_asked_a_question_but_our_ow
         1
     );
 }
+
+#[tokio::test]
+async fn a_repository_owned_by_another_install_is_left_alone_until_a_person_takes_it_over() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    write(
+        &w,
+        "services.json",
+        serde_json::json!([{"external_id": "org/shared", "default_branch": "main", "archived": false, "private": true}]),
+    );
+    write(
+        &w,
+        "owner.json",
+        serde_json::json!({"mine": false, "owner": "office_bbbb2222"}),
+    );
+    write(
+        &w,
+        "changes.json",
+        serde_json::json!([{"service": "org/shared", "ref": "1", "kind": "issue", "updated_at": "t"}]),
+    );
+    let r = w.orch.sync_once().await.unwrap();
+    assert_eq!(
+        r.tickets_created, 0,
+        "no ticket for a repository somebody else owns"
+    );
+    let (state, name): (String, Option<String>) = sqlx::query_as(
+        "SELECT owner_state, owner_name FROM services WHERE external_id = 'org/shared'",
+    )
+    .fetch_one(&w.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        (state.as_str(), name.as_deref()),
+        ("foreign", Some("office_bbbb2222"))
+    );
+    assert_eq!(
+        count(
+            &w.pool,
+            "SELECT count(*) FROM audit_events WHERE action = 'service.owned_elsewhere'"
+        )
+        .await,
+        1
+    );
+
+    // a result is trusted for a while: asking again does not call the source again
+    let calls = w.read_state("owner_calls.log").lines().count();
+    w.orch.sync_once().await.unwrap();
+    assert_eq!(w.read_state("owner_calls.log").lines().count(), calls);
+
+    // a person takes the repository over: its issues become tickets
+    let id: i64 = sqlx::query_scalar("SELECT id FROM services WHERE external_id = 'org/shared'")
+        .fetch_one(&w.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        w.orch.take_over(id).await.unwrap(),
+        tasklane_orchestrator::Owner::Mine
+    );
+    let r = w.orch.sync_once().await.unwrap();
+    assert_eq!(r.tickets_created, 1);
+    assert_eq!(
+        count(
+            &w.pool,
+            "SELECT count(*) FROM audit_events WHERE action = 'service.takeover'"
+        )
+        .await,
+        1
+    );
+
+    // switching it to watch gives the claim back
+    w.orch.release_owner(id).await;
+    let state: String = sqlx::query_scalar("SELECT owner_state FROM services WHERE id = $1")
+        .bind(id)
+        .fetch_one(&w.pool)
+        .await
+        .unwrap();
+    assert_eq!(state, "unknown");
+    assert!(w.read_state("owner_calls.log").contains("release_repo"));
+}
+
+#[tokio::test]
+async fn work_already_queued_for_a_repository_owned_elsewhere_waits() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    let t = ticket(&w, "7").await;
+    sqlx::query("UPDATE services SET owner_state = 'foreign', owner_name = 'office_bbbb2222', owner_checked_at = now()")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    let results = drive(&w).await;
+    assert!(
+        results.iter().all(|r| matches!(
+            r,
+            tasklane_orchestrator::RunResult::Waiting | tasklane_orchestrator::RunResult::Idle
+        )),
+        "{results:?}"
+    );
+    assert_eq!(state(&w.pool, t).await, "new", "nothing was done for it");
+}

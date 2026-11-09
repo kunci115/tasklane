@@ -389,6 +389,89 @@ def op_list_installations(params):
             "owner": (app.get("owner") or {}).get("login", ""), "owner_type": (app.get("owner") or {}).get("type", "")}
 
 
+# ---------------------------------------------------------------- repository ownership
+# Two tasklane installs on the same repository would both answer every issue. Each install that is
+# allowed to act on a repository holds a ref `refs/tasklane/owner/<epoch>-<instance>`. Creating a ref is
+# atomic on GitHub, the oldest claim wins, and every install computes the same winner, so no server is needed.
+OWNER_PREFIX = "tasklane/owner/"
+INSTANCE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,50}$")
+
+
+def p_instance(params):
+    v = p_str(params, "instance")
+    if not INSTANCE_RE.match(v):
+        raise permanent("instance must be 3 to 51 letters, digits, dots, dashes or underscores")
+    return v
+
+
+def owner_claims(svc):
+    """The claims on the repository, oldest first: [(epoch, instance, ref_name)]."""
+    r = app_api("GET", f"/repos/{svc}/git/matching-refs/{OWNER_PREFIX}", allow=(404,))
+    out = []
+    for x in (r.data if isinstance(r.data, list) else []):
+        name = str(x.get("ref", ""))[len("refs/" + OWNER_PREFIX):]
+        m = re.match(r"^(\d{1,12})-(.+)$", name)
+        if str(x.get("ref", "")).startswith("refs/" + OWNER_PREFIX) and m:
+            out.append((int(m.group(1)), m.group(2), name))
+    return sorted(out)
+
+
+def owner_report(claims, me):
+    if not claims:
+        return {"owner": "", "mine": False, "others": [], "since": 0, "guard": "on"}
+    win = claims[0]
+    return {"owner": win[1], "mine": win[1] == me, "since": win[0], "guard": "on",
+            "others": [c[1] for c in claims if c[1] != win[1]]}
+
+
+def delete_claim(svc, name):
+    app_api("DELETE", f"/repos/{svc}/git/refs/{OWNER_PREFIX}{q(name)}", allow=(404, 422))
+
+
+def op_claim_repo(params):
+    """Make sure this install holds a claim unless an older one exists. Safe to repeat."""
+    svc, me = p_service(params), p_instance(params)
+    claims = owner_claims(svc)
+    mine = [c for c in claims if c[1] == me]
+    foreign_first = bool(claims) and claims[0][1] != me
+    if not mine and not foreign_first:
+        repo = app_api("GET", f"/repos/{svc}").data or {}
+        branch = repo.get("default_branch") or "main"
+        head = app_api("GET", f"/repos/{svc}/git/ref/heads/{q(branch)}", allow=(404, 409))
+        sha = ((head.data or {}).get("object") or {}).get("sha") if head.status == 200 else None
+        if not sha:  # an empty repository has nothing to point a ref at: no guard is possible yet
+            return {"owner": me, "mine": True, "others": [], "since": 0, "guard": "unavailable"}
+        # created_at is the name's first part: it decides who is oldest
+        stamp = int(time.time())
+        app_api("POST", f"/repos/{svc}/git/refs", body={"ref": f"refs/{OWNER_PREFIX}{stamp}-{me}", "sha": sha}, allow=(422,))
+        claims = owner_claims(svc)
+        mine = [c for c in claims if c[1] == me]
+    # two installs that claimed at the same moment: the oldest stays, the other gives its claim back
+    if mine and claims and claims[0][1] != me:
+        for c in mine:
+            delete_claim(svc, c[2])
+        claims = [c for c in claims if c[1] != me]
+    return owner_report(claims, me)
+
+
+def op_release_repo(params):
+    svc, me = p_service(params), p_instance(params)
+    for c in owner_claims(svc):
+        if c[1] == me:
+            delete_claim(svc, c[2])
+    return {}
+
+
+def op_takeover_repo(params):
+    """A person decided this install takes the repository over: remove the other claims, then claim."""
+    svc, me = p_service(params), p_instance(params)
+    for c in owner_claims(svc):
+        if c[1] != me:
+            delete_claim(svc, c[2])
+    return op_claim_repo(params)
+
+
+
 def visible_repos():
     repos = app_paginate("/installation/repositories?per_page=100", key="repositories")
     org = org_filter()
@@ -793,6 +876,7 @@ OPS = {
     "open_pr": op_open_pr, "get_checks": op_get_checks,
     "merge_pr": op_merge_pr, "verify_webhook": op_verify_webhook,
     "app_manifest_convert": op_app_manifest_convert, "list_installations": op_list_installations,
+    "claim_repo": op_claim_repo, "release_repo": op_release_repo, "takeover_repo": op_takeover_repo,
 }
 
 
