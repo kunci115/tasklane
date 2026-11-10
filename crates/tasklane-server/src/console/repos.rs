@@ -255,6 +255,7 @@ pub async fn page(
             .get("target_branch")
             .and_then(Value::as_str)
             .unwrap_or("");
+        let browser_v = profile.get("browser").and_then(Value::as_bool) == Some(true);
         let docs_v = tasklane_orchestrator::memory::docs_of(&profile).join("\n");
         let model_v = profile.get("model").and_then(Value::as_str).unwrap_or("");
         let default_v = facts
@@ -284,6 +285,7 @@ pub async fn page(
 <div class=\"field\"><label for=\"s{id}\">Instructions for the agent</label><textarea id=\"s{id}\" name=\"system\" maxlength=\"4000\" placeholder=\"For example: follow the existing code style; never change generated files.\">{}</textarea></div>\
 <div class=\"field\"><label for=\"t{id}\">Test command the agent may run</label><input id=\"t{id}\" type=\"text\" name=\"test_command\" maxlength=\"200\" value=\"{}\" placeholder=\"pytest -q\"><div class=\"hint\">One command, no parentheses or line breaks.</div></div>\
 <div class=\"field\"><label for=\"pc{id}\">Preview: command that starts the app</label><input id=\"pc{id}\" type=\"text\" name=\"preview_command\" maxlength=\"300\" value=\"{}\" placeholder=\"python3 -m http.server 3000\"></div><div class=\"field\"><label for=\"pp{id}\">Preview: port</label><input id=\"pp{id}\" type=\"text\" name=\"preview_port\" maxlength=\"5\" value=\"{}\" placeholder=\"3000\"><div class=\"hint\">Lets the developer agent look at what it builds (a screenshot, with Obscura). Needs the sandbox image built with Obscura; see the operations guide. Leave both empty to turn it off.</div></div>\
+<div class=\"field\"><label for=\"br{id}\"><input id=\"br{id}\" type=\"checkbox\" name=\"browser\" value=\"on\"{}> Let the developer use a browser</label><div class=\"hint\">Needs the preview above. The developer can then open the app, click, type, read the page, the console messages and the network requests, and take screenshots, only on the preview address inside the sandbox. Works with the Docker sandbox built with Obscura and the egress-limited network (see the operations guide).</div></div>\
 <div class=\"field\"><label for=\"tb{id}\">Branch pull requests go to</label><input id=\"tb{id}\" type=\"text\" name=\"target_branch\" maxlength=\"100\" value=\"{}\" placeholder=\"{}\"><div class=\"hint\">Empty means the default branch. With another branch (for example dev), the issue stays open after the merge and tasklane closes it once the change reaches the default branch.</div></div>\
 <div class=\"field\"><label for=\"dc{id}\">Documents the agents read first</label><textarea id=\"dc{id}\" name=\"docs\" rows=\"3\" placeholder=\"CONTRIBUTING.md&#10;docs/architecture.md\">{}</textarea><div class=\"hint\">One path inside the repository per line. The agents are told to read them before they start, when they exist.</div></div>\
 <div class=\"field\"><label for=\"md{id}\">Model</label><input id=\"md{id}\" type=\"text\" name=\"model\" maxlength=\"100\" value=\"{}\" placeholder=\"account default\"><div class=\"hint\">Empty uses the default of the connected Claude account, which can change. Set a name such as claude-sonnet-5-5 to pin it. The ticket page shows the model each run reported.</div></div>\
@@ -312,6 +314,7 @@ pub async fn page(
             esc(testc),
             esc(pcmd_v),
             esc(&pport_v),
+            if browser_v { " checked" } else { "" },
             esc(target_v),
             esc(default_v),
             esc(&docs_v),
@@ -565,6 +568,8 @@ pub struct ProfileIn {
     model: String,
     #[serde(default)]
     docs: String,
+    #[serde(default)]
+    browser: Option<String>,
     ret: Option<String>,
 }
 
@@ -627,6 +632,14 @@ pub async fn set_profile(
         )
             .into_response();
     }
+    let browser = f.browser.as_deref() == Some("on");
+    if browser && (pcmd.is_empty() || port.is_none()) {
+        return (
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "the browser needs the preview: set the command that starts the app and its port first",
+        )
+            .into_response();
+    }
     let model = f.model.trim();
     if model.len() > 100
         || !model
@@ -663,7 +676,7 @@ pub async fn set_profile(
     }
     let _ = sqlx::query("UPDATE services SET agent_profile = agent_profile || $2 WHERE id = $1")
         .bind(id)
-        .bind(json!({"system": system, "test_command": cmd, "preview_command": pcmd, "preview_port": port, "target_branch": target, "model": model, "docs": docs}))
+        .bind(json!({"system": system, "test_command": cmd, "preview_command": pcmd, "preview_port": port, "target_branch": target, "model": model, "docs": docs, "browser": browser}))
         .execute(st.orch.pool())
         .await;
     let _ = sqlx::query("INSERT INTO audit_events (actor, action, detail) VALUES ('console:admin', 'service.profile', $1)")

@@ -151,7 +151,8 @@ The agent can run **unsandboxed** only if you explicitly opt in; the default is 
 | Per-repository control | Mode (`watch`, `triage`, `full`), protected paths, agent instructions, notes for the agents, and a `.tasklane.yml` that can only tighten the rules |
 | Duplicates | A new ticket that repeats an earlier one is held for a person to confirm (optional model suggestion) |
 | Cost and limits | Model tokens counted per ticket with a budget, attempt and wall-time limits, a cap on parallel development and on pull requests waiting for CI |
-| Seeing the result | Optional screenshots of the app the agent is building, with Obscura, inside the sandbox |
+| Seeing the result | Optional screenshots of the app the agent is building, with Obscura, inside the sandbox; optionally a **browser** for the developer (open, click, type, console messages, network requests) limited to the app's own address |
+| Talking to the agent | A **message** on any unfinished ticket, given to the next run with your name, or **stop and restart now** to start the run again at once with the message |
 | Operations | `tasklane doctor`, Prometheus `/metrics` (opt-in), `/healthz` and `/readyz`, automatic cleanup of stale tickets and orphaned containers |
 | Queue | Postgres, `SKIP LOCKED`, leases, heartbeats, fencing tokens, reaper |
 | Extension points | Plug-ins for ticket source, agent engine and chat channel, with a [guide](docs/plugins.md) and a tested template |

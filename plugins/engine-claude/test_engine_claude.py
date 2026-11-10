@@ -785,3 +785,48 @@ class SandboxTools(unittest.TestCase):
             self.assertEqual(argv[argv.index("--network") + 1], "tl-net", "no network is added for the tools")
         finally:
             b.close()
+
+
+class DeveloperBrowser(unittest.TestCase):
+    PROFILE = {"preview_command": "python3 -m http.server 3000", "preview_port": 3000, "browser": True}
+    ENV = {"TASKLANE_SANDBOX_NETWORK": "tl-net", "TASKLANE_SANDBOX_IMAGE": "img", "PATH": "/usr/bin",
+           "TASKLANE_SANDBOX_PROXY": "http://proxy:3128"}
+
+    def build(self, profile, role="dev", mode="docker", read_only=False):
+        params = {"role": role, "profile": profile, "read_only": read_only}
+        port = ev.browser_port_of(params, role, mode)
+        mcp = ev.mcp_for(None, mode, port) if port else None
+        return port, mcp
+
+    def test_the_developer_gets_a_browser_limited_to_the_preview_port_when_the_repository_allows_it(self):
+        port, mcp = self.build(self.PROFILE)
+        try:
+            self.assertEqual(port, 3000)
+            srv = mcp["config"]["mcpServers"]["browser"]
+            self.assertEqual(srv["args"], ["/usr/local/bin/tl-browser-mcp"])
+            self.assertEqual(srv["env"], {"TL_BROWSER_PORT": "3000"}, "the wrapper learns the one port it may open")
+            self.assertEqual(mcp["allowed"], ["mcp__browser"])
+            self.assertEqual(mcp["config_path"], "/tl/sock/mcp.json")
+            self.assertEqual([m[1] for m in mcp["mounts"]], ["/tl/sock"], "only the configuration is mounted")
+            argv = ev.docker_command("dev", ev.claude_args("dev", {"profile": self.PROFILE}, "sys", mcp), "/tmp", "tasklane-abc",
+                                     env=self.ENV, preview=("python3 -m http.server 3000", 3000), mounts=mcp["mounts"])
+            self.assertIn("--strict-mcp-config", argv)
+            self.assertEqual(argv[argv.index("--mcp-config") + 1], "/tl/sock/mcp.json")
+            self.assertIn("mcp__browser", argv[argv.index("--allowedTools") + 1])
+            self.assertEqual(argv[argv.index("--network") + 1], "tl-net")
+            self.assertIn("tl-agent", argv, "the preview server starts first")
+            self.assertIn("http://127.0.0.1:3000", ev.build_system("dev", self.PROFILE, browser_port=3000))
+        finally:
+            if mcp and mcp["cleanup"]:
+                import shutil
+                shutil.rmtree(mcp["cleanup"], ignore_errors=True)
+
+    def test_no_browser_for_other_roles_without_the_switch_or_the_preview_or_the_sandbox(self):
+        self.assertIsNone(self.build({"preview_command": "x", "preview_port": 3000})[0], "off by default")
+        self.assertIsNone(self.build(self.PROFILE, role="reviewer")[0])
+        self.assertIsNone(self.build(self.PROFILE, role="triage")[0])
+        self.assertIsNone(self.build(self.PROFILE, read_only=True)[0])
+        with self.assertRaises(ev.EngineError):
+            self.build({"browser": True})  # there is no app to look at
+        with self.assertRaises(ev.EngineError):
+            self.build(self.PROFILE, mode="none")  # not outside the sandbox

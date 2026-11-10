@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **A real browser for the developer**: tick "Let the developer use a browser" for a repository (it needs the preview). The developer gets Obscura's MCP browser tools (open, click, type, read the page, console messages, network requests, screenshots) on the app it is building, through a wrapper in the sandbox image (`tl-browser-mcp`) that keeps every address to the preview address and port, passes on only the calls a browser needs and caps calls and answer size. Only in the Docker sandbox on the egress-limited network. The real Obscura MCP server was not run in the build environment; see the operations guide for the one check to make. Threat T14.
+
 - **Message to the agent** on every ticket that is not finished (owners and team approvers): the message is kept with your name and given to the next run on the ticket (triage, development or review) as a team message that the agent follows in addition to the issue but that never overrides the safety rules. **Stop and restart now** ends the run that is going on (a one-shot `--cancel` of the engine plug-in; the run reports "cancelled by a person") and puts the job back in the queue at once without using up an attempt; what the run had written so far is dropped. New table `ticket_messages`; engine `run` takes `messages` and `run_key`.
 
 ## 0.1.0-alpha.3 (2026-11-10)

@@ -1,0 +1,86 @@
+#!/usr/bin/env node
+// A browser for the developer agent, limited to the app it is building.
+//
+// It starts Obscura's MCP server (`obscura mcp`, a headless browser) and sits between it and the agent:
+// every message passes through, except that a tool call naming an address is refused unless the address is
+// http://127.0.0.1:<the preview port> (or localhost). Obscura itself is told to allow private addresses so
+// that the local app can be opened; this wrapper is what keeps it to that one address. Calls and answers are
+// capped. It runs only in the sandbox, which has no network except the model API (see docs/operations.md).
+//
+// Environment: TL_BROWSER_PORT (the preview port, required), TASKLANE_OBSCURA_BIN (default: obscura),
+// TL_BROWSER_MAX_CALLS (default 300), TL_BROWSER_MAX_REPLY (characters, default 60000).
+"use strict";
+const { spawn } = require("child_process");
+const readline = require("readline");
+
+const PORT = parseInt(process.env.TL_BROWSER_PORT || "", 10);
+if (!(PORT >= 1024 && PORT <= 65535)) {
+  process.stderr.write("tl-browser-mcp: TL_BROWSER_PORT must be the preview port\n");
+  process.exit(2);
+}
+const MAX_CALLS = parseInt(process.env.TL_BROWSER_MAX_CALLS || "300", 10);
+const MAX_REPLY = parseInt(process.env.TL_BROWSER_MAX_REPLY || "60000", 10);
+const BIN = process.env.TASKLANE_OBSCURA_BIN || "obscura";
+const ALLOWED_METHODS = new Set(["initialize", "ping", "tools/list", "tools/call", "resources/list", "prompts/list"]);
+const LOCAL = new RegExp("^http://(127\\.0\\.0\\.1|localhost|\\[::1\\]):" + PORT + "(/[A-Za-z0-9._~/?=&%#:+,;@!$'()*-]*)?$");
+
+// A value under a key that names an address (url, uri, href, src, target, location) must be exactly the
+// local app. Anything else in the call (page text to type, a script to evaluate) is not an address.
+const ADDRESS_KEY = /^(url|uri|href|src|target|location|origin|base_?url)$/i;
+
+function findBadAddress(x, key) {
+  if (typeof x === "string") return ADDRESS_KEY.test(key || "") && !LOCAL.test(x.trim());
+  if (Array.isArray(x)) return x.some((v) => findBadAddress(v, key));
+  if (x && typeof x === "object") return Object.keys(x).some((k) => findBadAddress(x[k], k));
+  return false;
+}
+
+const child = spawn(BIN, ["mcp"], {
+  stdio: ["pipe", "pipe", "inherit"],
+  env: Object.assign({}, process.env, { OBSCURA_ALLOW_PRIVATE_NETWORK: "1" }),
+});
+child.on("error", (e) => {
+  process.stderr.write("tl-browser-mcp: cannot start " + BIN + ": " + e.message + "\n");
+  process.exit(1);
+});
+child.on("exit", (c) => process.exit(c || 0));
+
+function toAgent(msg) { process.stdout.write(JSON.stringify(msg) + "\n"); }
+function refuse(id, text) {
+  toAgent({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text }], isError: true } });
+}
+
+let calls = 0;
+readline.createInterface({ input: process.stdin }).on("line", (line) => {
+  let m;
+  try { m = JSON.parse(line); } catch (e) { return; }
+  if (m.method && !ALLOWED_METHODS.has(m.method) && !String(m.method).startsWith("notifications/")) {
+    if (m.id !== undefined) toAgent({ jsonrpc: "2.0", id: m.id, error: { code: -32601, message: "method not available" } });
+    return;
+  }
+  if (m.method === "tools/call") {
+    calls += 1;
+    if (calls > MAX_CALLS) return refuse(m.id, "browser call limit reached for this run");
+    const a = (m.params && m.params.arguments) || {};
+    if (findBadAddress(a)) {
+      return refuse(m.id, "refused: the browser may only open http://127.0.0.1:" + PORT + " (the app you are building)");
+    }
+  }
+  child.stdin.write(JSON.stringify(m) + "\n");
+});
+
+readline.createInterface({ input: child.stdout }).on("line", (line) => {
+  let m;
+  try { m = JSON.parse(line); } catch (e) { return; }
+  const content = m.result && Array.isArray(m.result.content) ? m.result.content : null;
+  if (content) {
+    for (const c of content) {
+      // text can be long (a page's text, a network log); pictures are left alone
+      if (c.type === "text" && typeof c.text === "string" && c.text.length > MAX_REPLY) {
+        c.text = c.text.slice(0, MAX_REPLY) + "\n[cut here]";
+      }
+    }
+  }
+  toAgent(m);
+});
+process.stdin.on("end", () => { try { child.stdin.end(); } catch (e) { /* gone */ } });

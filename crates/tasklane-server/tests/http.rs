@@ -3334,6 +3334,67 @@ async fn people_who_can_approve_send_the_agent_a_message_and_others_cannot() {
 }
 
 #[tokio::test]
+async fn the_developers_browser_needs_the_preview_and_is_switched_on_per_repository() {
+    let Some(e) = env().await else { return };
+    let id: i64 = sqlx::query_scalar("SELECT id FROM services WHERE external_id = 'org/repo'")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    let url = format!("/services/{id}/profile");
+    let body = |extra: &str| format!("csrf={}&system=&test_command=&{extra}", e.csrf);
+    let (st, _, msg) = send(
+        &e.app,
+        form(
+            &url,
+            body("preview_command=&preview_port=&browser=on"),
+            Some(e.cookie.clone()),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(msg.contains("needs the preview"), "{msg}");
+    let (st, _, _) = send(
+        &e.app,
+        form(
+            &url,
+            body("preview_command=python3+-m+http.server+3000&preview_port=3000&browser=on"),
+            Some(e.cookie.clone()),
+        ),
+    )
+    .await;
+    assert!(st.is_redirection());
+    let on: bool =
+        sqlx::query_scalar("SELECT (agent_profile->>'browser')::bool FROM services WHERE id = $1")
+            .bind(id)
+            .fetch_one(&e.pool)
+            .await
+            .unwrap();
+    assert!(on);
+    let (_, _, page) = send(&e.app, get("/services", Some(e.cookie.clone()))).await;
+    assert!(
+        page.contains("Let the developer use a browser")
+            && page.contains("checked> Let the developer use a browser")
+    );
+    // saving again without the box turns it off
+    send(
+        &e.app,
+        form(
+            &url,
+            body("preview_command=python3+-m+http.server+3000&preview_port=3000"),
+            Some(e.cookie.clone()),
+        ),
+    )
+    .await;
+    let off: bool =
+        sqlx::query_scalar("SELECT (agent_profile->>'browser')::bool FROM services WHERE id = $1")
+            .bind(id)
+            .fetch_one(&e.pool)
+            .await
+            .unwrap();
+    assert!(!off);
+}
+
+#[tokio::test]
 async fn the_admin_token_can_be_changed_in_the_console_and_the_old_one_stops_working() {
     let Some(e) = env().await else { return };
     let other = sign_in(&e, ADMIN).await.expect("a second admin session");
