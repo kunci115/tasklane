@@ -235,21 +235,43 @@ pub async fn render(
                 .unwrap_or_default()
         )
     };
-    let nav = [
-        item("home", "/", "home", "Overview", Some(needs)),
-        item("map", "/map", "network", "Live map", None),
-        item("tickets", "/tickets", "list", "Tickets", None),
-        item("repos", "/services", "repo", "Repositories", None),
-        item("projects", "/projects/new", "plus", "New project", None),
-        item("pulls", "/pulls", "merge", "Pull requests", None),
-        item("connections", "/connections", "plug", "Connections", None),
-        item("accounts", "/accounts", "shield", "Model accounts", None),
-        item("knowledge", "/knowledge", "file", "Knowledge", None),
-        item("people", "/people", "users", "People", None),
-        item("chat", "/chat", "chat", "Chat groups", None),
-        item("activity", "/activity", "activity", "Activity", None),
-        item("health", "/health", "heart", "Health & setup", None),
-    ]
+    // a person who is not an owner sees the work and their own account, not the settings
+    let member: bool = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT p.role FROM console_sessions s JOIN principals p ON p.id = s.principal_id WHERE s.csrf = $1",
+    )
+    .bind(csrf)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .flatten()
+    .is_some_and(|r| r != "owner");
+    let nav = if member {
+        vec![
+            item("home", "/", "home", "Overview", Some(needs)),
+            item("map", "/map", "network", "Live map", None),
+            item("tickets", "/tickets", "list", "Tickets", None),
+            item("pulls", "/pulls", "merge", "Pull requests", None),
+            item("me", "/me", "users", "My account", None),
+        ]
+    } else {
+        vec![
+            item("home", "/", "home", "Overview", Some(needs)),
+            item("map", "/map", "network", "Live map", None),
+            item("tickets", "/tickets", "list", "Tickets", None),
+            item("repos", "/services", "repo", "Repositories", None),
+            item("projects", "/projects/new", "plus", "New project", None),
+            item("pulls", "/pulls", "merge", "Pull requests", None),
+            item("connections", "/connections", "plug", "Connections", None),
+            item("accounts", "/accounts", "shield", "Model accounts", None),
+            item("knowledge", "/knowledge", "file", "Knowledge", None),
+            item("people", "/people", "users", "People", None),
+            item("chat", "/chat", "chat", "Chat groups", None),
+            item("activity", "/activity", "activity", "Activity", None),
+            item("health", "/health", "heart", "Health & setup", None),
+            item("me", "/me", "users", "My account", None),
+        ]
+    }
     .join("");
     Html(format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\

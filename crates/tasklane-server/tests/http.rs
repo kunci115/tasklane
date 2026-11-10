@@ -108,7 +108,9 @@ async fn env() -> Option<Env> {
         public_url: None,
         metrics_token: Some("metrics-token-for-tests-1234".into()),
     });
-    let app = api::routes().merge(console::routes()).with_state(state);
+    let app = api::routes()
+        .merge(console::routes(state.clone()))
+        .with_state(state);
     let (st, h, _) = send(&app, form("/login", format!("token={ADMIN}"), None)).await;
     assert_eq!(st, StatusCode::SEE_OTHER);
     let cookie = h[header::SET_COOKIE]
@@ -2896,6 +2898,221 @@ async fn a_new_project_can_be_planned_with_the_ai_before_anything_is_created() {
     .await
     .unwrap();
     assert_eq!(n, 1);
+}
+
+/// Sign in with a token and give back the cookie.
+async fn sign_in(e: &Env, token: &str) -> Option<String> {
+    let (st, headers, _) = send(&e.app, form("/login", format!("token={token}"), None)).await;
+    if st != StatusCode::SEE_OTHER {
+        return None;
+    }
+    headers
+        .get(header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .map(|c| c.split(';').next().unwrap_or("").to_string())
+}
+
+#[tokio::test]
+async fn a_person_signs_in_with_their_own_token_and_acts_as_themselves() {
+    let Some(e) = env().await else { return };
+    let (alice,): (i64,) = sqlx::query_as(
+        "INSERT INTO principals (channel, ref, role) VALUES ('github', 'alice', 'team_approver') RETURNING id",
+    )
+    .fetch_one(&e.pool)
+    .await
+    .unwrap();
+    let (_, _, shown) = send(
+        &e.app,
+        form(
+            &format!("/people/{alice}/token"),
+            format!("csrf={}", e.csrf),
+            Some(e.cookie.clone()),
+        ),
+    )
+    .await;
+    let token = shown
+        .split("<code")
+        .nth(1)
+        .and_then(|t| t.split('>').nth(1))
+        .and_then(|t| t.split('<').next())
+        .unwrap()
+        .to_string();
+    assert_eq!(token.len(), 64, "{shown}");
+    let (_, _, people) = send(&e.app, get("/people", Some(e.cookie.clone()))).await;
+    assert!(
+        people.contains("/people/") && !people.contains(&token),
+        "the token is not shown again"
+    );
+    assert!(sign_in(&e, "not-a-token").await.is_none());
+    let cookie = sign_in(&e, &token).await.expect("the person signs in");
+    // they see the work and their own page, not the settings
+    for ok in ["/", "/tickets", "/me", "/pulls"] {
+        let (st, _, _) = send(&e.app, get(ok, Some(cookie.clone()))).await;
+        assert_eq!(st, StatusCode::OK, "{ok}");
+    }
+    for owner_only in [
+        "/services",
+        "/people",
+        "/accounts",
+        "/connections",
+        "/knowledge",
+    ] {
+        let (st, _, _) = send(&e.app, get(owner_only, Some(cookie.clone()))).await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{owner_only}");
+    }
+    let (_, _, me) = send(&e.app, get("/me", Some(cookie.clone()))).await;
+    assert!(
+        me.contains("github:alice") && !me.contains("/services"),
+        "their menu is short"
+    );
+    // they approve as themselves, within their role
+    let t = seed_ticket(&e, "61", "Needs approval", "awaiting_approval", 2).await;
+    sqlx::query("UPDATE tickets SET plan_hash = 'h1' WHERE id = $1")
+        .bind(t)
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    let csrf: String =
+        sqlx::query_scalar("SELECT s.csrf FROM console_sessions s WHERE s.principal_id = $1")
+            .bind(alice)
+            .fetch_one(&e.pool)
+            .await
+            .unwrap();
+    let (st, _, _) = send(
+        &e.app,
+        form(
+            &format!("/tickets/{t}/decide"),
+            format!("csrf={csrf}&plan_hash=h1&decision=approve"),
+            Some(cookie.clone()),
+        ),
+    )
+    .await;
+    assert!(st.is_redirection());
+    let who: String = sqlx::query_scalar("SELECT approver FROM approvals WHERE ticket_id = $1")
+        .bind(t)
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(who, "github:alice");
+    // a member cannot approve
+    sqlx::query("UPDATE principals SET role = 'member' WHERE id = $1")
+        .bind(alice)
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    let t2 = seed_ticket(&e, "62", "Another", "awaiting_approval", 1).await;
+    sqlx::query("UPDATE tickets SET plan_hash = 'h2' WHERE id = $1")
+        .bind(t2)
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    let (st, _, _) = send(
+        &e.app,
+        form(
+            &format!("/tickets/{t2}/decide"),
+            format!("csrf={csrf}&plan_hash=h2&decision=approve"),
+            Some(cookie.clone()),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    // turning the sign-in off ends their sessions at once
+    send(
+        &e.app,
+        form(
+            &format!("/people/{alice}/token/remove"),
+            format!("csrf={}", e.csrf),
+            Some(e.cookie.clone()),
+        ),
+    )
+    .await;
+    let (st, _, _) = send(&e.app, get("/me", Some(cookie))).await;
+    assert_ne!(st, StatusCode::OK);
+    assert!(sign_in(&e, &token).await.is_none());
+}
+
+#[tokio::test]
+async fn each_person_manages_only_their_own_model_account() {
+    let Some(e) = env().await else { return };
+    let mut cookies = vec![];
+    for who in ["alice", "bob"] {
+        let (id,): (i64,) = sqlx::query_as(
+            "INSERT INTO principals (channel, ref, role) VALUES ('github', $1, 'member') RETURNING id",
+        )
+        .bind(who)
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+        let (_, _, shown) = send(
+            &e.app,
+            form(
+                &format!("/people/{id}/token"),
+                format!("csrf={}", e.csrf),
+                Some(e.cookie.clone()),
+            ),
+        )
+        .await;
+        let token = shown
+            .split("<code")
+            .nth(1)
+            .and_then(|t| t.split('>').nth(1))
+            .and_then(|t| t.split('<').next())
+            .unwrap()
+            .to_string();
+        let cookie = sign_in(&e, &token).await.unwrap();
+        let csrf: String =
+            sqlx::query_scalar("SELECT csrf FROM console_sessions WHERE principal_id = $1")
+                .bind(id)
+                .fetch_one(&e.pool)
+                .await
+                .unwrap();
+        cookies.push((who, cookie, csrf));
+    }
+    let (_, ca, ka) = &cookies[0];
+    let (_, cb, kb) = &cookies[1];
+    let add = |csrf: &str, cookie: &str, tok: &str| {
+        form(
+            "/me/account",
+            format!("csrf={csrf}&kind=oauth&token={tok}"),
+            Some(cookie.to_string()),
+        )
+    };
+    let (st, _, _) = send(&e.app, add(ka, ca, "sk-ant-oat01-alicealicealicealice1111")).await;
+    assert!(st.is_redirection());
+    let (_, _, mine) = send(&e.app, get("/me", Some(ca.clone()))).await;
+    assert!(mine.contains("1111") && mine.contains("alice"), "{mine}");
+    let (_, _, theirs) = send(&e.app, get("/me", Some(cb.clone()))).await;
+    assert!(
+        !theirs.contains("1111"),
+        "bob does not see alice account: {theirs}"
+    );
+    // bob cannot remove alice's account by naming it
+    let (st, _, _) = send(
+        &e.app,
+        form(
+            "/me/account/remove",
+            format!("csrf={kb}&label=alice"),
+            Some(cb.clone()),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    let (_, _, still) = send(&e.app, get("/me", Some(ca.clone()))).await;
+    assert!(still.contains("1111"));
+    // the admin token has no account of its own
+    let (st, _, _) = send(
+        &e.app,
+        form(
+            "/me/account",
+            format!(
+                "csrf={}&kind=oauth&token=sk-ant-oat01-x1111111111111111111",
+                e.csrf
+            ),
+            Some(e.cookie.clone()),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]

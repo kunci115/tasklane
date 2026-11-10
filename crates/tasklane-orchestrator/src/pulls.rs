@@ -133,6 +133,7 @@ impl Orchestrator {
                     "role": "reviewer",
                     "ticket": {"service": service, "ref": pr, "title": say(&item, "title"), "body": say(&item, "body"), "comments": []},
                     "profile": crate::memory::with_notes(&self.pool, &self.cfg.source_name, service, &profile).await.unwrap_or(profile.clone()),
+                    "account_owner": Some(by).filter(|b| *b != "console:admin" && crate::attribution::valid_owner(b)),
                     "diff": crate::steps::develop::cap(&diff),
                     "budget": {"max_secs": call.as_secs(), "max_tokens": 100000},
                     "read_only": true

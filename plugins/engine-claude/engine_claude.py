@@ -580,13 +580,14 @@ def run_with_pool(params, role, workspace, max_secs, path):
     working directory are what carry over (a conversation cannot move between accounts), and the developer
     is told that part of the work may already be there."""
     tried = []
+    owner = person_of(params.get("account_owner"))
     while True:
         try:
-            cands = [c for c in pool.candidates(path) if c["label"] not in tried]
+            cands = [c for c in pool.candidates(path, owner=owner) if c["label"] not in tried]
         except pool.PoolError as e:
             raise EngineError("permanent", str(e))
         if not cands:
-            wake = pool.earliest_wake(path)
+            wake = pool.earliest_wake(path, owner=owner)
             if tried or wake is not None:
                 raise EngineError("rate_limited", "every model account is used up or was refused (%s)" % (", ".join(tried) or "none tried"),
                                   retry_after_secs=wake if wake is not None else 900)
@@ -690,13 +691,25 @@ def check():
             "sandbox": sandbox_mode()}
 
 
-def accounts():
-    """What the console shows: the list of model accounts without their tokens."""
+def person_of(value):
+    """A person as `channel:ref`, or None; anything else is refused."""
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str) or not pool.OWNER.match(value):
+        raise EngineError("permanent", "owner must be a person as channel:ref")
+    return value
+
+
+def accounts(params=None):
+    """What the console shows: the list of model accounts without their tokens. With `owner`, only
+    that person's own accounts."""
     path = pool.path_from()
     if not path:
         return {"configured": False, "rows": []}
+    scope = person_of((params or {}).get("owner"))
     try:
-        return {"configured": True, "rows": pool.status(path), "next_wake_secs": pool.earliest_wake(path)}
+        return {"configured": True, "rows": pool.status(path, scope=scope),
+                "next_wake_secs": pool.earliest_wake(path, owner=scope)}
     except pool.PoolError as e:
         raise EngineError("permanent", str(e))
 
@@ -708,19 +721,24 @@ def account_action(p):
     act, label = p.get("action"), p.get("label")
     if not isinstance(label, str):
         raise EngineError("permanent", "label is required")
+    # `scope`: a person may only touch their own accounts; without it the caller is an owner of the system
+    scope = person_of(p.get("scope"))
     try:
         if act == "add":
-            pool.add(path, label, p.get("kind"), p.get("token"))
+            pool.add(path, label, p.get("kind"), p.get("token"), owner=person_of(p.get("owner")) or scope)
         elif act == "remove":
-            pool.remove(path, label)
+            pool.remove(path, label, scope)
         elif act == "enable":
-            pool.set_enabled(path, label, True)
+            pool.set_enabled(path, label, True, scope)
         elif act == "disable":
-            pool.set_enabled(path, label, False)
+            pool.set_enabled(path, label, False, scope)
         elif act == "reset":
-            pool.reset(path, label)
+            pool.reset(path, label, scope)
         elif act in ("up", "down"):
-            pool.move(path, label, -1 if act == "up" else 1)
+            if scope is not None:
+                pool.move_own(path, label, -1 if act == "up" else 1, scope)
+            else:
+                pool.move(path, label, -1 if act == "up" else 1)
         else:
             raise EngineError("permanent", "unknown account action: %s" % (act,))
     except pool.PoolError as e:
@@ -779,7 +797,7 @@ def handle(req):
         elif op == "capabilities":
             res = capabilities()
         elif op == "accounts":
-            res = accounts()
+            res = accounts(req.get("params") if isinstance(req.get("params"), dict) else None)
         elif op == "account":
             params = req.get("params")
             if not isinstance(params, dict):

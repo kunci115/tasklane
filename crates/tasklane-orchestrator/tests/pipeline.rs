@@ -918,6 +918,45 @@ async fn an_issue_that_cannot_be_closed_stays_merged_and_gets_no_closing_note() 
     assert!(!w.read_state("comments.log").contains("Closed:"));
 }
 
+#[tokio::test]
+async fn work_runs_on_the_account_of_the_person_who_approved_it_and_never_on_anothers() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    credit_person(&w.pool, "console", "boss", "rino", true).await;
+    let t = ticket(&w, "T-l3-owner").await;
+    drive(&w).await;
+    let hash = plan_hash(&w, t).await;
+    decide(
+        &w.pool,
+        t,
+        &console("boss"),
+        "console",
+        Decision::Approve,
+        &hash,
+    )
+    .await
+    .unwrap();
+    drive(&w).await;
+    assert_eq!(state(&w.pool, t).await, "merged");
+    let owners: Vec<serde_json::Value> = w
+        .read_state("profile.log")
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .collect();
+    let dev = owners.iter().find(|o| o["role"] == "dev").unwrap();
+    assert_eq!(
+        dev["owner"], "console:boss",
+        "the developer works on the approver's account"
+    );
+    let triage = owners.iter().find(|o| o["role"] == "triage").unwrap();
+    assert!(
+        triage["owner"].is_null(),
+        "before anyone approved, only shared accounts"
+    );
+}
+
 fn read_state_contains(w: &World, name: &str, needle: &str) -> bool {
     w.read_state(name).contains(needle)
 }

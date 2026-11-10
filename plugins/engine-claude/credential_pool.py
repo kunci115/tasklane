@@ -95,7 +95,17 @@ def _find(doc, label):
     raise PoolError("no account called %r" % label)
 
 
-def add(path, label, kind, token, now=None):
+OWNER = re.compile(r"^[a-z]{1,20}:[A-Za-z0-9@._-]{1,80}$")
+
+
+def _mine(a, owner):
+    """Account `a` belongs to `owner` (a person, `channel:ref`)."""
+    return owner is not None and a.get("owner") == owner
+
+
+def add(path, label, kind, token, now=None, owner=None):
+    if owner is not None and not OWNER.match(owner):
+        raise PoolError("the owner is a person as channel:ref")
     if not LABEL.match(label or ""):
         raise PoolError("the label is 1-40 letters, digits, space, dot, dash or underscore")
     if label == ENV_LABEL:
@@ -108,33 +118,46 @@ def add(path, label, kind, token, now=None):
     with locked(path) as doc:
         if any(a.get("label") == label for a in doc["accounts"]):
             raise PoolError("an account called %r already exists" % label)
-        doc["accounts"].append({"label": label, "kind": kind, "token": token, "enabled": True,
-                                "cooldown_until": 0, "last_error": "", "last_used": 0,
-                                "added": int(now or time.time())})
+        acct = {"label": label, "kind": kind, "token": token, "enabled": True,
+                "cooldown_until": 0, "last_error": "", "last_used": 0, "added": int(now or time.time())}
+        if owner:
+            acct["owner"] = owner
+        doc["accounts"].append(acct)
 
 
-def remove(path, label):
+def _find_for(doc, label, scope):
+    """The account, but only if the caller may touch it: `scope` is None for an owner of the system
+    (any account) or a person (`channel:ref`, only their own)."""
+    a = _find(doc, label)
+    if scope is not None and a.get("owner") != scope:
+        raise PoolError("no account called %r" % label)
+    return a
+
+
+def remove(path, label, scope=None):
     with locked(path) as doc:
-        _find(doc, label)
+        _find_for(doc, label, scope)
         doc["accounts"] = [a for a in doc["accounts"] if a.get("label") != label]
 
 
-def set_enabled(path, label, enabled):
+def set_enabled(path, label, enabled, scope=None):
     with locked(path) as doc:
-        a = _find(doc, label)
+        a = _find_for(doc, label, scope)
         a["enabled"] = bool(enabled)
         if enabled:
             a["cooldown_until"] = 0
             a["last_error"] = ""
 
 
-def reset(path, label):
+def reset(path, label, scope=None):
     """Forget a cooldown now (the person knows the limit is over)."""
     with locked(path) as doc:
         if label == ENV_LABEL:
+            if scope is not None:
+                raise PoolError("no account called %r" % label)
             doc["environment"] = {}
             return
-        a = _find(doc, label)
+        a = _find_for(doc, label, scope)
         a["cooldown_until"] = 0
         a["last_error"] = ""
 
@@ -149,8 +172,24 @@ def move(path, label, delta):
             doc["accounts"][i], doc["accounts"][j] = doc["accounts"][j], doc["accounts"][i]
 
 
-def candidates(path, env=None, now=None):
-    """Credentials to try, best first: [{label, kind, var, token}]. Sleeping and disabled ones are left out."""
+def move_own(path, label, delta, scope):
+    """Change the priority of one of a person's own accounts among their own."""
+    with locked(path) as doc:
+        a = _find_for(doc, label, scope)
+        mine = [x for x in doc["accounts"] if x.get("owner") == scope]
+        i = mine.index(a)
+        j = i + (-1 if delta < 0 else 1)
+        if 0 <= j < len(mine):
+            b = mine[j]
+            ia, ib = doc["accounts"].index(a), doc["accounts"].index(b)
+            doc["accounts"][ia], doc["accounts"][ib] = doc["accounts"][ib], doc["accounts"][ia]
+
+
+def candidates(path, env=None, now=None, owner=None):
+    """Credentials to try, best first: [{label, kind, var, token}]. Sleeping and disabled ones are left out.
+    Work done for a person tries that person's own accounts first and then the shared ones (the
+    environment and accounts nobody owns); an account that belongs to somebody else is never used,
+    and work with no person behind it uses shared accounts only."""
     env = os.environ if env is None else env
     now = time.time() if now is None else now
     doc = _read(path)
@@ -162,10 +201,15 @@ def candidates(path, env=None, now=None):
             if env.get(v):
                 out.append({"label": ENV_LABEL, "kind": kind, "var": v, "token": env[v]})
                 break
-    for a in doc["accounts"]:
-        if a.get("enabled", True) and now >= a.get("cooldown_until", 0) and a.get("kind") in KIND_VAR and a.get("token"):
-            out.append({"label": a["label"], "kind": a["kind"], "var": KIND_VAR[a["kind"]], "token": a["token"]})
-    return out
+    usable = [a for a in doc["accounts"]
+              if a.get("enabled", True) and now >= a.get("cooldown_until", 0) and a.get("kind") in KIND_VAR and a.get("token")]
+    own = [a for a in usable if _mine(a, owner)]
+    shared = [a for a in usable if not a.get("owner")]
+    mine = [{"label": a["label"], "kind": a["kind"], "var": KIND_VAR[a["kind"]], "token": a["token"]} for a in own]
+    rest = [{"label": a["label"], "kind": a["kind"], "var": KIND_VAR[a["kind"]], "token": a["token"]} for a in shared]
+    # the environment credential is first among the shared ones (it was before; so it still is)
+    envs = [c for c in out if c["label"] == ENV_LABEL]
+    return mine + envs + rest
 
 
 def used(path, label, now=None):
@@ -194,11 +238,13 @@ def sleep_for(path, label, reason, seconds, now=None):
         target["last_error"] = reason[:200]
 
 
-def earliest_wake(path, now=None):
-    """Seconds until the first sleeping credential is usable again (None if nothing sleeps)."""
+def earliest_wake(path, now=None, owner=None):
+    """Seconds until the first sleeping credential is usable again (None if nothing sleeps). Only
+    credentials this caller could use count: shared ones and, for a person, their own."""
     now = time.time() if now is None else now
     doc = _read(path)
-    ups = [a["cooldown_until"] for a in doc["accounts"] if a.get("enabled", True) and a.get("cooldown_until", 0) > now]
+    ups = [a["cooldown_until"] for a in doc["accounts"]
+           if a.get("enabled", True) and a.get("cooldown_until", 0) > now and (not a.get("owner") or _mine(a, owner))]
     ups += [doc["environment"]["cooldown_until"]] if doc["environment"].get("cooldown_until", 0) > now else []
     return max(0, math.ceil(min(ups) - now)) if ups else None
 
@@ -207,20 +253,24 @@ def mask(token):
     return "…" + token[-4:] if isinstance(token, str) and len(token) >= 12 else "…"
 
 
-def status(path, env=None, now=None):
-    """What a person may see: no tokens, only the last four characters."""
+def status(path, env=None, now=None, scope=None):
+    """What a person may see: no tokens, only the last four characters. `scope` is None for the whole
+    list or a person (`channel:ref`): then only their own accounts."""
     env = os.environ if env is None else env
     now = time.time() if now is None else now
     doc = _read(path)
     rows = []
-    have_env = any(env.get(v) for v in KIND_VAR.values())
+    have_env = any(env.get(v) for v in KIND_VAR.values()) and scope is None
     if have_env:
         e = doc["environment"]
         rows.append({"label": ENV_LABEL, "kind": "environment", "token": "", "enabled": True,
                      "cooldown_secs": max(0, int(e.get("cooldown_until", 0) - now)), "last_error": e.get("last_error", ""),
                      "last_used": e.get("last_used", 0), "removable": False})
     for a in doc["accounts"]:
+        if scope is not None and a.get("owner") != scope:
+            continue
         rows.append({"label": a.get("label", ""), "kind": a.get("kind", ""), "token": mask(a.get("token")),
+                     "owner": a.get("owner", ""),
                      "enabled": a.get("enabled", True), "cooldown_secs": max(0, int(a.get("cooldown_until", 0) - now)),
                      "last_error": a.get("last_error", ""), "last_used": a.get("last_used", 0), "removable": True})
     return rows

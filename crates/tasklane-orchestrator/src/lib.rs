@@ -27,6 +27,7 @@ pub mod workspace;
 pub use attribution::valid_login;
 pub use ctx::{Config, Orchestrator, RunResult, MARKER};
 pub use ownership::{Instance, Owner};
+pub use steps::sha256_hex;
 
 /// Apply every migration in `migrations/` to the database.
 pub async fn migrate(pool: &sqlx::PgPool) -> Result<(), sqlx::migrate::MigrateError> {

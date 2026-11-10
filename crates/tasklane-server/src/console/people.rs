@@ -18,7 +18,7 @@ pub async fn page(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Respon
         Ok(s) => s,
         Err(r) => return r,
     };
-    let rows = sqlx::query("SELECT id, channel, ref, role, github_login, credit_coauthor FROM principals ORDER BY (channel = 'console') DESC, channel, ref").fetch_all(st.orch.pool()).await.unwrap_or_default();
+    let rows = sqlx::query("SELECT id, channel, ref, role, github_login, credit_coauthor, console_token_hint FROM principals ORDER BY (channel = 'console') DESC, channel, ref").fetch_all(st.orch.pool()).await.unwrap_or_default();
     let mut b = head(
         "People",
         "Who can approve changes. Being in a chat group never gives that right.",
@@ -30,10 +30,10 @@ pub async fn page(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Respon
 <div><span class=\"pill warn\">team approver</span><p class=\"small muted\">Approves up to level 2 (migrations, login and permissions, deploy, CI).</p></div>\
 <div><span class=\"pill\">member</span><p class=\"small muted\">Listed for reference. Cannot approve.</p></div></div></div>",
     );
-    b.push_str("<div class=\"card flush\"><div class=\"scroll\"><table><thead><tr><th>Where</th><th>Identity</th><th>Role</th><th>Credit in GitHub history</th><th></th></tr></thead><tbody>");
+    b.push_str("<div class=\"card flush\"><div class=\"scroll\"><table><thead><tr><th>Where</th><th>Identity</th><th>Role</th><th>Credit in GitHub history</th><th>Console sign-in</th><th></th></tr></thead><tbody>");
     if rows.is_empty() {
         b.push_str(&format!(
-            "<tr><td colspan=\"5\">{}</td></tr>",
+            "<tr><td colspan=\"6\">{}</td></tr>",
             empty("users", "Nobody yet")
         ));
     }
@@ -58,8 +58,23 @@ pub async fn page(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Respon
             if channel == "github" { esc(&reference) } else { "GitHub login".to_string() },
             if credit { " checked" } else { "" },
         );
+        let hint: Option<String> = r.get("console_token_hint");
+        let signin = if builtin {
+            "<span class=\"muted small\">admin token</span>".to_string()
+        } else if let Some(h) = hint {
+            format!(
+                "<span class=\"pill ok\">on</span> <span class=\"muted small\">…{}</span> <form method=\"post\" action=\"/people/{id}/token/remove\" style=\"display:inline\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><button class=\"btn small\" data-confirm=\"Turn off this person's console sign-in?\">Turn off</button></form>",
+                esc(&h),
+                sess.csrf
+            )
+        } else {
+            format!(
+                "<form method=\"post\" action=\"/people/{id}/token\" style=\"display:inline\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><button class=\"btn small\">Create a sign-in</button></form>",
+                sess.csrf
+            )
+        };
         b.push_str(&format!(
-            "<tr><td>{}</td><td>{}{}</td><td><span class=\"pill {pill}\">{}</span></td><td>{credit_form}</td><td style=\"text-align:right\">{}</td></tr>",
+            "<tr><td>{}</td><td>{}{}</td><td><span class=\"pill {pill}\">{}</span></td><td>{credit_form}</td><td>{signin}</td><td style=\"text-align:right\">{}</td></tr>",
             esc(&channel),
             esc(&reference),
             if builtin { " <span class=\"muted small\">(you, signed in with the admin token)</span>" } else { "" },
@@ -214,5 +229,78 @@ pub async fn delete(
     .execute(st.orch.pool())
     .await;
     let _ = sqlx::query("INSERT INTO audit_events (actor, action, detail) VALUES ('console:admin', 'people.removed', '{}')").execute(st.orch.pool()).await;
+    redirect("/people")
+}
+
+#[derive(Deserialize)]
+pub struct CsrfOnly {
+    csrf: String,
+}
+
+/// Make a sign-in token for a person. It is shown once; only its hash is kept.
+pub async fn make_token(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Form(f): Form<CsrfOnly>,
+) -> Response {
+    let sess = match guard(&st, &headers).await {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    if !csrf_ok(&st, &headers, &f.csrf).await {
+        return forbidden();
+    }
+    let token = super::random_hex();
+    let done = sqlx::query(
+        "UPDATE principals SET console_token_hash = $2, console_token_hint = $3
+         WHERE id = $1 AND NOT (channel = 'console' AND ref = 'admin')",
+    )
+    .bind(id)
+    .bind(tasklane_orchestrator::sha256_hex(&token))
+    .bind(&token[token.len() - 4..])
+    .execute(st.orch.pool())
+    .await;
+    if done.map(|r| r.rows_affected()).unwrap_or(0) != 1 {
+        return redirect("/people");
+    }
+    let _ = sqlx::query("INSERT INTO audit_events (actor, action, detail) VALUES ('console:admin', 'people.signin_created', $1)")
+        .bind(json!({"principal_id": id}))
+        .execute(st.orch.pool())
+        .await;
+    let mut b = head(
+        "Sign-in token",
+        "",
+        "<a class=\"btn\" href=\"/people\">Back to People</a>",
+    );
+    b.push_str(&format!(
+        "<div class=\"card\"><p>Give this token to the person. It is shown <strong>once</strong>; if it is lost, make a new one (that turns the old one off).</p><p><code style=\"word-break:break-all;font-size:1.05rem\">{}</code></p><p class=\"hint\">They sign in at the console with it. They see the work and can approve what their role allows, and they add their own model account under My account. Owners keep the settings.</p></div>",
+        esc(&token)
+    ));
+    render(&st, &sess.csrf, "people", "Sign-in token", &b)
+        .await
+        .into_response()
+}
+
+pub async fn remove_token(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Form(f): Form<CsrfOnly>,
+) -> Response {
+    if !csrf_ok(&st, &headers, &f.csrf).await {
+        return forbidden();
+    }
+    let _ = sqlx::query(
+        "UPDATE principals SET console_token_hash = NULL, console_token_hint = NULL WHERE id = $1",
+    )
+    .bind(id)
+    .execute(st.orch.pool())
+    .await;
+    // sessions of that person end now
+    let _ = sqlx::query("DELETE FROM console_sessions WHERE principal_id = $1")
+        .bind(id)
+        .execute(st.orch.pool())
+        .await;
     redirect("/people")
 }

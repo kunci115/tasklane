@@ -89,6 +89,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
                 "role": "reviewer",
                 "ticket": {"service": t.service, "ref": t.external_ref, "title": text_of(&item, "title"), "body": text_of(&item, "body"), "comments": []},
                 "profile": o.profile_for(&t).await,
+                "account_owner": o.account_owner(t.id).await,
                 "diff": diff,
                 "budget": {"max_secs": o.cfg.call_timeout.as_secs(), "max_tokens": 100000},
                 "read_only": true

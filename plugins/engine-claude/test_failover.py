@@ -105,6 +105,46 @@ class PoolFile(Base):
         pool.reset(self.pool, "one")
         self.assertIsNone(pool.earliest_wake(self.pool, now=now))
 
+    def test_a_persons_work_uses_their_own_account_first_and_never_somebody_elses(self):
+        pool.add(self.pool, "shared", "oauth", T1)
+        pool.add(self.pool, "alice", "oauth", T2, owner="github:alice")
+        pool.add(self.pool, "bob", "oauth", T3, owner="github:bob")
+        names = lambda **kw: [c["label"] for c in pool.candidates(self.pool, env={}, **kw)]
+        self.assertEqual(names(owner="github:alice"), ["alice", "shared"])
+        self.assertEqual(names(owner="github:bob"), ["bob", "shared"])
+        self.assertEqual(names(owner="github:carol"), ["shared"], "somebody with no account of their own uses the shared ones")
+        self.assertEqual(names(), ["shared"], "work with no person behind it never uses a personal account")
+        pool.sleep_for(self.pool, "alice", "usage limit", 600)
+        self.assertEqual(names(owner="github:alice"), ["shared"])
+
+    def test_a_person_sees_and_changes_only_their_own_accounts(self):
+        pool.add(self.pool, "shared", "oauth", T1)
+        pool.add(self.pool, "alice", "oauth", T2, owner="github:alice")
+        pool.add(self.pool, "bob", "oauth", T3, owner="github:bob")
+        self.assertEqual([r["label"] for r in pool.status(self.pool, env={}, scope="github:alice")], ["alice"])
+        self.assertEqual([r["label"] for r in pool.status(self.pool, env={})], ["shared", "alice", "bob"])
+        for fn in (lambda: pool.remove(self.pool, "bob", "github:alice"),
+                   lambda: pool.set_enabled(self.pool, "shared", False, "github:alice"),
+                   lambda: pool.reset(self.pool, "bob", "github:alice")):
+            with self.assertRaises(pool.PoolError):
+                fn()
+        pool.remove(self.pool, "alice", "github:alice")
+        self.assertEqual([r["label"] for r in pool.status(self.pool, env={})], ["shared", "bob"])
+        with self.assertRaises(pool.PoolError):
+            pool.add(self.pool, "x", "oauth", T1 + "z", owner="not a person")
+
+    def test_a_run_for_a_person_is_made_with_their_credential(self):
+        pool.add(self.pool, "shared", "oauth", T1)
+        pool.add(self.pool, "alice", "oauth", T2, owner="github:alice")
+        self.plan({})
+        req = {"id": 1, "op": "run", "params": {"role": "dev", "workspace": str(self.ws), "account_owner": "github:alice",
+               "ticket": {"service": "a/b", "ref": "1", "title": "t", "body": "b", "comments": []}}}
+        out, _ = self.talk(req)
+        self.assertEqual(out[0]["result"]["account"], "alice")
+        req["params"]["account_owner"] = "github:bob"
+        out, _ = self.talk(req)
+        self.assertEqual(out[0]["result"]["account"], "shared")
+
     def test_the_environment_credential_comes_first(self):
         pool.add(self.pool, "backup", "oauth", T2)
         c = pool.candidates(self.pool, env={"ANTHROPIC_API_KEY": "sk-ant-api03-" + "k" * 30})

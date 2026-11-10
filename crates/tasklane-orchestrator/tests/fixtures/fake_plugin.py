@@ -60,7 +60,8 @@ def item(ref):
 def run(params):
     role = params.get("role", "triage")
     with open(os.path.join(STATE, "profile.log"), "a") as f:
-        f.write(json.dumps({"role": role, "system": (params.get("profile") or {}).get("system", "")}) + "\n")
+        f.write(json.dumps({"role": role, "system": (params.get("profile") or {}).get("system", ""),
+                            "owner": params.get("account_owner")}) + "\n")
     ref = params["ticket"]["ref"]
     if role == "planner":
         t = params["ticket"]
@@ -158,16 +159,19 @@ def accounts_op(op, params):
     """A list of model accounts like engine-claude keeps (without any real secret handling)."""
     rows = json.load(open(accounts_file())) if os.path.exists(accounts_file()) else []
     if op == "accounts":
-        return {"configured": True, "rows": [dict(r, token="\u2026" + r["token"][-4:]) for r in rows]}
+        owner = params.get("owner")
+        return {"configured": True, "rows": [dict(r, token="\u2026" + r["token"][-4:]) for r in rows
+                                             if owner is None or r.get("owner") == owner]}
     act, label = params.get("action"), params.get("label")
-    i = next((n for n, r in enumerate(rows) if r["label"] == label), None)
+    scope = params.get("scope")
+    i = next((n for n, r in enumerate(rows) if r["label"] == label and (scope is None or r.get("owner") == scope)), None)
     if act == "add":
         if i is not None:
             raise ValueError(f"an account called {label!r} already exists")
         if len(params.get("token") or "") < 20:
             raise ValueError("that does not look like a token")
         rows.append({"label": label, "kind": params["kind"], "token": params["token"], "enabled": True,
-                     "cooldown_secs": 0, "last_error": "", "removable": True})
+                     "cooldown_secs": 0, "last_error": "", "removable": True, "owner": params.get("owner") or ""})
     elif i is None:
         raise ValueError(f"no account called {label!r}")
     elif act == "remove":

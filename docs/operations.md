@@ -290,6 +290,12 @@ Anyone in a registered group can read what `/ask` can read from that repository.
 - **`readyz` fails:** the database is unreachable.
 - **Nothing happens after installing the App:** check the repository's mode, that the issue is new (not older than the install), and the daemon log for `sync:` lines.
 
+## People and their model accounts
+
+Under **People** an owner can create a console sign-in for each person (a token shown once). They sign in with it, see the work, approve what their role allows (their name is recorded as the approver) and add their own Claude account under **My account**. Work that a person approved runs on their account first, then on the shared accounts if theirs is used up; nobody's account is used for somebody else's work. Owners keep the settings (Repositories, People, Model accounts, Connections). The admin token still exists and acts as the console admin.
+
+Not included (planned for a managed edition): single sign-on, groups and finer roles than owner, team approver and member.
+
 ## Telling the agents what the team knows
 
 The **Knowledge** page holds short notes that every agent is given (for example "answer in Indonesian"). Notes about one repository, the documents the agents should read first (paths such as `CONTRIBUTING.md` or `docs/architecture.md`) and the agent instructions are edited on that repository's card under Repositories; the Knowledge page lists them all. Only people write these; nothing a model or a ticket says is stored there. Do not put secrets in them: an agent can repeat what it is told. Uploads and an external wiki are not supported yet.

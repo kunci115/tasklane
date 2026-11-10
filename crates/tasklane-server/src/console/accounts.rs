@@ -100,7 +100,14 @@ pub async fn page(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Respon
                     "<tr><td>{}</td><td>{}{}</td><td>{}</td><td><code>{}</code></td><td>{pill}</td><td class=\"muted small\">{}</td><td style=\"text-align:right;white-space:nowrap\">{actions}</td></tr>",
                     i + 1,
                     esc(label),
-                    if label == "environment" { " <span class=\"muted small\">(set on the Connections page or in the environment)</span>" } else { "" },
+                    if label == "environment" {
+                        " <span class=\"muted small\">(set on the Connections page or in the environment)</span>".to_string()
+                    } else {
+                        match r.get("owner").and_then(Value::as_str).filter(|o| !o.is_empty()) {
+                            Some(o) => format!(" <span class=\"pill\">only for {}</span>", esc(o)),
+                            None => " <span class=\"muted small\">shared</span>".to_string(),
+                        }
+                    },
                     esc(&kind.replace('_', " ")),
                     esc(token),
                     esc(problem)
@@ -116,7 +123,7 @@ pub async fn page(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Respon
 <div><label for=\"at\">Token</label><input id=\"at\" type=\"password\" name=\"token\" required maxlength=\"400\" autocomplete=\"off\" style=\"width:22rem\"></div>\
 <div class=\"row tight\"><button class=\"btn primary\">{} Add</button></div></div>\
 <p class=\"hint\">Get a subscription token by running <code>claude setup-token</code> on a computer where that account is signed in, then paste it here. It is stored in the data directory, readable only by tasklane, and is never shown again (only its last four characters). A subscription token is for your own use; for a team, use API keys.</p></form></div>\
-<div class=\"card\" style=\"margin-top:1rem\"><h2>How the switch works</h2><p class=\"small muted\">The first account that is ready does the work. If it reports that its usage limit is reached it sleeps for 30 minutes (a refused token sleeps for a day), and the same run starts again with the next account. The ticket, the feedback and the working copy carry over; the developer is told that part of the work may already be there. A conversation cannot move between accounts, so the new run reads the code again instead of remembering. When every account sleeps, the work waits for the first to wake up and no attempt is used up.</p></div>",
+<div class=\"card\" style=\"margin-top:1rem\"><h2>How the switch works</h2><p class=\"small muted\">Accounts marked shared serve everyone. A person's own account (added by them under My account) is used only for work that person approved or asked for. The first account that is ready does the work. If it reports that its usage limit is reached it sleeps for 30 minutes (a refused token sleeps for a day), and the same run starts again with the next account. The ticket, the feedback and the working copy carry over; the developer is told that part of the work may already be there. A conversation cannot move between accounts, so the new run reads the code again instead of remembering. When every account sleeps, the work waits for the first to wake up and no attempt is used up.</p></div>",
         sess.csrf,
         icon("plus")
     ));

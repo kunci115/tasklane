@@ -8,7 +8,7 @@ pub mod triage;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-pub(crate) fn sha256_hex(s: &str) -> String {
+pub fn sha256_hex(s: &str) -> String {
     format!("{:x}", Sha256::digest(s.as_bytes()))
 }
 

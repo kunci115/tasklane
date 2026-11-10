@@ -8,6 +8,7 @@ mod connect;
 mod dashboard;
 mod knowledge;
 mod map;
+mod me;
 mod people;
 mod projects;
 mod pulls;
@@ -31,7 +32,7 @@ use crate::auth::ct_eq;
 use crate::{esc, AppState};
 use ui::{empty, head, icon, render, MARK_SVG};
 
-pub fn routes() -> Router<Arc<AppState>> {
+pub fn routes(st: Arc<AppState>) -> Router<Arc<AppState>> {
     Router::new()
         .route("/", get(dashboard::home))
         .route("/fragments/overview", get(dashboard::overview_fragment))
@@ -110,11 +111,68 @@ pub fn routes() -> Router<Arc<AppState>> {
             "/manifest.webmanifest",
             get(|| async { ui::asset_manifest() }),
         )
+        .route("/me", get(me::page))
+        .route("/me/account", post(me::add_account))
+        .route("/me/account/remove", post(me::remove_account))
+        .route("/people/{id}/token", post(people::make_token))
+        .route("/people/{id}/token/remove", post(people::remove_token))
+        .layer(axum::middleware::from_fn_with_state(st, gate))
+}
+
+/// Pages and actions a person who is not an owner may use: look at the work, decide what their role
+/// allows, and manage their own sign-in and model account. Everything else is for owners.
+fn allowed_for_member(method: &axum::http::Method, path: &str) -> bool {
+    let get = method == axum::http::Method::GET;
+    let seg: Vec<&str> = path.trim_matches('/').split('/').collect();
+    matches!(
+        (get, seg.as_slice()),
+        (true, [""])
+            | (true, ["fragments", "overview" | "pulls"])
+            | (true, ["fragments", "ticket", _])
+            | (true, ["tickets"] | ["tickets", _] | ["pulls"] | ["me"])
+            | (true, ["map"] | ["map", "data" | "replay"])
+            | (true, ["static", ..])
+            | (true, ["manifest.webmanifest"])
+            | (true, ["login"])
+            | (false, ["logout"])
+            | (false, ["tickets", _, "decide" | "retry" | "duplicate"])
+            | (false, ["me", "account"] | ["me", "account", "remove"])
+    )
+}
+
+async fn gate(
+    State(st): State<Arc<AppState>>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    if let Some(s) = session(&st, req.headers()).await {
+        if s.role != "owner" && !allowed_for_member(req.method(), req.uri().path()) {
+            return (
+                StatusCode::FORBIDDEN,
+                Html("<!doctype html><meta charset=\"utf-8\"><link rel=\"stylesheet\" href=\"/static/app.css\"><div class=\"login\"><div class=\"card\"><h1>Owners only</h1><p class=\"muted\">This page is for owners. Your own sign-in and model account are under My account.</p><a class=\"btn primary\" href=\"/\">Back</a></div></div>"),
+            )
+                .into_response();
+        }
+    }
+    next.run(req).await
 }
 
 /// A signed-in console session, stored server-side with its own CSRF token.
 struct Session {
     csrf: String,
+    channel: String,
+    reference: String,
+    role: String,
+}
+
+impl Session {
+    /// The approver this session acts as: the admin token acts as `console:admin`.
+    fn principal(&self) -> tasklane_orchestrator::approval::Principal {
+        tasklane_orchestrator::approval::Principal {
+            channel: self.channel.clone(),
+            reference: self.reference.clone(),
+        }
+    }
 }
 
 fn cookie_value(headers: &HeaderMap) -> Option<String> {
@@ -134,15 +192,34 @@ async fn session(st: &AppState, headers: &HeaderMap) -> Option<Session> {
     if id.len() != 64 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
-    let csrf: Option<String> = sqlx::query_scalar(
-        "SELECT csrf FROM console_sessions WHERE id = $1 AND expires_at > now()",
+    #[allow(clippy::type_complexity)]
+    let row: Option<(String, Option<String>, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT s.csrf, p.channel, p.ref, p.role FROM console_sessions s
+         LEFT JOIN principals p ON p.id = s.principal_id
+         WHERE s.id = $1 AND s.expires_at > now()",
     )
     .bind(&id)
     .fetch_optional(st.orch.pool())
     .await
     .ok()
     .flatten();
-    csrf.map(|csrf| Session { csrf })
+    row.map(
+        |(csrf, channel, reference, role)| match (channel, reference, role) {
+            (Some(channel), Some(reference), Some(role)) => Session {
+                csrf,
+                channel,
+                reference,
+                role,
+            },
+            // signed in with the admin token
+            _ => Session {
+                csrf,
+                channel: "console".into(),
+                reference: "admin".into(),
+                role: "owner".into(),
+            },
+        },
+    )
 }
 
 /// The session, or a redirect to the sign-in page.
@@ -178,8 +255,8 @@ fn login_page(message: &str) -> Html<String> {
 <meta name=\"theme-color\" content=\"#03040a\"><link rel=\"icon\" href=\"/static/icon.svg\"><link rel=\"manifest\" href=\"/manifest.webmanifest\"><link rel=\"stylesheet\" href=\"/static/app.css\"></head>\
 <body><div class=\"login\"><div class=\"card\"><div class=\"logo\">{MARK_SVG}</div>\
 <h1>tasklane</h1><p class=\"muted\">Issues in, reviewed changes out. Sign in to manage it.</p>{message}\
-<form method=\"post\" action=\"/login\"><div class=\"field\"><label for=\"token\">Admin token</label><input id=\"token\" type=\"password\" name=\"token\" autocomplete=\"current-password\" autofocus required></div>\
-<button class=\"btn primary\" style=\"width:100%\">Sign in</button><p class=\"hint\">The token is the value of TASKLANE_ADMIN_TOKEN on the server.</p></form></div></div><script src=\"/static/app.js\" defer></script></body></html>"
+<form method=\"post\" action=\"/login\"><div class=\"field\"><label for=\"token\">Your token</label><input id=\"token\" type=\"password\" name=\"token\" autocomplete=\"current-password\" autofocus required></div>\
+<button class=\"btn primary\" style=\"width:100%\">Sign in</button><p class=\"hint\">The admin token is the value of TASKLANE_ADMIN_TOKEN on the server. A person signs in with the token an owner made for them under People.</p></form></div></div><script src=\"/static/app.js\" defer></script></body></html>"
     ))
 }
 
@@ -271,7 +348,18 @@ async fn login(
         )
             .into_response();
     }
-    if !ct_eq(&f.token, &st.admin_token) {
+    // the admin token, or the token of one person
+    let person: Option<i64> = if ct_eq(&f.token, &st.admin_token) {
+        None
+    } else {
+        sqlx::query_scalar("SELECT id FROM principals WHERE console_token_hash = $1")
+            .bind(tasklane_orchestrator::sha256_hex(&f.token))
+            .fetch_optional(st.orch.pool())
+            .await
+            .ok()
+            .flatten()
+    };
+    if person.is_none() && !ct_eq(&f.token, &st.admin_token) {
         st.login_throttle
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -287,9 +375,10 @@ async fn login(
         .unwrap_or_else(|e| e.into_inner())
         .right(&client);
     let (id, csrf) = (random_hex(), random_hex());
-    if sqlx::query("INSERT INTO console_sessions (id, csrf, expires_at) VALUES ($1, $2, now() + interval '8 hours')")
+    if sqlx::query("INSERT INTO console_sessions (id, csrf, expires_at, principal_id) VALUES ($1, $2, now() + interval '8 hours', $3)")
         .bind(&id)
         .bind(&csrf)
+        .bind(person)
         .execute(st.orch.pool())
         .await
         .is_err()

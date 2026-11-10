@@ -8,9 +8,7 @@ use axum::response::{Html, IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::Value;
 use sqlx::Row;
-use tasklane_orchestrator::approval::{
-    decide, resolve_duplicate, retry_or_close, Decision, Principal,
-};
+use tasklane_orchestrator::approval::{decide, resolve_duplicate, retry_or_close, Decision};
 
 use super::repos::like_literal;
 use super::ui::{ago, empty, head, icon, level_pill, pager, render, state_pill, url_encode};
@@ -933,9 +931,9 @@ pub async fn decide_form(
     } else {
         Decision::Reject
     };
-    let who = Principal {
-        channel: "console".into(),
-        reference: "admin".into(),
+    let who = match guard(&st, &headers).await {
+        Ok(s) => s.principal(),
+        Err(r) => return r,
     };
     match decide(st.orch.pool(), id, &who, "console", decision, &f.plan_hash).await {
         Ok(_) => redirect(&format!("/tickets/{id}")),
@@ -968,9 +966,9 @@ pub async fn duplicate_form(
     if !csrf_ok(&st, &headers, &f.csrf).await {
         return forbidden();
     }
-    let who = Principal {
-        channel: "console".into(),
-        reference: "admin".into(),
+    let who = match guard(&st, &headers).await {
+        Ok(s) => s.principal(),
+        Err(r) => return r,
     };
     let confirm = f.action == "confirm";
     match resolve_duplicate(st.orch.pool(), id, &who, confirm).await {
@@ -1010,11 +1008,15 @@ pub async fn retry_form(
     if !csrf_ok(&st, &headers, &f.csrf).await {
         return forbidden();
     }
-    let who = Principal {
-        channel: "console".into(),
-        reference: "admin".into(),
+    let sess = match guard(&st, &headers).await {
+        Ok(s) => s,
+        Err(r) => return r,
     };
-    let outcome = if f.action == "done" {
+    let who = sess.principal();
+    let outcome = if f.action == "done" && !matches!(sess.role.as_str(), "owner" | "team_approver")
+    {
+        Err("you are not registered as an approver".to_string())
+    } else if f.action == "done" {
         st.orch
             .close_issue_done(id)
             .await

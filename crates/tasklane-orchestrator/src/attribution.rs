@@ -14,6 +14,22 @@ use serde_json::{json, Value};
 use crate::{Error, Orchestrator};
 
 /// A GitHub login: letters, digits and single hyphens, 1 to 39 characters, no leading or trailing hyphen.
+/// A person as the engine takes it: `channel:ref`.
+pub fn valid_owner(s: &str) -> bool {
+    match s.split_once(':') {
+        Some((c, r)) => {
+            !c.is_empty()
+                && c.len() <= 20
+                && c.bytes().all(|b| b.is_ascii_lowercase())
+                && !r.is_empty()
+                && r.len() <= 80
+                && r.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"@._-".contains(&b))
+        }
+        None => false,
+    }
+}
+
 pub fn valid_login(s: &str) -> bool {
     let b = s.as_bytes();
     !b.is_empty()
@@ -148,6 +164,23 @@ async fn approvers(o: &Orchestrator, ticket_id: i64) -> Result<Vec<String>, Erro
 }
 
 impl Orchestrator {
+    /// Whose model account does the work on this ticket: the person who approved it last (as
+    /// `channel:ref`), else the person who opened the issue when the system knows them. The console
+    /// admin token and unknown people give `None`: shared accounts only. A person's own account is
+    /// never used for somebody else's work.
+    pub(crate) async fn account_owner(&self, ticket_id: i64) -> Option<String> {
+        let approver: Option<String> = sqlx::query_scalar(
+            "SELECT a.approver FROM approvals a JOIN principals p ON a.approver = p.channel || ':' || p.ref
+             WHERE a.ticket_id = $1 AND a.decision = 'approve' ORDER BY a.id DESC LIMIT 1",
+        )
+        .bind(ticket_id)
+        .fetch_optional(self.pool())
+        .await
+        .ok()
+        .flatten();
+        approver.filter(|a| a != "console:admin" && valid_owner(a))
+    }
+
     /// Who to name for a ticket. `author` is the login that opened it. Never fails a job: if something
     /// cannot be looked up, that person is simply left out.
     pub(crate) async fn credit_for(&self, ticket_id: i64, author: &str) -> Credit {

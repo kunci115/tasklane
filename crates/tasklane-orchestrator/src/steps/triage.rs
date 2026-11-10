@@ -57,6 +57,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
                 "ticket": {"service": t.service, "ref": t.external_ref, "title": title, "body": body,
                            "comments": item.get("comments").cloned().unwrap_or(Value::Array(vec![]))},
                 "profile": o.profile_for(&t).await,
+                "account_owner": o.account_owner(t.id).await,
                 "workspace": workspace.as_ref().map(|p| p.worktree.clone()),
                 "budget": {"max_secs": o.cfg.call_timeout.as_secs(), "max_tokens": 100000},
                 "read_only": true
