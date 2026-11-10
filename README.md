@@ -188,6 +188,7 @@ tasklane is **pre-release (0.1.0-alpha.2)**. Expect rough edges, and read the ne
 | | |
 |---|---|
 | [Writing a plug-in](docs/plugins.md) | The protocol in one page, a tested template, how to register a plug-in |
+| [Evaluations](docs/evals.md) | Fixed cases that measure triage, review, duplicate and device roles; baseline comparison; outcome metrics |
 | [Roadmap and status](docs/roadmap.md) | Each part of the design: built, next, and what has run for real |
 | [Autonomy and escalation](docs/autonomy.md) | When agents act alone, when a person is needed, and every setting that turns the dial |
 | [Operations guide](docs/operations.md) | Install, configuration, backups, upgrades, sandbox, two installs on one repository |

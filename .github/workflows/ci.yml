@@ -34,7 +34,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: |
-          for d in plugins/*/ docker/preview/; do python -m unittest discover -s "$d" || exit 1; done
+          for d in plugins/*/ docker/preview/ evals/; do python -m unittest discover -s "$d" || exit 1; done
+          python evals/run_evals.py --validate
   schema:
     runs-on: ubuntu-latest
     services:

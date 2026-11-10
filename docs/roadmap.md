@@ -23,6 +23,8 @@ Each part of the architecture ([docs/design](design) and the C4 diagrams in [doc
 | A generic engine plug-in for any command-line coding agent (same sandbox and checks) | Built; tested with a stand-in agent, not yet with Codex, Gemini or Aider |
 | Plug-in protocol with protocol version check; source, engine and chat plug-ins; a plug-in guide and a tested template | Built |
 | Operations: `tasklane doctor`, Prometheus `/metrics` (opt-in), a `runs` record of every model run, cleanup of stale tickets and orphaned containers | Built |
+| Fix loop: red CI or a reviewer's "changes" sends the ticket back to the developer with what the failed checks said, limited by `max_dev_attempts` and `max_ci_runs`, then a person | Built; the loop ran for real, the check text is tested against a fake GitHub only |
+| Evaluations of the model roles (`evals/`, 28 cases, baseline comparison) and outcome metrics (first-try merges, reviewer verdicts, tokens per role) | Built; runner and case files tested in CI. No baseline is committed yet: it needs a run against a model |
 | Threat-model tests (prompt-injection set for every role, lease races, approval binding) | Built |
 
 ## Next

@@ -813,6 +813,19 @@ def op_open_pr(params):
     return {"pr": str(d["number"])}
 
 
+CHECK_OUTPUT_CAP = 3000
+
+
+def failure_text(output):
+    """What a failed check reported about itself (its title, summary and text), cut short. It is data
+    written by whatever ran in CI; the orchestrator hands it to the developer inside a fenced block."""
+    if not isinstance(output, dict):
+        return ""
+    parts = [output.get(k).strip() for k in ("title", "summary", "text")
+             if isinstance(output.get(k), str) and output.get(k).strip()]
+    return "\n".join(parts)[:CHECK_OUTPUT_CAP]
+
+
 def op_get_checks(params):
     svc, pr = p_service(params), p_num(params, "pr")
     sha = ((app_api("GET", f"/repos/{svc}/pulls/{pr}").data or {}).get("head") or {}).get("sha")
@@ -827,11 +840,19 @@ def op_get_checks(params):
             st = "success"
         else:
             st = "failure"
-        checks.append({"name": c.get("name", ""), "state": st})
+        check = {"name": c.get("name", ""), "state": st}
+        if st == "failure":
+            out = failure_text(c.get("output"))
+            if out:
+                check["output"] = out
+        checks.append(check)
     comb = app_api("GET", f"/repos/{svc}/commits/{sha}/status").data or {}
     for s in comb.get("statuses", []):
         st = {"success": "success", "pending": "pending"}.get(s.get("state"), "failure")
-        checks.append({"name": s.get("context", ""), "state": st})
+        check = {"name": s.get("context", ""), "state": st}
+        if st == "failure" and isinstance(s.get("description"), str) and s["description"].strip():
+            check["output"] = s["description"].strip()[:CHECK_OUTPUT_CAP]
+        checks.append(check)
     states = {c["state"] for c in checks}
     state = "failure" if "failure" in states else "pending" if "pending" in states else "success"
     return {"head_sha": sha, "state": state, "checks": checks}

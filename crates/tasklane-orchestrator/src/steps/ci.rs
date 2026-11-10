@@ -107,11 +107,19 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
                 }
             );
             let runs = t.ci_runs + 1;
+            // What each failed check said about itself goes to the developer (it is the difference
+            // between "tests failed" and knowing which test). It never goes to chat or the reason line.
+            let said = failure_report(&r);
+            let last_error = if said.is_empty() {
+                reason.clone()
+            } else {
+                format!("{reason}\n\n{said}")
+            };
             let mut tx = o.begin(job).await?;
             sqlx::query("UPDATE tickets SET ci_runs = $2, last_error = $3 WHERE id = $1")
                 .bind(t.id)
                 .bind(runs)
-                .bind(&reason)
+                .bind(&last_error)
                 .execute(&mut *tx)
                 .await?;
             if runs >= o.cfg.max_ci_runs {
@@ -143,5 +151,57 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
                 to: State::Developing,
             })
         }
+    }
+}
+
+/// The text failed checks reported, one block per check, cut to a size a prompt can hold.
+fn failure_report(r: &Value) -> String {
+    const CAP: usize = 6000;
+    let mut out = String::new();
+    for c in r
+        .get("checks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|c| c.get("state").and_then(Value::as_str) == Some("failure"))
+    {
+        let text = c.get("output").and_then(Value::as_str).unwrap_or("").trim();
+        if text.is_empty() {
+            continue;
+        }
+        let name = c.get("name").and_then(Value::as_str).unwrap_or("check");
+        if !out.is_empty() {
+            out.push_str("\n\n");
+        }
+        out.push_str(&format!("[{name}]\n{text}"));
+        if out.len() >= CAP {
+            break;
+        }
+    }
+    out.chars().take(CAP).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failure_report_names_each_failed_check_and_skips_the_rest() {
+        let r = json!({"checks": [
+            {"name": "tests", "state": "failure", "output": "2 failed: test_a"},
+            {"name": "lint", "state": "success", "output": "fine"},
+            {"name": "build", "state": "failure"},
+            {"name": "docs", "state": "failure", "output": "  broken link  "}]});
+        assert_eq!(
+            failure_report(&r),
+            "[tests]\n2 failed: test_a\n\n[docs]\nbroken link"
+        );
+    }
+
+    #[test]
+    fn failure_report_is_capped() {
+        let big = "é".repeat(20_000);
+        let r = json!({"checks": [{"name": "t", "state": "failure", "output": big}]});
+        assert_eq!(failure_report(&r).chars().count(), 6000);
     }
 }

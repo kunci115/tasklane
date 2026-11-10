@@ -3,6 +3,10 @@
 ## Unreleased
 
 - Engine role `device` (both engine plug-ins): given an incident, what was tried and the only allowed actions, the agent picks the next step (`continue`, `done` or `escalate`). Its input is marked data that cannot close its block, and its answer is checked. Used by the device worker of the commercial edition.
+- Evaluations (`evals/`): 28 fixed cases for triage, reviewer, duplicate finder and device troubleshooter (a typo is level 1, a removed auth check under a typo ticket is never approved, text inside a diff or a log cannot steer the answer). `evals/run_evals.py` runs them through any engine plug-in, repeats runs to get a pass rate, and fails when a case passes less often than a saved baseline. CI checks the case files and the runner; running them against a model is yours to do after a prompt, model or engine change. See `docs/evals.md`.
+- Outcome metrics on `/metrics`: tickets merged, merged on the first try (one attempt, no red CI, no requested changes), failed, development attempts spent on merged tickets, reviewer verdicts, red CI runs and model tokens per role. These are the numbers to watch when a prompt or model changes.
+- When CI fails, the developer now gets what the failed checks reported (title, summary and text of a GitHub check run, the description of a status), not only their names. Chat still says only that CI failed.
+
 ## 0.1.0-alpha.2 (2026-11-10)
 
 A large step since the first alpha: the developer now really receives feedback, pull request feedback from people, repository rules and notes, duplicate proposals, a second agent engine and a GitLab source (both experimental), an autonomy guide, and the fixes from an independent security review. Verified with real GitHub and Claude: the developer acting on feedback in the Docker sandbox, webhooks, two installs on one repository; see the README status section for what has not run for real.

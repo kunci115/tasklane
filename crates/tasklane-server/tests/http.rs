@@ -2175,6 +2175,47 @@ async fn metrics_need_their_own_bearer_token_and_show_the_queue_and_the_tickets(
 }
 
 #[tokio::test]
+async fn metrics_tell_first_try_merges_from_ones_that_needed_another_round() {
+    let Some(e) = env().await else { return };
+    let clean = seed_ticket(&e, "61", "Clean", "merged", 1).await;
+    let redone = seed_ticket(&e, "62", "Redone", "merged", 1).await;
+    let events: [(i64, &str, &str); 8] = [
+        (clean, "ticket.developing", "{}"),
+        (clean, "ticket.reviewed", "{\"verdict\": \"approve\"}"),
+        (clean, "ticket.merged", "{}"),
+        (redone, "ticket.developing", "{}"),
+        (redone, "ticket.ci_red", "{}"),
+        (redone, "ticket.developing", "{}"),
+        (redone, "ticket.reviewed", "{\"verdict\": \"changes\"}"),
+        (redone, "ticket.merged", "{}"),
+    ];
+    for (t, action, detail) in events {
+        sqlx::query("INSERT INTO audit_events (actor, action, ticket_id, detail) VALUES ('orchestrator', $1, $2, $3::jsonb)")
+            .bind(action)
+            .bind(t)
+            .bind(detail)
+            .execute(&e.pool)
+            .await
+            .unwrap();
+    }
+    let req = Request::get("/metrics")
+        .header(header::AUTHORIZATION, "Bearer metrics-token-for-tests-1234")
+        .body(Body::empty())
+        .unwrap();
+    let (_, _, body) = send(&e.app, req).await;
+    for line in [
+        "tasklane_tickets_merged 2",
+        "tasklane_tickets_merged_first_try 1",
+        "tasklane_merged_dev_attempts 3",
+        "tasklane_ci_red 1",
+        "tasklane_reviews{verdict=\"changes\"} 1",
+        "tasklane_reviews{verdict=\"approve\"} 1",
+    ] {
+        assert!(body.contains(line), "missing {line}: {body}");
+    }
+}
+
+#[tokio::test]
 async fn the_repository_card_shows_the_model_tokens_of_the_last_thirty_days() {
     let Some(e) = env().await else { return };
     let t = seed_ticket(&e, "51", "Costly", "merged", 1).await;

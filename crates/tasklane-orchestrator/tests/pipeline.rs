@@ -228,6 +228,14 @@ async fn red_ci_sends_the_ticket_back_once_with_the_failure_and_then_it_merges()
         calls.lines().nth(1).unwrap().contains("CI failed: tests"),
         "the second attempt is told what failed: {calls}"
     );
+    assert!(
+        calls
+            .lines()
+            .nth(1)
+            .unwrap()
+            .contains("FAILED test_login: expected 200, got 500"),
+        "and what the failed check said: {calls}"
+    );
     assert!(audit_actions(&w.pool, t)
         .await
         .contains(&"ticket.ci_red".to_string()));

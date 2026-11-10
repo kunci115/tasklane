@@ -288,6 +288,21 @@ class Reading(Base):
         self.assertEqual((r["head_sha"], r["state"]), ("abc", "pending"))
         self.assertEqual(r["checks"], [{"name": "ci", "state": "success"}, {"name": "lint", "state": "pending"}])
 
+    def test_get_checks_reports_why_a_check_failed(self):
+        self.fake.routes[("GET", "/repos/acme/one/pulls/3")] = (200, {}, {"head": {"sha": "abc"}})
+        self.fake.routes[("GET", "/repos/acme/one/commits/abc/check-runs")] = (200, {}, {"check_runs": [
+            {"name": "tests", "status": "completed", "conclusion": "failure",
+             "output": {"title": "2 failed", "summary": "test_a, test_b", "text": "x" * 9000}},
+            {"name": "lint", "status": "completed", "conclusion": "success", "output": {"title": "ok"}}]})
+        self.fake.routes[("GET", "/repos/acme/one/commits/abc/status")] = (200, {}, {"statuses": [
+            {"context": "legacy", "state": "failure", "description": "build broke"}]})
+        r = self.ok("get_checks", {"service": "acme/one", "pr": "3"})
+        by = {c["name"]: c for c in r["checks"]}
+        self.assertTrue(by["tests"]["output"].startswith("2 failed\ntest_a, test_b"))
+        self.assertLessEqual(len(by["tests"]["output"]), 3000)
+        self.assertNotIn("output", by["lint"])
+        self.assertEqual(by["legacy"]["output"], "build broke")
+
     def test_detect_facts(self):
         import base64 as b
         R = self.fake.routes

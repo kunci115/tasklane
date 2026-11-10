@@ -218,7 +218,7 @@ def handle(op, params):
         if once("ci_pending"):
             return {"head_sha": head, "state": "pending", "checks": []}
         if once("ci_red") or flag("ci_always_red"):
-            return {"head_sha": head, "state": "failure", "checks": [{"name": "tests", "state": "failure"}]}
+            return {"head_sha": head, "state": "failure", "checks": [{"name": "tests", "state": "failure", "output": "FAILED test_login: expected 200, got 500"}]}
         return {"head_sha": head, "state": "success", "checks": [{"name": "tests", "state": "success"}]}
     if op == "merge_pr":
         branch = open(os.path.join(STATE, "pr_branch")).read()

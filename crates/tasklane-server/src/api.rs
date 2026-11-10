@@ -87,6 +87,7 @@ async fn metrics(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Respons
         "# HELP tasklane_model_tokens_total Model tokens used by all tickets.\n# TYPE tasklane_model_tokens_total counter\ntasklane_model_tokens_total {tokens}\n\
 # HELP tasklane_model_runs_total Model runs recorded.\n# TYPE tasklane_model_runs_total counter\ntasklane_model_runs_total {runs}\n"
     ));
+    out.push_str(&outcome_metrics(pool).await);
     (
         [(
             axum::http::header::CONTENT_TYPE,
@@ -95,6 +96,72 @@ async fn metrics(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Respons
         out,
     )
         .into_response()
+}
+
+/// How well the pipeline does its job, from the audit log: the numbers to watch when a prompt, a model
+/// or a setting changes. "First try" means merged with one development attempt, no red CI and no
+/// reviewer request for changes.
+async fn outcome_metrics(pool: &sqlx::PgPool) -> String {
+    let mut out = String::new();
+    let (merged, first_try, failed, rounds): (i64, i64, i64, i64) = sqlx::query_as(
+        "WITH m AS (SELECT DISTINCT ticket_id FROM audit_events WHERE action = 'ticket.merged'),
+              per AS (
+                SELECT m.ticket_id,
+                  (SELECT count(*) FROM audit_events a WHERE a.ticket_id = m.ticket_id AND a.action = 'ticket.developing') AS attempts,
+                  EXISTS (SELECT 1 FROM audit_events a WHERE a.ticket_id = m.ticket_id AND
+                          (a.action = 'ticket.ci_red' OR (a.action = 'ticket.reviewed' AND a.detail->>'verdict' = 'changes'))) AS redone
+                FROM m)
+         SELECT (SELECT count(*) FROM m),
+                (SELECT count(*) FROM per WHERE attempts <= 1 AND NOT redone),
+                (SELECT count(DISTINCT ticket_id) FROM audit_events WHERE action = 'ticket.failed'),
+                (SELECT coalesce(sum(attempts), 0)::bigint FROM per)",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or((0, 0, 0, 0));
+    out.push_str(&format!(
+        "# HELP tasklane_tickets_merged Tickets that ended merged.\n# TYPE tasklane_tickets_merged gauge\ntasklane_tickets_merged {merged}\n\
+# HELP tasklane_tickets_merged_first_try Merged with one attempt, no red CI, no requested changes.\n# TYPE tasklane_tickets_merged_first_try gauge\ntasklane_tickets_merged_first_try {first_try}\n\
+# HELP tasklane_tickets_failed Tickets that needed a person after failing.\n# TYPE tasklane_tickets_failed gauge\ntasklane_tickets_failed {failed}\n\
+# HELP tasklane_merged_dev_attempts Development attempts spent on merged tickets.\n# TYPE tasklane_merged_dev_attempts gauge\ntasklane_merged_dev_attempts {rounds}\n"
+    ));
+    out.push_str("# HELP tasklane_reviews Reviewer verdicts.\n# TYPE tasklane_reviews gauge\n");
+    let verdicts: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT coalesce(detail->>'verdict', 'unknown'), count(*) FROM audit_events WHERE action = 'ticket.reviewed' GROUP BY 1",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    for (v, n) in verdicts {
+        let v: String = v.chars().filter(char::is_ascii_alphanumeric).collect();
+        out.push_str(&format!("tasklane_reviews{{verdict=\"{v}\"}} {n}\n"));
+    }
+    let (ci_red,): (i64,) =
+        sqlx::query_as("SELECT count(*) FROM audit_events WHERE action = 'ticket.ci_red'")
+            .fetch_one(pool)
+            .await
+            .unwrap_or((0,));
+    out.push_str(&format!(
+        "# HELP tasklane_ci_red Times a pull request's CI came back red.\n# TYPE tasklane_ci_red gauge\ntasklane_ci_red {ci_red}\n"
+    ));
+    out.push_str(
+        "# HELP tasklane_role_tokens Model tokens by role.\n# TYPE tasklane_role_tokens gauge\n",
+    );
+    let roles: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT actor, coalesce(sum(coalesce((usage->>'tokens_in')::bigint, 0) + coalesce((usage->>'tokens_out')::bigint, 0)), 0)::bigint
+         FROM runs GROUP BY actor",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+    for (role, n) in roles {
+        let role: String = role
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        out.push_str(&format!("tasklane_role_tokens{{role=\"{role}\"}} {n}\n"));
+    }
+    out
 }
 
 async fn ready(State(st): State<Arc<AppState>>) -> Response {
