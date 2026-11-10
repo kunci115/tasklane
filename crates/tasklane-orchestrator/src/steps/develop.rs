@@ -269,9 +269,15 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
     o.ws.remove_worktree(&prepared).await;
     let committed = committed?;
     if !committed && o.ws.diff(&t.service, &base, &branch).await?.0.is_empty() {
-        let said: String = summary.chars().take(500).collect();
-        return Err(Error::BadOutput(format!(
-            "the development agent made no change. It said: {said}"
+        let mut said: String = summary.chars().take(900).collect();
+        if summary.chars().count() > 900 {
+            said = said.trim_end().to_string() + " …";
+        }
+        // retrying would only repeat the answer, so this ends the ticket at once
+        return Err(Error::Fatal(format!(
+            "Nothing to change: the development agent looked at the repository and made no edit. \
+If the work is already done, close the issue; if something is missing, say what in the issue and retry. \
+The agent said: {said}"
         )));
     }
     let (diff, files) = o.ws.diff(&t.service, &base, &branch).await?;
