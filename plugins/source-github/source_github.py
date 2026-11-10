@@ -607,7 +607,7 @@ def op_list_open_issues(params):
     """Open issues of one repository (pull requests left out), oldest first, for a person-triggered import."""
     svc = p_service(params)
     refs, url, pages = [], f"/repos/{svc}/issues?state=open&sort=created&direction=asc&per_page=100", 0
-    while url and pages < 5:
+    while url and pages < 20:
         r = app_api("GET", url)
         refs.extend(str(i["number"]) for i in (r.data or []) if "pull_request" not in i)
         url, pages = next_link(r.headers), pages + 1

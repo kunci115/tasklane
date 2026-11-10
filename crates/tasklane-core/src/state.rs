@@ -147,6 +147,8 @@ const EDGES: &[(State, State, &[Actor])] = &[
     (MergeReady, Developing, &[Orchestrator]),
     (Failed, Queued, &[Approver]),
     (Failed, ClosedRejected, &[Approver]),
+    // the work turned out to be done already
+    (Failed, ClosedDone, &[Approver]),
 ];
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]

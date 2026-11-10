@@ -1,6 +1,8 @@
 //! The sync job: keeps the service registry and the ticket table in step with
 //! the ticket source. Webhooks are the fast path; this polling is the backstop.
 
+use std::sync::Arc;
+
 use serde_json::{json, Value};
 use tasklane_core::{transition, Actor, State};
 
@@ -228,6 +230,44 @@ impl Orchestrator {
         }
     }
 
+    /// A person says a ticket that stopped with "nothing to change" is done: close its issue and the ticket.
+    pub async fn close_issue_done(&self, ticket_id: i64) -> Result<(), Error> {
+        let t = self.load_ticket(ticket_id).await?;
+        let nothing = t
+            .last_error
+            .as_deref()
+            .is_some_and(|e| e.starts_with(crate::NOTHING_TO_CHANGE));
+        if t.state != State::Failed || !nothing {
+            return Err(Error::Fatal(
+                "only a ticket that stopped with nothing to change can be closed as done".into(),
+            ));
+        }
+        transition(State::Failed, State::ClosedDone, Actor::Approver)?;
+        let call = self.cfg.call_timeout;
+        self.source
+            .call(
+                "close_item",
+                json!({"service": t.service, "ref": t.external_ref}),
+                call,
+            )
+            .await?;
+        sqlx::query("UPDATE tickets SET state = 'closed_done', updated_at = now() WHERE id = $1 AND state = 'failed'")
+            .bind(ticket_id)
+            .execute(&self.pool)
+            .await?;
+        let _ = sqlx::query("INSERT INTO audit_events (actor, action, ticket_id, detail) VALUES ('console:admin', 'ticket.closed_done', $1, $2)")
+            .bind(ticket_id)
+            .bind(json!({"why": "nothing to change"}))
+            .execute(&self.pool)
+            .await;
+        self.say(
+            &t,
+            "Closed by a person: the repository already has this work.",
+        )
+        .await;
+        Ok(())
+    }
+
     /// Tickets made before titles were kept (or imported without one) get theirs from the source,
     /// a few per pass.
     async fn fill_missing_titles(&self) {
@@ -259,6 +299,50 @@ impl Orchestrator {
                     .await;
             }
         }
+    }
+
+    /// Run the import in the background (a big repository takes minutes); progress and the result
+    /// are kept in `sync_state` under `import_<service id>` for the Repositories page.
+    pub async fn start_import(self: &Arc<Self>, service_id: i64) -> Result<(), Error> {
+        let key = format!("import_{service_id}");
+        let running: Option<String> =
+            sqlx::query_scalar("SELECT value FROM sync_state WHERE key = $1")
+                .bind(&key)
+                .fetch_optional(&self.pool)
+                .await?;
+        if running
+            .and_then(|v| serde_json::from_str::<Value>(&v).ok())
+            .is_some_and(|v| {
+                v.get("state").and_then(Value::as_str) == Some("running")
+                    && v.get("at").and_then(Value::as_i64).unwrap_or(0) > chrono_now() - 1800
+            })
+        {
+            return Ok(());
+        }
+        self.write_import(&key, json!({"state": "running", "at": chrono_now()}))
+            .await;
+        let me = self.clone();
+        tokio::spawn(async move {
+            let result = match me.import_open_issues(service_id).await {
+                Ok((created, held, more)) => {
+                    json!({"state": "done", "created": created, "held": held, "more": more, "at": chrono_now()})
+                }
+                Err(e) => {
+                    eprintln!("import {service_id}: {e}");
+                    json!({"state": "failed", "at": chrono_now()})
+                }
+            };
+            me.write_import(&key, result).await;
+        });
+        Ok(())
+    }
+
+    async fn write_import(&self, key: &str, v: Value) {
+        let _ = sqlx::query("INSERT INTO sync_state (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()")
+            .bind(key)
+            .bind(v.to_string())
+            .execute(&self.pool)
+            .await;
     }
 
     /// A person asked for the issues that were already open to become tickets (the first poll
@@ -442,4 +526,11 @@ pub enum Noted {
     Created,
     Resumed,
     Nothing,
+}
+
+fn chrono_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }

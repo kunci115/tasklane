@@ -275,9 +275,10 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         }
         // retrying would only repeat the answer, so this ends the ticket at once
         return Err(Error::Fatal(format!(
-            "Nothing to change: the development agent looked at the repository and made no edit. \
+            "{}: the development agent looked at the repository and made no edit. \
 If the work is already done, close the issue; if something is missing, say what in the issue and retry. \
-The agent said: {said}"
+The agent said: {said}",
+            crate::NOTHING_TO_CHANGE
         )));
     }
     let (diff, files) = o.ws.diff(&t.service, &base, &branch).await?;

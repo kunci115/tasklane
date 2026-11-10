@@ -33,6 +33,9 @@ pub async fn migrate(pool: &sqlx::PgPool) -> Result<(), sqlx::migrate::MigrateEr
     sqlx::migrate!("../../migrations").run(pool).await
 }
 
+/// Start of the reason of a ticket whose developer found nothing to change (the console offers to close it).
+pub const NOTHING_TO_CHANGE: &str = "Nothing to change";
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]

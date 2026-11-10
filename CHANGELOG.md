@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Import open issues** now runs in the background and covers up to 2000 issues; the repository's card shows when it is running and what it did (new tickets, how many were held back, whether there were more).
+- A ticket whose developer found nothing to change (the work already exists) says so on the issue and in the console, which offers **close the issue as done**, try again, or close the ticket only, instead of a generic failure.
 - Closing issues after promotion is sturdier: tickets are checked in turn (a pile of changes still waiting on `dev` no longer starves newer ones), the issue is closed first and the note is posted only after it worked, the merge commit is looked up if the merge answer lacked it, and a merge refused three times stops with a person instead of looping.
 - Merge now picks squash or rebase when the repository allows no merge commits, and says so plainly when no method is allowed. The branch set under "Branch pull requests go to" must exist (new optional source operation `branch_exists`); `get_pull` also returns `merge_sha`.
 - Security: **Merge** on the Pull requests page now applies the same rules as tasklane's own work: a pull request from a fork or from someone without a role in the repository, or one that touches protected paths or is large, is never merged from the console ("a person merges it on the source"). Review and merge also respect another install's claim on the repository. `get_pull` now also returns `author_trusted` and `from_fork`.

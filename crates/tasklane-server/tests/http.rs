@@ -2547,10 +2547,8 @@ async fn issues_that_were_open_before_the_connection_can_be_imported_on_request(
         form(&url, format!("csrf={}", e.csrf), Some(e.cookie.clone())),
     )
     .await;
-    assert!(
-        st.is_redirection(),
-        "created tickets lead to the ticket list"
-    );
+    assert!(st.is_redirection());
+    wait_import(&e, id).await;
     let n: i64 = sqlx::query_scalar("SELECT count(*) FROM tickets WHERE service_id = $1")
         .bind(id)
         .fetch_one(&e.pool)
@@ -2565,15 +2563,34 @@ async fn issues_that_were_open_before_the_connection_can_be_imported_on_request(
     .await
     .unwrap();
     assert_eq!(titles, 2, "tickets carry the issue title");
-    let (_, _, again) = send(
+    let (_, _, page) = send(&e.app, get("/services", Some(e.cookie.clone()))).await;
+    assert!(page.contains("Import finished: 2 new ticket(s)"), "{page}");
+    send(
         &e.app,
         form(&url, format!("csrf={}", e.csrf), Some(e.cookie.clone())),
     )
     .await;
+    wait_import(&e, id).await;
+    let (_, _, again) = send(&e.app, get("/services", Some(e.cookie.clone()))).await;
     assert!(
-        again.contains("Nothing to import"),
+        again.contains("Import finished: 0 new ticket(s)"),
         "a second run adds nothing"
     );
+}
+
+async fn wait_import(e: &Env, id: i64) {
+    for _ in 0..100 {
+        let v: Option<String> = sqlx::query_scalar("SELECT value FROM sync_state WHERE key = $1")
+            .bind(format!("import_{id}"))
+            .fetch_optional(&e.pool)
+            .await
+            .unwrap();
+        if v.is_some_and(|v| v.contains("\"done\"") || v.contains("\"failed\"")) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("the import did not finish");
 }
 
 #[tokio::test]
@@ -2611,6 +2628,58 @@ async fn the_branch_pull_requests_go_to_is_set_per_repository_and_checked() {
     assert_eq!(t, "dev");
     let (_, _, page) = send(&e.app, get("/services", Some(e.cookie.clone()))).await;
     assert!(page.contains("Branch pull requests go to") && page.contains("value=\"dev\""));
+}
+
+#[tokio::test]
+async fn a_ticket_that_stopped_with_nothing_to_change_can_be_closed_as_done() {
+    let Some(e) = env().await else { return };
+    let (t,): (i64,) = sqlx::query_as("INSERT INTO tickets (service_id, external_ref, state, last_error) SELECT id, '31', 'failed', 'Nothing to change: the development agent made no edit. The agent said: it exists' FROM services WHERE external_id = 'org/repo' RETURNING id")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    let (_, _, page) = send(
+        &e.app,
+        get(&format!("/tickets/{t}"), Some(e.cookie.clone())),
+    )
+    .await;
+    assert!(page.contains("Nothing needed changing") && page.contains("close the issue"));
+    let (st, _, _) = send(
+        &e.app,
+        form(
+            &format!("/tickets/{t}/retry"),
+            format!("csrf={}&action=done", e.csrf),
+            Some(e.cookie.clone()),
+        ),
+    )
+    .await;
+    assert!(st.is_redirection());
+    let state: String = sqlx::query_scalar("SELECT state FROM tickets WHERE id = $1")
+        .bind(t)
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(state, "closed_done");
+    assert_eq!(
+        std::fs::read_to_string(e.dir.path().join("state/closed.log"))
+            .unwrap_or_default()
+            .trim(),
+        "31"
+    );
+    // an ordinary failure cannot be closed this way
+    let (u,): (i64,) = sqlx::query_as("INSERT INTO tickets (service_id, external_ref, state, last_error) SELECT id, '32', 'failed', 'git exploded' FROM services WHERE external_id = 'org/repo' RETURNING id")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    let (st, _, _) = send(
+        &e.app,
+        form(
+            &format!("/tickets/{u}/retry"),
+            format!("csrf={}&action=done", e.csrf),
+            Some(e.cookie.clone()),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CONFLICT);
 }
 
 #[tokio::test]

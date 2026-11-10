@@ -195,6 +195,7 @@ pub async fn page(
         ));
     }
     b.push_str("<div class=\"grid g2\">");
+    let imports = import_notices(&st).await;
     let mut notes_by: std::collections::HashMap<i64, Vec<(i64, String, String)>> =
         Default::default();
     for r in &rows {
@@ -263,6 +264,16 @@ pub async fn page(
             .and_then(Value::as_i64)
             .map(|p| p.to_string())
             .unwrap_or_default();
+        let notice_html: String = format!(
+            "{}{}",
+            imports.get(&id).map(String::as_str).unwrap_or(""),
+            if owner_state == "foreign" {
+                format!("<div class=\"notice warn\"><strong>Handled by another tasklane install</strong> ({}). This one leaves the repository alone, so the two do not answer the same issues twice.\
+<form method=\"post\" action=\"/services/{id}/takeover\" style=\"margin-top:.5rem\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"ret\" value=\"{here}\"><button class=\"btn small danger\" data-confirm=\"Take this repository over? The other install loses it and stops acting on it.\">Take over</button></form></div>", esc(owner_name.as_deref().unwrap_or("unknown")), sess.csrf)
+            } else {
+                String::new()
+            }
+        );
         b.push_str(&format!(
             "<div class=\"card repo-card\"><div class=\"row tight\" style=\"align-items:center;gap:.5rem\"><h2 style=\"margin:0\">{}</h2>{}{}{}{}</div>\
 <form method=\"post\" action=\"/services/{id}/mode\" style=\"margin:.8rem 0\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"ret\" value=\"{here}\"><div class=\"seg\" role=\"group\" aria-label=\"Mode\">{}{}{}</div></form>\
@@ -282,16 +293,11 @@ pub async fn page(
             seg("watch"),
             seg("triage"),
             seg("full"),
-            if owner_state == "foreign" {
-                format!("<div class=\"notice warn\"><strong>Handled by another tasklane install</strong> ({}). This one leaves the repository alone, so the two do not answer the same issues twice.\
-<form method=\"post\" action=\"/services/{id}/takeover\" style=\"margin-top:.5rem\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"ret\" value=\"{here}\"><button class=\"btn small danger\" data-confirm=\"Take this repository over? The other install loses it and stops acting on it.\">Take over</button></form></div>", esc(owner_name.as_deref().unwrap_or("unknown")), sess.csrf)
-            } else {
-                String::new()
-            },
+            notice_html,
             if archived || mode == "watch" {
                 String::new()
             } else {
-                format!("<form method=\"post\" action=\"/services/{id}/import\" style=\"display:inline\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><button class=\"btn small\" title=\"Issues that were already open before tasklane was connected are not picked up on their own. This turns them into tickets.\" data-confirm=\"Turn the open issues of this repository into tickets? In triage mode the agent will comment on each.\">Import open issues</button></form>", sess.csrf)
+                format!("<form method=\"post\" action=\"/services/{id}/import\" style=\"display:inline\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"ret\" value=\"{here}\"><button class=\"btn small\" title=\"Issues that were already open before tasklane was connected are not picked up on their own. This turns them into tickets.\" data-confirm=\"Turn the open issues of this repository into tickets? In triage mode the agent will comment on each.\">Import open issues</button></form>", sess.csrf)
             },
             human_tokens(tokens),
             last.map(|s| format!("<span>active {}</span>", ago(s))).unwrap_or_else(|| "<span>no activity yet</span>".into()),
@@ -483,27 +489,53 @@ pub async fn import_open(
     if !csrf_ok(&st, &headers, &f.csrf).await {
         return forbidden();
     }
-    match st.orch.import_open_issues(id).await {
-        Ok((created, _, _)) if created > 0 => redirect("/tickets"),
-        Ok((_, held, more)) => {
-            let msg = if held > 0 {
-                "Too many tickets are waiting for triage right now. Try the import again in a few minutes."
-            } else if more {
-                "No new tickets from the first 500 open issues; they are already tickets or not open issues."
-            } else {
-                "Nothing to import: every open issue is already a ticket, or this repository is in watch mode."
-            };
-            (axum::http::StatusCode::OK, msg).into_response()
-        }
+    match st.orch.start_import(id).await {
+        Ok(()) => back(f.ret.as_deref()),
         Err(e) => {
             eprintln!("import open issues {id}: {e}");
             (
                 axum::http::StatusCode::BAD_GATEWAY,
-                "The import did not work. The ticket source refused or could not be reached; try again in a minute.",
+                "The import did not start. Try again in a minute.",
             )
                 .into_response()
         }
     }
+}
+
+/// What the last import of each repository did, as a line for its card (kept for a day).
+async fn import_notices(st: &AppState) -> std::collections::HashMap<i64, String> {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT key, value FROM sync_state WHERE key LIKE 'import\\_%' AND updated_at > now() - interval '1 day'",
+    )
+    .fetch_all(st.orch.pool())
+    .await
+    .unwrap_or_default();
+    rows.into_iter()
+        .filter_map(|(k, v)| {
+            let id: i64 = k.strip_prefix("import_")?.parse().ok()?;
+            let v: Value = serde_json::from_str(&v).ok()?;
+            let n = |k: &str| v.get(k).and_then(Value::as_u64).unwrap_or(0);
+            let text = match v.get("state").and_then(Value::as_str)? {
+                "running" => "Importing the open issues… reload in a minute.".to_string(),
+                "failed" => "The last import did not finish. Press Import open issues again.".to_string(),
+                _ => format!(
+                    "Import finished: {} new ticket(s){}{}.",
+                    n("created"),
+                    if n("held") > 0 {
+                        format!(", {} held back because many tickets wait for triage (press Import again later)", n("held"))
+                    } else {
+                        String::new()
+                    },
+                    if v.get("more").and_then(Value::as_bool) == Some(true) {
+                        "; the repository has more open issues than the 2000 that were looked at"
+                    } else {
+                        ""
+                    }
+                ),
+            };
+            Some((id, format!("<div class=\"notice\">{}</div>", esc(&text))))
+        })
+        .collect()
 }
 
 #[derive(Deserialize)]

@@ -683,7 +683,20 @@ pub async fn detail(
             icon("check")
         ));
     }
-    if d.state == "failed" {
+    if d.state == "failed"
+        && d.err
+            .as_deref()
+            .is_some_and(|e| e.starts_with(tasklane_orchestrator::NOTHING_TO_CHANGE))
+    {
+        b.push_str(&format!(
+            "<div class=\"decide\"><h2 style=\"margin:0 0 .3rem\">{} Nothing needed changing</h2><p style=\"margin:.2rem 0\">{}</p>\
+<form method=\"post\" action=\"/tickets/{id}/retry\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><div class=\"btns\"><button class=\"btn primary\" name=\"action\" value=\"done\" data-confirm=\"Close the issue as done?\">{} It is done: close the issue</button><button class=\"btn\" name=\"action\" value=\"retry\">Try again</button><button class=\"btn danger\" name=\"action\" value=\"close\" data-confirm=\"Close this ticket for good?\">Close the ticket only</button></div></form></div>",
+            icon("check"),
+            esc(d.err.as_deref().unwrap_or("")),
+            sess.csrf,
+            icon("check")
+        ));
+    } else if d.state == "failed" {
         b.push_str(&format!(
             "<div class=\"decide\" style=\"border-color:var(--bad);background:linear-gradient(0deg,var(--panel),var(--bad-bg))\"><h2 style=\"margin:0 0 .3rem\">{} This ticket stopped</h2><p style=\"margin:.2rem 0\">{}</p>\
 <form method=\"post\" action=\"/tickets/{id}/retry\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><div class=\"btns\"><button class=\"btn primary\" name=\"action\" value=\"retry\">{} Try again</button><button class=\"btn danger\" name=\"action\" value=\"close\" data-confirm=\"Close this ticket for good?\">Close it</button></div></form></div>",
@@ -997,7 +1010,19 @@ pub async fn retry_form(
         channel: "console".into(),
         reference: "admin".into(),
     };
-    match retry_or_close(st.orch.pool(), id, &who, f.action == "close").await {
+    let outcome = if f.action == "done" {
+        st.orch
+            .close_issue_done(id)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    } else {
+        retry_or_close(st.orch.pool(), id, &who, f.action == "close")
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    };
+    match outcome {
         Ok(_) => redirect(&format!("/tickets/{id}")),
         Err(e) => {
             message(
@@ -1005,7 +1030,7 @@ pub async fn retry_form(
                 &f.csrf,
                 StatusCode::CONFLICT,
                 "That did not go through",
-                &e.to_string(),
+                &e,
                 &format!("/tickets/{id}"),
             )
             .await
