@@ -2749,7 +2749,7 @@ async fn the_knowledge_page_holds_notes_for_every_repository_and_notes_can_be_ed
     let post = |path: &str, body: String| form(path, body, Some(e.cookie.clone()));
     let (st, _, _) = send(
         &e.app,
-        post("/knowledge/notes", format!("csrf=nope&fact=x")),
+        post("/knowledge/notes", "csrf=nope&fact=x".to_string()),
     )
     .await;
     assert_eq!(st, StatusCode::FORBIDDEN);
