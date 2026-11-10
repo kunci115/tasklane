@@ -1239,6 +1239,12 @@ async fn health_setup_and_activity_pages_render_and_the_checklist_reflects_reali
         "the fake plug-ins answer describe"
     );
     seed_ticket(&e, "1", "x", "new", 1).await;
+    // the source lists the repository, as a real one would (a repository it does not list is archived)
+    std::fs::write(
+        e.dir.path().join("state/services.json"),
+        r#"[{"external_id":"org/repo","default_branch":"main","archived":false,"private":true}]"#,
+    )
+    .unwrap();
     sqlx::query("INSERT INTO audit_events (actor, action, detail) VALUES ('console:admin','service.mode','{\"mode\":\"full\"}')").execute(&e.pool).await.unwrap();
     let (_, _, activity) = send(&e.app, get("/activity?kind=admin", Some(e.cookie.clone()))).await;
     assert!(activity.contains("Repository mode set to full") && activity.contains("you"));
@@ -2459,4 +2465,18 @@ async fn the_repository_card_shows_the_model_tokens_of_the_last_thirty_days() {
         page.contains("1.5k tokens (30 d)"),
         "only the recent run counts: {page}"
     );
+}
+
+#[tokio::test]
+async fn repositories_the_source_no_longer_lists_are_hidden_until_asked_for() {
+    let Some(e) = env().await else { return };
+    sqlx::query("INSERT INTO services (kind, source, external_id, mode, archived) VALUES ('repo','test','old/gone','watch',true)")
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    let (_, _, page) = send(&e.app, get("/services", Some(e.cookie.clone()))).await;
+    assert!(page.contains("org/repo") && !page.contains("old/gone"));
+    assert!(page.contains("Show archived"));
+    let (_, _, all) = send(&e.app, get("/services?archived=1", Some(e.cookie.clone()))).await;
+    assert!(all.contains("old/gone") && all.contains("Hide archived"));
 }

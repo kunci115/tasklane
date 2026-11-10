@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Disconnecting GitHub in the console now archives the repositories that came through it (their tickets and history stay) and resets the sync cursor, so nothing lingers on the Repositories page; connecting again brings them back.
+- A repository the source no longer lists (you switched GitHub account or App, or access was removed) is archived on the next sync instead of staying on the board, and the Repositories page hides archived ones unless you press **Show archived**. They return by themselves when listed again.
+
 
 - Credit in the GitHub history goes to the person the agent worked for. On the People page each person sets their GitHub login and a **credit me** box (off by default). The last person who approved a change (or whoever opened the issue, when nobody had to approve) becomes the commit's author with tasklane as committer, so it counts in their contribution graph; other opted-in people are `Co-authored-by`. Commits always carry `Requested-by` and `Approved-by` trailers and the pull request says who asked and who approved. Only valid GitHub logins reach a commit message; ticket titles can no longer add lines to it. New optional source operation `get_user`. `TASKLANE_ATTRIBUTION=off` switches it all off.
 

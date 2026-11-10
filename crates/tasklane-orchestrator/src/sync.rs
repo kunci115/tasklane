@@ -81,6 +81,20 @@ impl Orchestrator {
             }
             report.services_seen += 1;
         }
+        // A repository the source no longer lists (the account or App was switched, access
+        // was removed) must not stay on the board. Archived, not deleted: history stays.
+        let listed: Vec<&str> = services
+            .iter()
+            .filter_map(|s| s.get("external_id").and_then(Value::as_str))
+            .collect();
+        sqlx::query(
+            "UPDATE services SET archived = true
+             WHERE source = $1 AND NOT archived AND NOT (external_id = ANY($2))",
+        )
+        .bind(&self.cfg.source_name)
+        .bind(&listed)
+        .execute(&self.pool)
+        .await?;
 
         let cursor: Option<String> =
             sqlx::query_scalar("SELECT value FROM sync_state WHERE key = 'changes_cursor'")

@@ -290,3 +290,41 @@ async fn work_already_queued_for_a_repository_owned_elsewhere_waits() {
     );
     assert_eq!(state(&w.pool, t).await, "new", "nothing was done for it");
 }
+
+#[tokio::test]
+async fn a_repository_the_source_stops_listing_is_archived_and_returns_when_listed_again() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    let repo = |n: &str| serde_json::json!({"external_id": n, "default_branch": "main", "archived": false, "private": true});
+    write(
+        &w,
+        "services.json",
+        serde_json::json!([repo("org/a"), repo("org/b")]),
+    );
+    w.orch.sync_once().await.unwrap();
+    write(&w, "services.json", serde_json::json!([repo("org/a")]));
+    w.orch.sync_once().await.unwrap();
+    let live = |name: &'static str| {
+        let pool = w.pool.clone();
+        async move {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT NOT archived FROM services WHERE external_id = $1",
+            )
+            .bind(name)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    assert!(live("org/a").await);
+    assert!(!live("org/b").await, "no longer listed, so off the board");
+    write(
+        &w,
+        "services.json",
+        serde_json::json!([repo("org/a"), repo("org/b")]),
+    );
+    w.orch.sync_once().await.unwrap();
+    assert!(live("org/b").await);
+}

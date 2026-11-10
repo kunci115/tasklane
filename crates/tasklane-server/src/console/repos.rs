@@ -19,6 +19,7 @@ pub struct ListQuery {
     mode: Option<String>,
     page: Option<u32>,
     per: Option<u32>,
+    archived: Option<String>,
 }
 
 /// `%`, `_` and `\` mean something in a LIKE pattern; the search text is meant literally.
@@ -52,10 +53,13 @@ pub async fn page(
         .unwrap_or("all");
     let per = lq.per.filter(|p| matches!(*p, 12 | 24 | 48)).unwrap_or(12);
     let pattern = format!("%{}%", like_literal(&q));
+    // repositories the source no longer lists (account switched, access removed) stay out of sight
+    let show_archived = lq.archived.as_deref() == Some("1");
     // how many repositories each mode has, for the filter tabs (they follow the search text)
     let mut counts = std::collections::HashMap::new();
-    for r in sqlx::query("SELECT mode, count(*) AS n FROM services WHERE external_id ILIKE $1 ESCAPE '\\' GROUP BY mode")
+    for r in sqlx::query("SELECT mode, count(*) AS n FROM services WHERE external_id ILIKE $1 ESCAPE '\\' AND ($2 OR NOT archived) GROUP BY mode")
         .bind(&pattern)
+        .bind(show_archived)
         .fetch_all(st.orch.pool())
         .await
         .unwrap_or_default()
@@ -80,13 +84,14 @@ pub async fn page(
                    FROM runs r JOIN jobs j ON j.id = r.job_id JOIN tickets t ON t.id = j.ticket_id
                   WHERE t.service_id = s.id AND r.started_at > now() - interval '30 days') AS tokens
          FROM services s
-         WHERE s.external_id ILIKE $1 ESCAPE '\\' AND ($2 = 'all' OR s.mode = $2)
+         WHERE s.external_id ILIKE $1 ESCAPE '\\' AND ($2 = 'all' OR s.mode = $2) AND ($5 OR NOT s.archived)
          ORDER BY s.archived, s.external_id LIMIT $3 OFFSET $4",
     )
     .bind(&pattern)
     .bind(mode_f)
     .bind(per as i64)
     .bind((page as i64 - 1) * per as i64)
+    .bind(show_archived)
     .fetch_all(st.orch.pool())
     .await
     .unwrap_or_default();
@@ -101,6 +106,9 @@ pub async fn page(
         }
         if per != 12 {
             v.push(format!("per={per}"));
+        }
+        if show_archived {
+            v.push("archived=1".to_string());
         }
         v.join("&")
     };
@@ -117,15 +125,35 @@ pub async fn page(
         }
     };
 
+    let mut hidden = String::new();
+    if mode_f != "all" {
+        hidden.push_str(&format!(
+            "<input type=\"hidden\" name=\"mode\" value=\"{mode_f}\">"
+        ));
+    }
+    if per != 12 {
+        hidden.push_str(&format!(
+            "<input type=\"hidden\" name=\"per\" value=\"{per}\">"
+        ));
+    }
+    if show_archived {
+        hidden.push_str("<input type=\"hidden\" name=\"archived\" value=\"1\">");
+    }
+    let mut links = String::new();
+    if !q.is_empty() {
+        links.push_str("<a class=\"btn ghost\" href=\"/services\">Clear</a>");
+    }
+    links.push_str(if show_archived {
+        "<a class=\"btn ghost\" href=\"/services\">Hide archived</a>"
+    } else {
+        "<a class=\"btn ghost\" href=\"/services?archived=1\">Show archived</a>"
+    });
     let mut b = head(
         "Repositories",
         "Choose how far tasklane may go in each one. New repositories start in <strong>triage</strong>.",
         &format!(
-            "<form method=\"get\" action=\"/services\" class=\"row tight\" role=\"search\"><input type=\"search\" name=\"q\" value=\"{}\" placeholder=\"Search repositories\" style=\"width:16rem\" aria-label=\"Search repositories\" maxlength=\"100\">{}{}<button class=\"btn\">Search</button>{}</form>",
+            "<form method=\"get\" action=\"/services\" class=\"row tight\" role=\"search\"><input type=\"search\" name=\"q\" value=\"{}\" placeholder=\"Search repositories\" style=\"width:16rem\" aria-label=\"Search repositories\" maxlength=\"100\">{hidden}<button class=\"btn\">Search</button>{links}</form>",
             esc(&q),
-            if mode_f != "all" { format!("<input type=\"hidden\" name=\"mode\" value=\"{mode_f}\">") } else { String::new() },
-            if per != 12 { format!("<input type=\"hidden\" name=\"per\" value=\"{per}\">") } else { String::new() },
-            if q.is_empty() { String::new() } else { "<a class=\"btn ghost\" href=\"/services\">Clear</a>".to_string() }
         ),
     );
     b.push_str(
