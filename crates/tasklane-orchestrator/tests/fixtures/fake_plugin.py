@@ -61,7 +61,8 @@ def run(params):
     role = params.get("role", "triage")
     with open(os.path.join(STATE, "profile.log"), "a") as f:
         f.write(json.dumps({"role": role, "system": (params.get("profile") or {}).get("system", ""),
-                            "owner": params.get("account_owner")}) + "\n")
+                            "owner": params.get("account_owner"),
+                            "references": [r["name"] for r in params.get("references") or []]}) + "\n")
     ref = params["ticket"]["ref"]
     if role == "planner":
         t = params["ticket"]
@@ -264,6 +265,12 @@ def handle(op, params):
         return read_json("pull_" + str(params["pr"]) + ".json", {"base": "main", "state": "open"})
     if op == "list_open_issues":
         return {"refs": read_json("open_issues_" + params.get("service", "").replace("/", "_") + ".json", []), "more": False}
+    if op == "reference":
+        with open(os.path.join(STATE, "references.log"), "a") as f:
+            f.write(json.dumps({"url": params["url"], "header": params.get("header_name"), "value": params.get("header_value")}) + "\n")
+        if "fail" in params["url"]:
+            raise ValueError("the address answered 500")
+        return {"text": "Doc from " + params["url"], "bytes": 10, "cut": False}
     if op == "branch_exists":
         return {"exists": params["branch"] not in read_json("missing_branches.json", [])}
     if op == "in_branch":

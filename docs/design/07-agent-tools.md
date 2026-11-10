@@ -1,6 +1,16 @@
-# Agent access to other services (design, not built)
+# Agent access to other services
 
-Status: **proposal.** Nothing here is implemented. Today the Claude engine runs with `--strict-mcp-config` and no MCP configuration, a fixed tool list (Read, Grep, Glob; for the developer Edit, Write and a few git commands plus the repository's test command) and an egress proxy that allows only the model API. That is deliberate: an agent that reads untrusted ticket text must not be able to reach anything else.
+Status: **step one is built** (reference documents, below). Interactive tools (MCP servers the agent calls while it works) are still a proposal.
+
+## Built: reference documents
+
+The owner lists documents on the Knowledge page (an internal wiki page, an API description, a runbook), for every repository or one. The daemon fetches each through the engine plug-in (the only part with network access): http(s) only, no redirects, text-like content only, a size limit, a lifetime (default 10 minutes) after which it is fetched again, and the last good text is used if the address fails. A credential goes in a header and is kept as a file `ref_<id>` in the secrets directory; the agent never sees it, and the fetcher removes it from anything it returns. The text reaches triage, development and review as a `<reference>` block that the system rules call data. Nothing the agent does can change the list. It needs no network for the agent and no new egress rule.
+
+Limits: up to 8 documents (300 000 characters) per run; the agent reads them as background and cannot query a service. What a document says is untrusted: point only at pages your own people write.
+
+## Not built: interactive tools
+
+Status of the rest: **proposal.** Nothing below is implemented. Today the Claude engine runs with `--strict-mcp-config` and no MCP configuration, a fixed tool list (Read, Grep, Glob; for the developer Edit, Write and a few git commands plus the repository's test command) and an egress proxy that allows only the model API. That is deliberate: an agent that reads untrusted ticket text must not be able to reach anything else.
 
 ## The need
 

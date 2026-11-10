@@ -81,6 +81,10 @@ async fn env() -> Option<Env> {
             ("FAKE_REMOTE_ROOT".into(), dir.path().display().to_string()),
         ],
     };
+    // the orchestrator reads document credentials from <its data dir>/secrets, where the console writes them
+    std::fs::create_dir_all(dir.path().join("data")).unwrap();
+    std::fs::create_dir_all(dir.path().join("secrets")).unwrap();
+    let _ = std::os::unix::fs::symlink(dir.path().join("secrets"), dir.path().join("data/secrets"));
     let mut cfg = Config::new("http-test", dir.path().join("data"));
     cfg.source_name = "test".into();
     cfg.call_timeout = Duration::from_secs(10);
@@ -3043,6 +3047,92 @@ async fn a_person_signs_in_with_their_own_token_and_acts_as_themselves() {
     let (st, _, _) = send(&e.app, get("/me", Some(cookie))).await;
     assert_ne!(st, StatusCode::OK);
     assert!(sign_in(&e, &token).await.is_none());
+}
+
+#[tokio::test]
+async fn reference_documents_are_added_read_and_removed_and_their_credential_stays_secret() {
+    let Some(e) = env().await else { return };
+    let post = |path: &str, body: String| form(path, body, Some(e.cookie.clone()));
+    let add = |extra: &str| post("/knowledge/sources", format!("csrf={}&{extra}", e.csrf));
+    for bad in [
+        "name=&url=https%3A%2F%2Fwiki.example.com%2Fa",
+        "name=Guide&url=ftp%3A%2F%2Fx%2Fy",
+        "name=Guide&url=https%3A%2F%2Fuser%3Apw%40wiki.example.com%2Fa",
+        "name=Guide&url=https%3A%2F%2Fwiki.example.com%2Fa&header_name=Authorization",
+        "name=Guide&url=https%3A%2F%2Fwiki.example.com%2Fa&header_name=Bad%20Name&header_value=x",
+    ] {
+        let (st, _, _) = send(&e.app, add(bad)).await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
+    }
+    let (st, _, _) = send(
+        &e.app,
+        add("name=Deploy+guide&url=https%3A%2F%2Fwiki.example.com%2Fdeploy&header_name=Authorization&header_value=Bearer+topsecret123"),
+    )
+    .await;
+    assert!(st.is_redirection());
+    let id: i64 =
+        sqlx::query_scalar("SELECT id FROM reference_sources WHERE name = 'Deploy guide'")
+            .fetch_one(&e.pool)
+            .await
+            .unwrap();
+    let secret = e.dir.path().join("secrets").join(format!("ref_{id}"));
+    assert_eq!(
+        std::fs::read_to_string(&secret).unwrap().trim(),
+        "Bearer topsecret123"
+    );
+    let (_, _, page) = send(&e.app, get("/knowledge", Some(e.cookie.clone()))).await;
+    assert!(page.contains("Deploy guide") && page.contains("wiki.example.com/deploy"));
+    assert!(
+        !page.contains("topsecret123"),
+        "the credential is never shown again"
+    );
+    // reading it now goes through the engine and shows what the agents get
+    let (_, _, read) = send(
+        &e.app,
+        post(
+            &format!("/knowledge/sources/{id}/test"),
+            format!("csrf={}", e.csrf),
+        ),
+    )
+    .await;
+    assert!(
+        read.contains("Doc from https://wiki.example.com/deploy"),
+        "{read}"
+    );
+    let log = std::fs::read_to_string(e.dir.path().join("state/references.log")).unwrap();
+    assert!(
+        log.contains("Bearer topsecret123"),
+        "the daemon passes the credential to the fetcher only"
+    );
+    // turn off, then remove (the credential file goes too)
+    send(
+        &e.app,
+        post(
+            &format!("/knowledge/sources/{id}/toggle"),
+            format!("csrf={}", e.csrf),
+        ),
+    )
+    .await;
+    let on: bool = sqlx::query_scalar("SELECT enabled FROM reference_sources WHERE id = $1")
+        .bind(id)
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert!(!on);
+    send(
+        &e.app,
+        post(
+            &format!("/knowledge/sources/{id}/delete"),
+            format!("csrf={}", e.csrf),
+        ),
+    )
+    .await;
+    assert!(!secret.exists());
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM reference_sources")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
 }
 
 #[tokio::test]

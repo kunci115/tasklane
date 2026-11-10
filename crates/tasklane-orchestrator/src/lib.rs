@@ -20,6 +20,7 @@ pub mod host;
 pub mod memory;
 mod ownership;
 mod pulls;
+mod references;
 mod steps;
 pub mod sync;
 pub mod workspace;

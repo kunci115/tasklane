@@ -980,6 +980,67 @@ async fn before_anyone_approves_the_work_of_a_known_issue_author_uses_their_acco
     assert_eq!(first_triage["owner"], "github:nabil");
 }
 
+#[tokio::test]
+async fn reference_documents_reach_the_agents_are_cached_and_survive_a_failing_address() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    sqlx::query("INSERT INTO reference_sources (name, url) VALUES ('Everywhere', 'https://wiki.example.com/all')")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO reference_sources (name, url, service_id) SELECT 'Only here', 'https://wiki.example.com/repo', id FROM services")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO reference_sources (name, url, enabled) VALUES ('Off', 'https://wiki.example.com/off', false)")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    let t = ticket(&w, "T-plain").await;
+    drive(&w).await;
+    assert_eq!(state(&w.pool, t).await, "merged");
+    let runs: Vec<serde_json::Value> = w
+        .read_state("profile.log")
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    for role in ["triage", "dev", "reviewer"] {
+        let r = runs.iter().find(|o| o["role"] == role).unwrap();
+        assert_eq!(
+            r["references"],
+            serde_json::json!(["Everywhere", "Only here"]),
+            "{role}"
+        );
+    }
+    // each address was fetched once: the text is kept for its lifetime
+    let fetched = w.read_state("references.log");
+    assert_eq!(fetched.matches("/all").count(), 1, "{fetched}");
+    assert_eq!(
+        fetched.matches("/off").count(),
+        0,
+        "a source that is off is never read"
+    );
+    // an address that fails later falls back to the last text it gave
+    sqlx::query("UPDATE reference_sources SET url = url || '-fail', last_fetched = now() - interval '1 day' WHERE name = 'Everywhere'")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    let refs = w.orch.references_for("org/repo").await;
+    let every = refs.iter().find(|r| r["name"] == "Everywhere").unwrap();
+    assert!(every["text"]
+        .as_str()
+        .unwrap()
+        .contains("Doc from https://wiki.example.com/all"));
+    let status: String =
+        sqlx::query_scalar("SELECT last_status FROM reference_sources WHERE name = 'Everywhere'")
+            .fetch_one(&w.pool)
+            .await
+            .unwrap();
+    assert!(status.starts_with("failed"), "{status}");
+}
+
 fn read_state_contains(w: &World, name: &str, needle: &str) -> bool {
     w.read_state(name).contains(needle)
 }

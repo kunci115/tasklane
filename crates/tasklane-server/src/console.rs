@@ -63,6 +63,11 @@ pub fn routes(st: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/services/{id}/import", post(repos::import_open))
         .route("/knowledge", get(knowledge::page))
         .route("/knowledge/notes", post(knowledge::add_global))
+        .route("/knowledge/sources", post(knowledge::add_source))
+        .route(
+            "/knowledge/sources/{id}/{action}",
+            post(knowledge::source_action),
+        )
         .route("/knowledge/notes/{nid}/edit", post(knowledge::edit))
         .route(
             "/knowledge/notes/{nid}/delete",

@@ -238,6 +238,7 @@ pub async fn plan(
                 "role": "planner",
                 "ticket": {"service": "", "ref": "", "title": name, "body": brief, "comments": comments},
                 "profile": {},
+                "references": st.orch.references_for("").await,
                 "budget": {"max_secs": 150, "max_tokens": 60000},
                 "read_only": true
             }),
