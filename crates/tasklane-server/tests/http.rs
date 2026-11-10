@@ -1840,6 +1840,10 @@ async fn if_github_does_not_send_the_user_back_the_installation_is_found_by_itse
 async fn disconnecting_github_removes_the_secrets_and_the_setting() {
     let Some(e) = env().await else { return };
     connect_github(&e).await;
+    sqlx::query("INSERT INTO services (kind, source, external_id) VALUES ('repo', 'github', 'org/lingering')")
+        .execute(&e.pool)
+        .await
+        .unwrap();
     assert_eq!(
         send(
             &e.app,
@@ -1876,6 +1880,13 @@ async fn disconnecting_github_removes_the_secrets_and_the_setting() {
         .await
         .unwrap();
     assert_eq!(n, 0);
+    let live: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM services WHERE source = 'github' AND NOT archived",
+    )
+    .fetch_one(&e.pool)
+    .await
+    .unwrap();
+    assert_eq!(live, 0, "repositories must not linger after disconnect");
 }
 
 #[tokio::test]

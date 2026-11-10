@@ -564,6 +564,14 @@ pub async fn github_disconnect(
     st.secrets.delete(connections::GITHUB_KEY);
     st.secrets.delete(connections::GITHUB_WEBHOOK);
     let _ = connections::remove(st.orch.pool(), "github").await;
+    // The repositories came through this connection: archive them (history stays) and
+    // forget the cursor, so a later connect starts from a fresh list.
+    let _ = sqlx::query("UPDATE services SET archived = true WHERE source = 'github'")
+        .execute(st.orch.pool())
+        .await;
+    let _ = sqlx::query("DELETE FROM sync_state WHERE key = 'changes_cursor'")
+        .execute(st.orch.pool())
+        .await;
     let _ = sqlx::query("INSERT INTO audit_events (actor, action, detail) VALUES ('console:admin', 'connection.github_removed', '{}')").execute(st.orch.pool()).await;
     let _ = connections::apply(&st).await;
     redirect("/connections?msg=github_removed")
