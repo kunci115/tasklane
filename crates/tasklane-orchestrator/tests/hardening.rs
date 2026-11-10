@@ -1089,3 +1089,28 @@ async fn what_people_ask_for_on_the_pull_request_can_raise_the_level_above_what_
         "refunds are level 3: an owner must approve"
     );
 }
+
+#[tokio::test]
+async fn the_agents_are_given_the_global_notes_and_the_documents_to_read_first() {
+    let Some(pool) = common::test_pool().await else {
+        return;
+    };
+    let w = common::world(pool, |_| {}).await;
+    tasklane_orchestrator::memory::add_global(&w.pool, "Answer in Indonesian", "t")
+        .await
+        .unwrap();
+    let profile = serde_json::json!({"system": "base", "docs": ["CONTRIBUTING.md", "../secret"]});
+    let p = tasklane_orchestrator::memory::with_notes(&w.pool, "test", "org/repo", &profile)
+        .await
+        .unwrap();
+    let sys = p["system"].as_str().unwrap();
+    assert!(sys.starts_with("base"));
+    assert!(
+        sys.contains("every repository:\n- Answer in Indonesian"),
+        "{sys}"
+    );
+    assert!(
+        sys.contains("- CONTRIBUTING.md") && !sys.contains("secret"),
+        "{sys}"
+    );
+}

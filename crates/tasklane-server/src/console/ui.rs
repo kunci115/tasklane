@@ -244,6 +244,7 @@ pub async fn render(
         item("pulls", "/pulls", "merge", "Pull requests", None),
         item("connections", "/connections", "plug", "Connections", None),
         item("accounts", "/accounts", "shield", "Model accounts", None),
+        item("knowledge", "/knowledge", "file", "Knowledge", None),
         item("people", "/people", "users", "People", None),
         item("chat", "/chat", "chat", "Chat groups", None),
         item("activity", "/activity", "activity", "Activity", None),

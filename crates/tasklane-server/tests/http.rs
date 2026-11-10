@@ -2742,6 +2742,93 @@ async fn the_model_is_pinned_per_repository_and_the_ticket_shows_what_ran() {
 }
 
 #[tokio::test]
+async fn the_knowledge_page_holds_notes_for_every_repository_and_notes_can_be_edited() {
+    let Some(e) = env().await else { return };
+    let (st, _, _) = send(&e.app, get("/knowledge", None)).await;
+    assert_ne!(st, StatusCode::OK, "needs a session");
+    let post = |path: &str, body: String| form(path, body, Some(e.cookie.clone()));
+    let (st, _, _) = send(
+        &e.app,
+        post("/knowledge/notes", format!("csrf=nope&fact=x")),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, _, _) = send(
+        &e.app,
+        post(
+            "/knowledge/notes",
+            format!("csrf={}&fact=Answer%20in%20Indonesian%20%3Cb%3E", e.csrf),
+        ),
+    )
+    .await;
+    assert!(st.is_redirection());
+    let (_, _, page) = send(&e.app, get("/knowledge", Some(e.cookie.clone()))).await;
+    assert!(page.contains("Answer in Indonesian &lt;b&gt;") && page.contains("org/repo"));
+    let nid: i64 = sqlx::query_scalar("SELECT id FROM memory_notes WHERE service_id IS NULL")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    send(
+        &e.app,
+        post(
+            &format!("/knowledge/notes/{nid}/edit"),
+            format!("csrf={}&fact=Answer%20in%20English", e.csrf),
+        ),
+    )
+    .await;
+    let fact: String = sqlx::query_scalar("SELECT fact FROM memory_notes WHERE id = $1")
+        .bind(nid)
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(fact, "Answer in English");
+    // documents to read first are saved per repository and checked
+    let id: i64 = sqlx::query_scalar("SELECT id FROM services WHERE external_id = 'org/repo'")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    let prof = |docs: &str| {
+        format!(
+            "csrf={}&system=&test_command=&preview_command=&preview_port=&docs={docs}",
+            e.csrf
+        )
+    };
+    let (st, _, _) = send(
+        &e.app,
+        post(
+            &format!("/services/{id}/profile"),
+            prof("..%2Fetc%2Fpasswd"),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    let (st, _, _) = send(
+        &e.app,
+        post(
+            &format!("/services/{id}/profile"),
+            prof("CONTRIBUTING.md%0Adocs%2Farchitecture.md"),
+        ),
+    )
+    .await;
+    assert!(st.is_redirection());
+    let (_, _, page) = send(&e.app, get("/knowledge", Some(e.cookie.clone()))).await;
+    assert!(page.contains("docs/architecture.md"));
+    send(
+        &e.app,
+        post(
+            &format!("/knowledge/notes/{nid}/delete"),
+            format!("csrf={}", e.csrf),
+        ),
+    )
+    .await;
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM memory_notes WHERE service_id IS NULL")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+}
+
+#[tokio::test]
 async fn tickets_of_an_archived_repository_leave_the_lists_but_not_the_database() {
     let Some(e) = env().await else { return };
     let id = seed_ticket(&e, "7", "Old account work", "merged", 1).await;

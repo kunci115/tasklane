@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Knowledge** page: notes that hold for every repository (added, edited and removed there), an overview of each repository's notes, documents and instructions, and editing of any note. Each repository can list **documents the agents read first** (paths inside the repository, for example `CONTRIBUTING.md`); the agents are told to read them before they start. Notes are sent to the agents together: the team's notes for every repository, then the repository's own.
 - **Which model ran.** The Claude engine reports the model the CLI says it used, the ticket page shows it under Details, and each repository has a **Model** setting (Settings) to pin one instead of following the connected account's default.
 - **Import open issues** now runs in the background and covers up to 2000 issues; the repository's card shows when it is running and what it did (new tickets, how many were held back, whether there were more).
 - A ticket whose developer found nothing to change (the work already exists) says so on the issue and in the console, which offers **close the issue as done**, try again, or close the ticket only, instead of a generic failure.

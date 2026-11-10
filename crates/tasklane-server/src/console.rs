@@ -6,6 +6,7 @@
 mod accounts;
 mod connect;
 mod dashboard;
+mod knowledge;
 mod map;
 mod people;
 mod projects;
@@ -58,6 +59,13 @@ pub fn routes() -> Router<Arc<AppState>> {
         )
         .route("/services/{id}/takeover", post(repos::take_over))
         .route("/services/{id}/import", post(repos::import_open))
+        .route("/knowledge", get(knowledge::page))
+        .route("/knowledge/notes", post(knowledge::add_global))
+        .route("/knowledge/notes/{nid}/edit", post(knowledge::edit))
+        .route(
+            "/knowledge/notes/{nid}/delete",
+            post(knowledge::delete_global),
+        )
         .route("/people", get(people::page).post(people::add))
         .route("/people/{id}/delete", post(people::delete))
         .route("/people/{id}/credit", post(people::set_credit))

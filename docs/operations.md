@@ -290,6 +290,10 @@ Anyone in a registered group can read what `/ask` can read from that repository.
 - **`readyz` fails:** the database is unreachable.
 - **Nothing happens after installing the App:** check the repository's mode, that the issue is new (not older than the install), and the daemon log for `sync:` lines.
 
+## Telling the agents what the team knows
+
+The **Knowledge** page holds short notes that every agent is given (for example "answer in Indonesian"). Notes about one repository, the documents the agents should read first (paths such as `CONTRIBUTING.md` or `docs/architecture.md`) and the agent instructions are edited on that repository's card under Repositories; the Knowledge page lists them all. Only people write these; nothing a model or a ticket says is stored there. Do not put secrets in them: an agent can repeat what it is told. Uploads and an external wiki are not supported yet.
+
 ## Starting a new project
 
 **New project** in the console creates a repository, registers it in triage mode and opens a first ticket from your brief, so a project can start from an idea instead of an existing repository.

@@ -255,6 +255,7 @@ pub async fn page(
             .get("target_branch")
             .and_then(Value::as_str)
             .unwrap_or("");
+        let docs_v = tasklane_orchestrator::memory::docs_of(&profile).join("\n");
         let model_v = profile.get("model").and_then(Value::as_str).unwrap_or("");
         let default_v = facts
             .get("default_branch")
@@ -284,6 +285,7 @@ pub async fn page(
 <div class=\"field\"><label for=\"t{id}\">Test command the agent may run</label><input id=\"t{id}\" type=\"text\" name=\"test_command\" maxlength=\"200\" value=\"{}\" placeholder=\"pytest -q\"><div class=\"hint\">One command, no parentheses or line breaks.</div></div>\
 <div class=\"field\"><label for=\"pc{id}\">Preview: command that starts the app</label><input id=\"pc{id}\" type=\"text\" name=\"preview_command\" maxlength=\"300\" value=\"{}\" placeholder=\"python3 -m http.server 3000\"></div><div class=\"field\"><label for=\"pp{id}\">Preview: port</label><input id=\"pp{id}\" type=\"text\" name=\"preview_port\" maxlength=\"5\" value=\"{}\" placeholder=\"3000\"><div class=\"hint\">Lets the developer agent look at what it builds (a screenshot, with Obscura). Needs the sandbox image built with Obscura; see the operations guide. Leave both empty to turn it off.</div></div>\
 <div class=\"field\"><label for=\"tb{id}\">Branch pull requests go to</label><input id=\"tb{id}\" type=\"text\" name=\"target_branch\" maxlength=\"100\" value=\"{}\" placeholder=\"{}\"><div class=\"hint\">Empty means the default branch. With another branch (for example dev), the issue stays open after the merge and tasklane closes it once the change reaches the default branch.</div></div>\
+<div class=\"field\"><label for=\"dc{id}\">Documents the agents read first</label><textarea id=\"dc{id}\" name=\"docs\" rows=\"3\" placeholder=\"CONTRIBUTING.md&#10;docs/architecture.md\">{}</textarea><div class=\"hint\">One path inside the repository per line. The agents are told to read them before they start, when they exist.</div></div>\
 <div class=\"field\"><label for=\"md{id}\">Model</label><input id=\"md{id}\" type=\"text\" name=\"model\" maxlength=\"100\" value=\"{}\" placeholder=\"account default\"><div class=\"hint\">Empty uses the default of the connected Claude account, which can change. Set a name such as claude-sonnet-5-5 to pin it. The ticket page shows the model each run reported.</div></div>\
 <button class=\"btn primary small\">Save</button></form>{}</details></div>",
             if link.is_empty() { esc(&name) } else { format!("<a href=\"{}\" target=\"_blank\" rel=\"noopener\">{} {}</a>", esc(&link), esc(&name), icon("external")) },
@@ -312,6 +314,7 @@ pub async fn page(
             esc(&pport_v),
             esc(target_v),
             esc(default_v),
+            esc(&docs_v),
             esc(model_v),
             notes_html(id, notes_by.get(&id).map(Vec::as_slice).unwrap_or(&[]), &sess.csrf, &here)
         ));
@@ -351,6 +354,12 @@ fn notes_html(id: i64, notes: &[(i64, String, String)], csrf: &str, here: &str) 
             esc(here),
             esc(fact),
             esc(who)
+        ));
+        h.push_str(&format!(
+            "<details style=\"margin:-.1rem 0 .4rem\"><summary class=\"muted small\" style=\"cursor:pointer\">Edit</summary><form method=\"post\" action=\"/knowledge/notes/{nid}/edit\" class=\"row tight\" style=\"gap:.5rem;margin-top:.3rem\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"ret\" value=\"{}\"><input type=\"text\" name=\"fact\" value=\"{}\" maxlength=\"1000\" style=\"flex:1\" aria-label=\"Note\"><button class=\"btn small\">Save</button></form></details>",
+            esc(csrf),
+            esc(here),
+            esc(fact)
         ));
     }
     h.push_str(&format!(
@@ -554,6 +563,8 @@ pub struct ProfileIn {
     target_branch: String,
     #[serde(default)]
     model: String,
+    #[serde(default)]
+    docs: String,
     ret: Option<String>,
 }
 
@@ -598,6 +609,24 @@ pub async fn set_profile(
         )
             .into_response();
     }
+    let docs: Vec<String> = f
+        .docs
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect();
+    if docs.len() > 20
+        || docs
+            .iter()
+            .any(|d| !tasklane_orchestrator::memory::valid_doc_path(d))
+    {
+        return (
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "documents: up to 20 paths inside the repository, one per line, letters digits and . _ / - only, no ..",
+        )
+            .into_response();
+    }
     let model = f.model.trim();
     if model.len() > 100
         || !model
@@ -634,7 +663,7 @@ pub async fn set_profile(
     }
     let _ = sqlx::query("UPDATE services SET agent_profile = agent_profile || $2 WHERE id = $1")
         .bind(id)
-        .bind(json!({"system": system, "test_command": cmd, "preview_command": pcmd, "preview_port": port, "target_branch": target, "model": model}))
+        .bind(json!({"system": system, "test_command": cmd, "preview_command": pcmd, "preview_port": port, "target_branch": target, "model": model, "docs": docs}))
         .execute(st.orch.pool())
         .await;
     let _ = sqlx::query("INSERT INTO audit_events (actor, action, detail) VALUES ('console:admin', 'service.profile', $1)")
