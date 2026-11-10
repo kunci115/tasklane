@@ -118,6 +118,8 @@ def run(params):
             f.write(json.dumps({"q": params.get("question"), "ws": params.get("workspace")}) + "\n")
         return {"answer": "The answer is 42."}
     if role == "reviewer":
+        with open(os.path.join(STATE, "review_diffs.log"), "a") as f:
+            f.write(params.get("diff", "") + "\n")
         if "changes" in ref and once("changes"):
             return {"verdict": "changes", "notes": "please add a test"}
         if "escalate" in ref and once("escalate"):
@@ -237,6 +239,8 @@ def handle(op, params):
         return {"event": json.loads(base64.b64decode(params["body_b64"]))}
     if op == "list_services":
         return {"services": read_json("services.json", [])}
+    if op == "get_pull":
+        return read_json("pull_" + str(params["pr"]) + ".json", {"base": "main", "state": "open"})
     if op == "list_pulls":
         return {"pulls": read_json("pulls_" + params.get("service", "").replace("/", "_") + ".json", []), "truncated": False}
     if op == "list_changes":

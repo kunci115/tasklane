@@ -2580,4 +2580,15 @@ async fn the_review_button_needs_a_session_a_clean_number_and_a_repository_that_
     .unwrap();
     let (_, _, list) = send(&e.app, get("/fragments/pulls", Some(e.cookie.clone()))).await;
     assert!(list.contains("/pulls/review") && list.contains("Review with AI"));
+    sqlx::query("INSERT INTO audit_events (actor, action, detail) VALUES ('console:admin','pull.reviewed','{\"service\":\"org/repo\",\"pr\":\"9\",\"verdict\":\"changes\",\"notes\":\"split <this> PR\"}')")
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    let (_, _, list) = send(&e.app, get("/fragments/pulls", Some(e.cookie.clone()))).await;
+    assert!(
+        list.contains("split &lt;this&gt; PR")
+            && list.contains("Ask the author")
+            && list.contains("Review again"),
+        "the review is readable in the row, with what to do next: {list}"
+    );
 }

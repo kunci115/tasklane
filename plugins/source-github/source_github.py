@@ -861,6 +861,16 @@ def op_get_checks(params):
 PULLS_LISTED = 50
 
 
+def op_get_pull(params):
+    """One pull request: where it goes (`base`), what its head is, and whether it is still open."""
+    svc, pr = p_service(params), p_num(params, "pr")
+    d = app_api("GET", f"/repos/{svc}/pulls/{pr}").data or {}
+    return {"base": str((d.get("base") or {}).get("ref") or ""),
+            "head_sha": str((d.get("head") or {}).get("sha") or ""),
+            "state": str(d.get("state") or ""), "draft": bool(d.get("draft")),
+            "title": str(d.get("title") or ""), "body": str(d.get("body") or "")}
+
+
 def op_list_pulls(params):
     """The open pull requests of one repository, newest activity first (read only). `ours` marks the
     ones tasklane opened itself (branch `tasklane/<ticket>`); `truncated` says there were more."""
@@ -1036,7 +1046,7 @@ OPS = {
     "create_item": op_create_item, "comment": op_comment,
     "set_labels": op_set_labels, "detect_facts": op_detect_facts, "read_overrides": op_read_overrides,
     "repo_url": op_repo_url, "mint_run_token": op_mint_run_token,
-    "open_pr": op_open_pr, "get_checks": op_get_checks, "get_user": op_get_user, "list_pulls": op_list_pulls,
+    "open_pr": op_open_pr, "get_checks": op_get_checks, "get_user": op_get_user, "list_pulls": op_list_pulls, "get_pull": op_get_pull,
     "merge_pr": op_merge_pr, "list_pr_feedback": op_list_pr_feedback, "verify_webhook": op_verify_webhook,
     "app_manifest_convert": op_app_manifest_convert, "list_installations": op_list_installations,
     "claim_repo": op_claim_repo, "release_repo": op_release_repo, "takeover_repo": op_takeover_repo,

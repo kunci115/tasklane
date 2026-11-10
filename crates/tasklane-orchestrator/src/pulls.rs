@@ -34,7 +34,7 @@ impl Orchestrator {
         .bind(service)
         .fetch_optional(&self.pool)
         .await?;
-        let Some((facts, profile, mode)) = row else {
+        let Some((_facts, profile, mode)) = row else {
             return Err(Error::Fatal(format!("unknown repository {service}")));
         };
         if mode == "watch" {
@@ -42,11 +42,6 @@ impl Orchestrator {
                 "{service} is in watch mode: set it to triage or full first"
             )));
         }
-        let base = facts
-            .get("default_branch")
-            .and_then(Value::as_str)
-            .unwrap_or("main")
-            .to_string();
         let call = self.cfg.call_timeout;
         let token = self
             .source
@@ -74,6 +69,26 @@ impl Orchestrator {
             .and_then(Value::as_str)
             .ok_or_else(|| Error::BadOutput("repo_url without url".into()))?
             .to_string();
+        // The pull request is compared with the branch it goes into, which is often not the
+        // default branch (here `dev`); otherwise everything dev has and main lacks counts as its change.
+        let info = self
+            .source
+            .call("get_pull", json!({"service": service, "pr": pr}), call)
+            .await?;
+        if say(&info, "state") != "open" {
+            return Err(Error::Fatal("the pull request is not open".into()));
+        }
+        let base = say(&info, "base");
+        if base.is_empty()
+            || base.starts_with('-')
+            || !base
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'/' | b'-'))
+        {
+            return Err(Error::Fatal(
+                "the pull request has no usable target branch".into(),
+            ));
+        }
         let (diff, _files) = self.ws.pull_diff(service, &url, &base, pr).await?;
         if diff.trim().is_empty() {
             return Err(Error::Fatal(

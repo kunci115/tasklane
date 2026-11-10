@@ -35,11 +35,16 @@ struct RepoPulls {
     error: Option<String>,
 }
 
-type Cache = Mutex<Option<(Instant, Vec<RepoPulls>)>>;
+/// One list per running server (the address of its state tells them apart).
+type Cache = Mutex<HashMap<usize, (Instant, Vec<RepoPulls>)>>;
 
 fn cache() -> &'static Cache {
     static C: OnceLock<Cache> = OnceLock::new();
-    C.get_or_init(|| Mutex::new(None))
+    C.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cache_key(st: &Arc<AppState>) -> usize {
+    Arc::as_ptr(st) as usize
 }
 
 async fn load(st: &Arc<AppState>) -> (Vec<RepoPulls>, usize) {
@@ -105,7 +110,7 @@ pub async fn page(
     };
     if q.refresh.is_some() {
         if let Ok(mut c) = cache().lock() {
-            *c = None;
+            c.remove(&cache_key(&st));
         }
     }
     let mut b = head(
@@ -131,7 +136,7 @@ pub async fn fragment(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Re
         Err(r) => return r,
     };
     let cached = cache().lock().ok().and_then(|c| {
-        c.as_ref()
+        c.get(&cache_key(&st))
             .filter(|(t, _)| t.elapsed() < FRESH)
             .map(|(_, v)| v.clone())
     });
@@ -142,7 +147,7 @@ pub async fn fragment(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Re
             // a list with a failed repository is not kept: the next look asks again
             if v.iter().all(|r| r.error.is_none()) {
                 if let Ok(mut c) = cache().lock() {
-                    *c = Some((Instant::now(), v.clone()));
+                    c.insert(cache_key(&st), (Instant::now(), v.clone()));
                 }
             }
             (v, skipped)
@@ -257,14 +262,14 @@ fn list_html(
             } else {
                 let last = match verdicts.get(&key) {
                     Some((v, notes)) => {
-                        let (class, label) = match v.as_str() {
-                            "approve" => ("ok", "no changes needed"),
-                            "changes" => ("warn", "changes asked"),
-                            "escalate" => ("warn", "needs a person"),
-                            _ => ("bad", "failed"),
+                        let (class, label, next) = match v.as_str() {
+                            "approve" => ("ok", "no changes needed", "Nothing to fix. A person can merge it."),
+                            "changes" => ("warn", "changes asked", "Ask the author to fix what is listed, then press Review again."),
+                            "escalate" => ("warn", "needs a person", "A person should look at it first; the details are in the comment on the pull request."),
+                            _ => ("bad", "failed", "The review did not finish. Press Review again."),
                         };
                         format!(
-                            "<span class=\"pill {class}\" title=\"{}\">{label}</span> ",
+                            "<details><summary><span class=\"pill {class}\">{label}</span> <span class=\"muted small\">read the review</span></summary><p class=\"small\"><strong>Next:</strong> {next}</p><div class=\"small\" style=\"white-space:pre-wrap;max-width:46rem\">{}</div></details>",
                             esc(notes)
                         )
                     }

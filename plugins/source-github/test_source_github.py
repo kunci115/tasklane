@@ -317,6 +317,12 @@ class Reading(Base):
         self.assertFalse(r["truncated"])
         self.assertEqual(self.err("list_pulls", {"service": "not a repo"})["kind"], "permanent")
 
+    def test_get_pull_says_where_a_pull_request_goes(self):
+        self.fake.routes[("GET", "/repos/acme/one/pulls/5")] = (200, {}, {
+            "base": {"ref": "dev"}, "head": {"sha": "abc"}, "state": "open", "title": "T", "body": None})
+        r = self.ok("get_pull", {"service": "acme/one", "pr": "5"})
+        self.assertEqual((r["base"], r["head_sha"], r["state"], r["body"]), ("dev", "abc", "open", ""))
+
     def test_get_user_gives_the_id_behind_a_login_and_only_for_people(self):
         R = self.fake.routes
         R[("GET", "/users/nabil")] = (200, {}, {"id": 4242, "login": "Nabil", "type": "User"})

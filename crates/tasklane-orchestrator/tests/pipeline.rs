@@ -609,3 +609,47 @@ async fn a_pull_request_somebody_opened_gets_a_read_only_review_posted_as_a_comm
         .await
         .is_err());
 }
+
+#[tokio::test]
+async fn a_pull_request_is_reviewed_against_the_branch_it_goes_into_not_the_default_branch() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    let seed = w.dir.path().join("seed");
+    // `dev` is ahead of `main` with work from other tickets; the pull request is built on `dev`
+    sh(
+        &seed,
+        &format!(
+            "git checkout -q -b dev && echo other-ticket > OTHER && git add . && git commit -qm other && git push -q {0} dev && git checkout -q -b feature && echo mine >> README && git commit -qam mine && git push -q {0} feature:refs/pull/8/head && git checkout -q main",
+            w.remote().display()
+        ),
+    );
+    std::fs::write(
+        w.state_dir().join("pull_8.json"),
+        r#"{"base":"dev","state":"open"}"#,
+    )
+    .unwrap();
+    w.orch.review_pull("org/repo", "8", "tester").await.unwrap();
+    let seen = w.read_state("review_diffs.log");
+    assert!(
+        seen.contains("mine") && !seen.contains("other-ticket"),
+        "{seen}"
+    );
+    std::fs::write(
+        w.state_dir().join("pull_9.json"),
+        r#"{"base":"-x","state":"open"}"#,
+    )
+    .unwrap();
+    assert!(w.orch.review_pull("org/repo", "9", "tester").await.is_err());
+    std::fs::write(
+        w.state_dir().join("pull_10.json"),
+        r#"{"base":"dev","state":"closed"}"#,
+    )
+    .unwrap();
+    assert!(w
+        .orch
+        .review_pull("org/repo", "10", "tester")
+        .await
+        .is_err());
+}
