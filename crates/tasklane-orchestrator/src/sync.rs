@@ -131,6 +131,7 @@ impl Orchestrator {
                 Noted::Nothing => {}
             }
         }
+        self.fill_missing_titles().await;
         // Advance the cursor only after every item was handled (not while some were held back).
         if deferred {
             return Ok(report);
@@ -142,6 +143,39 @@ impl Orchestrator {
                 .await?;
         }
         Ok(report)
+    }
+
+    /// Tickets made before titles were kept (or imported without one) get theirs from the source,
+    /// a few per pass.
+    async fn fill_missing_titles(&self) {
+        let rows: Vec<(i64, String, String)> = sqlx::query_as(
+            "SELECT t.id, s.external_id, t.external_ref FROM tickets t JOIN services s ON s.id = t.service_id
+             WHERE coalesce(t.title, '') = '' AND s.source = $1 AND NOT s.archived ORDER BY t.id DESC LIMIT 10",
+        )
+        .bind(&self.cfg.source_name)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default();
+        for (id, service, reference) in rows {
+            let Ok(item) = self
+                .source
+                .call(
+                    "get_item",
+                    json!({"service": service, "ref": reference}),
+                    self.cfg.call_timeout,
+                )
+                .await
+            else {
+                continue;
+            };
+            if let Some(title) = item.get("title").and_then(Value::as_str) {
+                let _ = sqlx::query("UPDATE tickets SET title = left($2, 300) WHERE id = $1 AND coalesce(title, '') = ''")
+                    .bind(id)
+                    .bind(title)
+                    .execute(&self.pool)
+                    .await;
+            }
+        }
     }
 
     /// A person asked for the issues that were already open to become tickets (the first poll
@@ -210,6 +244,7 @@ impl Orchestrator {
         .bind(reference)
         .fetch_optional(&self.pool)
         .await?;
+        let mut title: Option<String> = None;
         if known.is_none() {
             let waiting: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM jobs WHERE kind = 'triage' AND status = 'queued'",
@@ -233,14 +268,19 @@ impl Orchestrator {
             {
                 return Ok(Noted::Nothing);
             }
+            title = item
+                .get("title")
+                .and_then(Value::as_str)
+                .map(|t| t.chars().take(300).collect());
         }
         let mut tx = self.pool.begin().await?;
         let created: Option<(i64,)> = sqlx::query_as(
-            "INSERT INTO tickets (service_id, external_ref) VALUES ($1, $2)
+            "INSERT INTO tickets (service_id, external_ref, title) VALUES ($1, $2, $3)
              ON CONFLICT (service_id, external_ref) DO NOTHING RETURNING id",
         )
         .bind(service_id)
         .bind(reference)
+        .bind(title)
         .fetch_optional(&mut *tx)
         .await?;
         if let Some((id,)) = created {

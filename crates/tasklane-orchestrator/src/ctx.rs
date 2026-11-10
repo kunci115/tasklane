@@ -920,13 +920,24 @@ impl Orchestrator {
     }
 
     pub(crate) async fn item(&self, t: &Ticket) -> Result<Value, Error> {
-        Ok(self
+        let item = self
             .source
             .call(
                 "get_item",
                 json!({"service": t.service, "ref": t.external_ref}),
                 self.cfg.call_timeout,
             )
-            .await?)
+            .await?;
+        // tickets made by the sync start without a title; the source has it
+        if let Some(title) = item.get("title").and_then(Value::as_str) {
+            let _ = sqlx::query(
+                "UPDATE tickets SET title = left($2, 300) WHERE id = $1 AND coalesce(title, '') = ''",
+            )
+            .bind(t.id)
+            .bind(title)
+            .execute(&self.pool)
+            .await;
+        }
+        Ok(item)
     }
 }

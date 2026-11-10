@@ -2522,6 +2522,14 @@ async fn issues_that_were_open_before_the_connection_can_be_imported_on_request(
         .await
         .unwrap();
     assert_eq!(n, 2, "the closed issue stays out");
+    let titles: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM tickets WHERE service_id = $1 AND title IN ('Fix 3', 'Fix 4')",
+    )
+    .bind(id)
+    .fetch_one(&e.pool)
+    .await
+    .unwrap();
+    assert_eq!(titles, 2, "tickets carry the issue title");
     let (_, _, again) = send(
         &e.app,
         form(&url, format!("csrf={}", e.csrf), Some(e.cookie.clone())),
