@@ -237,6 +237,8 @@ def handle(op, params):
         return {"event": json.loads(base64.b64decode(params["body_b64"]))}
     if op == "list_services":
         return {"services": read_json("services.json", [])}
+    if op == "list_pulls":
+        return {"pulls": read_json("pulls_" + params.get("service", "").replace("/", "_") + ".json", []), "truncated": False}
     if op == "list_changes":
         items = read_json("changes.json", [])
         return {"items": items, "cursor": "c" + str(len(items))}

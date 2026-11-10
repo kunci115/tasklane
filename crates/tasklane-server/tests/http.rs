@@ -2507,3 +2507,25 @@ async fn tickets_of_an_archived_repository_leave_the_lists_but_not_the_database(
     .await;
     assert_eq!(st, StatusCode::OK, "a direct link still opens the history");
 }
+
+#[tokio::test]
+async fn the_pull_requests_page_lists_open_pull_requests_of_watched_repositories_and_needs_a_session(
+) {
+    let Some(e) = env().await else { return };
+    std::fs::write(
+        e.dir.path().join("state/pulls_org_repo.json"),
+        r#"[{"number":"5","title":"Fix <login>","author":"nabil","bot":false,"draft":true,"branch":"fix-login","base":"main","url":"https://github.com/org/repo/pull/5","updated_at":"2026-11-10T01:00:00Z","ours":false},
+            {"number":"6","title":"By tasklane","author":"app","bot":true,"draft":false,"branch":"tasklane/41","base":"main","url":"https://github.com/org/repo/pull/6","updated_at":"2026-11-10T02:00:00Z","ours":true}]"#,
+    )
+    .unwrap();
+    let (st, _, _) = send(&e.app, get("/pulls", None)).await;
+    assert_ne!(st, StatusCode::OK, "no session, no list");
+    let (st, _, page) = send(&e.app, get("/pulls?refresh=1", Some(e.cookie.clone()))).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(page.contains("org/repo") && page.contains("nabil") && page.contains("fix-login"));
+    assert!(
+        page.contains("Fix &lt;login&gt;") && !page.contains("Fix <login>"),
+        "titles are escaped"
+    );
+    assert!(page.contains("draft") && page.contains(">tasklane<"));
+}

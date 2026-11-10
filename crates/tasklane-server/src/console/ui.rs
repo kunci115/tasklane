@@ -232,6 +232,7 @@ pub async fn render(
         item("map", "/map", "network", "Live map", None),
         item("tickets", "/tickets", "list", "Tickets", None),
         item("repos", "/services", "repo", "Repositories", None),
+        item("pulls", "/pulls", "merge", "Pull requests", None),
         item("connections", "/connections", "plug", "Connections", None),
         item("accounts", "/accounts", "shield", "Model accounts", None),
         item("people", "/people", "users", "People", None),

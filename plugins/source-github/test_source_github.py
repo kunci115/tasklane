@@ -303,6 +303,20 @@ class Reading(Base):
         self.assertNotIn("output", by["lint"])
         self.assertEqual(by["legacy"]["output"], "build broke")
 
+    def test_list_pulls_shows_open_pull_requests_and_marks_the_ones_tasklane_made(self):
+        self.fake.routes[("GET", "/repos/acme/one/pulls")] = (200, {}, [
+            {"number": 5, "title": "Fix login", "user": {"login": "nabil", "type": "User"}, "draft": True,
+             "head": {"ref": "fix-login"}, "base": {"ref": "main"}, "html_url": "https://github.com/acme/one/pull/5",
+             "updated_at": "2026-11-10T01:00:00Z"},
+            {"number": 6, "title": "tasklane's", "user": {"login": "app[bot]", "type": "Bot"},
+             "head": {"ref": "tasklane/41"}, "base": {"ref": "main"}, "html_url": "u", "updated_at": "t"}])
+        r = self.ok("list_pulls", {"service": "acme/one"})
+        a, b = r["pulls"]
+        self.assertEqual((a["number"], a["author"], a["draft"], a["ours"], a["bot"]), ("5", "nabil", True, False, False))
+        self.assertEqual((b["ours"], b["bot"]), (True, True))
+        self.assertFalse(r["truncated"])
+        self.assertEqual(self.err("list_pulls", {"service": "not a repo"})["kind"], "permanent")
+
     def test_get_user_gives_the_id_behind_a_login_and_only_for_people(self):
         R = self.fake.routes
         R[("GET", "/users/nabil")] = (200, {}, {"id": 4242, "login": "Nabil", "type": "User"})

@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Disconnecting GitHub in the console now archives the repositories that came through it (their tickets and history stay) and resets the sync cursor, so nothing lingers on the Repositories page; connecting again brings them back.
+- New **Pull requests** page: the open pull requests in every watched repository, whoever opened them (draft, author, branch, who is tasklane). Read only; refreshed at most once a minute. New optional source operation `list_pulls`.
+
 - Connect GitHub: the organization box accepts a pasted link (`https://github.com/Acme`) or `@Acme`, a name typed there means an organization even if the radio was left on personal, and the error messages say which field is wrong.
 
 - Tickets of an archived repository no longer show in the Tickets list, the Overview board or the needs-you badge; a direct link to a ticket still opens its history.
