@@ -2520,7 +2520,13 @@ async fn the_pull_requests_page_lists_open_pull_requests_of_watched_repositories
     .unwrap();
     let (st, _, _) = send(&e.app, get("/pulls", None)).await;
     assert_ne!(st, StatusCode::OK, "no session, no list");
-    let (st, _, page) = send(&e.app, get("/pulls?refresh=1", Some(e.cookie.clone()))).await;
+    let (st, _, shell) = send(&e.app, get("/pulls?refresh=1", Some(e.cookie.clone()))).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(
+        shell.contains("/fragments/pulls"),
+        "the page opens at once and the list fills in"
+    );
+    let (st, _, page) = send(&e.app, get("/fragments/pulls", Some(e.cookie.clone()))).await;
     assert_eq!(st, StatusCode::OK);
     assert!(page.contains("org/repo") && page.contains("nabil") && page.contains("fix-login"));
     assert!(

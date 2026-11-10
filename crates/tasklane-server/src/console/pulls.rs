@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
-use axum::response::{IntoResponse, Response};
+use axum::response::{Html, IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -15,7 +15,7 @@ use super::ui::{empty, head, render, repo_link};
 use super::{guard, AppState};
 use crate::esc;
 
-const CALL: Duration = Duration::from_secs(12);
+const CALL: Duration = Duration::from_secs(30);
 const FRESH: Duration = Duration::from_secs(60);
 /// More repositories than this are not asked in one page load.
 const MAX_REPOS: usize = 40;
@@ -92,6 +92,7 @@ fn text<'a>(p: &'a Value, k: &str) -> &'a str {
     p.get(k).and_then(Value::as_str).unwrap_or("")
 }
 
+/// The page opens at once; the list (which asks GitHub, repository by repository) fills in after.
 pub async fn page(
     State(st): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -101,31 +102,56 @@ pub async fn page(
         Ok(s) => s,
         Err(r) => return r,
     };
-    let cached = if q.refresh.is_some() {
-        None
-    } else {
-        cache().lock().ok().and_then(|c| {
-            c.as_ref()
-                .filter(|(t, _)| t.elapsed() < FRESH)
-                .map(|(_, v)| v.clone())
-        })
-    };
-    let (repos, skipped) = match cached {
-        Some(v) => (v, 0),
-        None => {
-            let (v, skipped) = load(&st).await;
-            if let Ok(mut c) = cache().lock() {
-                *c = Some((Instant::now(), v.clone()));
-            }
-            (v, skipped)
+    if q.refresh.is_some() {
+        if let Ok(mut c) = cache().lock() {
+            *c = None;
         }
-    };
-    let total: usize = repos.iter().map(|r| r.pulls.len()).sum();
+    }
     let mut b = head(
         "Pull requests",
         "Open pull requests in your repositories, whoever opened them. tasklane only reads them here.",
         "<a class=\"btn\" href=\"/pulls?refresh=1\">Refresh</a>",
     );
+    b.push_str(&format!(
+        "<div id=\"live\" data-live=\"/fragments/pulls\" data-every=\"30000\" data-now>{}</div>",
+        empty(
+            "repo",
+            "Asking GitHub for open pull requests. This can take a few seconds."
+        )
+    ));
+    render(&st, &sess.csrf, "pulls", "Pull requests", &b)
+        .await
+        .into_response()
+}
+
+pub async fn fragment(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if let Err(r) = guard(&st, &headers).await {
+        return r;
+    }
+    let cached = cache().lock().ok().and_then(|c| {
+        c.as_ref()
+            .filter(|(t, _)| t.elapsed() < FRESH)
+            .map(|(_, v)| v.clone())
+    });
+    let (repos, skipped) = match cached {
+        Some(v) => (v, 0),
+        None => {
+            let (v, skipped) = load(&st).await;
+            // a list with a failed repository is not kept: the next look asks again
+            if v.iter().all(|r| r.error.is_none()) {
+                if let Ok(mut c) = cache().lock() {
+                    *c = Some((Instant::now(), v.clone()));
+                }
+            }
+            (v, skipped)
+        }
+    };
+    Html(list_html(&repos, skipped)).into_response()
+}
+
+fn list_html(repos: &[RepoPulls], skipped: usize) -> String {
+    let total: usize = repos.iter().map(|r| r.pulls.len()).sum();
+    let mut b = String::new();
     b.push_str("<div class=\"card flush\"><div class=\"scroll\"><table><thead><tr><th>Repository</th><th>Pull request</th><th>By</th><th>Branch</th><th>Updated</th></tr></thead><tbody>");
     if total == 0 {
         b.push_str(&format!(
@@ -136,7 +162,7 @@ pub async fn page(
             )
         ));
     }
-    for r in &repos {
+    for r in repos {
         let base = repo_link(&r.source, &r.repo);
         for p in &r.pulls {
             let num = text(p, "number");
@@ -189,7 +215,7 @@ pub async fn page(
         }
     }
     b.push_str("</tbody></table></div></div>");
-    for r in &repos {
+    for r in repos {
         if let Some(e) = &r.error {
             b.push_str(&format!(
                 "<p class=\"muted small\"><span class=\"pill warn\">unavailable</span> {}: {}</p>",
@@ -208,7 +234,5 @@ pub async fn page(
             "<p class=\"muted small\">{skipped} more repositories were not asked; archive the ones you do not need.</p>"
         ));
     }
-    render(&st, &sess.csrf, "pulls", "Pull requests", &b)
-        .await
-        .into_response()
+    b
 }

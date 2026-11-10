@@ -11,6 +11,14 @@ const JS: &str = include_str!("../../assets/app.js");
 const MAP_JS: &str = include_str!("../../assets/map.js");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Changes whenever the script or the style does, so a browser never keeps a stale copy under the same address.
+fn asset_key() -> String {
+    format!(
+        "{VERSION}-{:x}",
+        JS.len() * 31 + CSS.len() + MAP_JS.len() * 7
+    )
+}
+
 const FONT_INTER: &[u8] = include_bytes!("../../assets/fonts/inter.woff2");
 const FONT_MONO_400: &[u8] = include_bytes!("../../assets/fonts/jetbrains-mono-400.woff2");
 const FONT_MONO_500: &[u8] = include_bytes!("../../assets/fonts/jetbrains-mono-500.woff2");
@@ -253,7 +261,7 @@ pub async fn render(
 <form method=\"post\" action=\"/logout\"><input type=\"hidden\" name=\"csrf\" value=\"{c}\"><button class=\"btn small\" title=\"Sign out\">{lo}</button></form></div></div></aside>\
 <main class=\"main\">{body}</main></div><script src=\"/static/app.js?v={v}\" defer></script></body></html>",
         t = esc(title),
-        v = VERSION,
+        v = asset_key(),
         logo = MARK_SVG,
         nav = nav,
         pa = if paused { "/resume" } else { "/pause" },

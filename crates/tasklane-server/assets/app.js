@@ -45,6 +45,7 @@
       }).catch(function () {}).then(function () { busy = false; });
     }
     setInterval(tick, every);
+    if (el.hasAttribute("data-now")) tick();
     document.addEventListener("visibilitychange", function () { if (!document.hidden) tick(); });
   });
   // relative filter on tables / lists
