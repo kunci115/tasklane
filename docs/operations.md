@@ -219,7 +219,7 @@ The agent-engine plug-in has its own switch, `TASKLANE_ALLOW_UNSANDBOXED=1`, exp
 3. In **full** mode, a ticket that the rules and the agent both rate level 1 runs through to a merge without a person, **if its author is a collaborator** (owner, member or collaborator of the repository, or tasklane itself acting for a reporter). An issue from anyone else always waits for approval. Levels 2 and 3 wait for approval first.
 4. Change a repository's mode at any time in the console, under "Repositories". **watch** stops all activity for it.
 
-Issues that existed before you installed the App are not imported (the first poll only sets a baseline). Create a new issue, or use the report button.
+Issues that existed before you installed the App are not imported on their own (the first poll only sets a baseline, so the agent does not comment on years of old issues). To bring them in, press **Import open issues** on the repository's card under "Repositories"; each open issue becomes a ticket. Or create a new issue, or use the report button.
 
 ## 4. Approving, pausing, failing
 

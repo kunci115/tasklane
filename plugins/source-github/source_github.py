@@ -603,6 +603,17 @@ def author_trusted(issue):
     return bool(mine) and user.get("login") == mine
 
 
+def op_list_open_issues(params):
+    """Open issues of one repository (pull requests left out), oldest first, for a person-triggered import."""
+    svc = p_service(params)
+    refs, url, pages = [], f"/repos/{svc}/issues?state=open&sort=created&direction=asc&per_page=100", 0
+    while url and pages < 5:
+        r = app_api("GET", url)
+        refs.extend(str(i["number"]) for i in (r.data or []) if "pull_request" not in i)
+        url, pages = next_link(r.headers), pages + 1
+    return {"refs": refs, "more": bool(url)}
+
+
 def op_get_item(params):
     svc, ref = p_service(params), p_num(params, "ref")
     issue = app_api("GET", f"/repos/{svc}/issues/{ref}").data or {}
@@ -1109,7 +1120,7 @@ def op_verify_webhook(params):
 
 OPS = {
     "describe": op_describe, "list_services": op_list_services,
-    "list_changes": op_list_changes, "get_item": op_get_item,
+    "list_changes": op_list_changes, "list_open_issues": op_list_open_issues, "get_item": op_get_item,
     "create_item": op_create_item, "comment": op_comment,
     "set_labels": op_set_labels, "detect_facts": op_detect_facts, "read_overrides": op_read_overrides,
     "repo_url": op_repo_url, "mint_run_token": op_mint_run_token,

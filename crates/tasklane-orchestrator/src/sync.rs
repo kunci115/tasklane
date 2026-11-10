@@ -144,6 +144,44 @@ impl Orchestrator {
         Ok(report)
     }
 
+    /// A person asked for the issues that were already open to become tickets (the first poll
+    /// only sets a baseline, so they were never imported). Returns (created, held back, more on the source).
+    pub async fn import_open_issues(&self, service_id: i64) -> Result<(usize, usize, bool), Error> {
+        let ext = self.external_id(service_id).await?;
+        let r = self
+            .source
+            .call(
+                "list_open_issues",
+                json!({"service": ext}),
+                self.cfg.call_timeout,
+            )
+            .await?;
+        let refs: Vec<String> = r
+            .get("refs")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let more = r.get("more").and_then(Value::as_bool) == Some(true);
+        let (mut created, mut held) = (0, 0);
+        for reference in &refs {
+            match self.note_issue(&ext, reference).await? {
+                Noted::Created => created += 1,
+                Noted::Deferred => held += 1,
+                _ => {}
+            }
+        }
+        let _ = sqlx::query("INSERT INTO audit_events (actor, action, detail) VALUES ('console:admin', 'service.import', $1)")
+            .bind(json!({"service_id": service_id, "created": created, "held_back": held}))
+            .execute(&self.pool)
+            .await;
+        Ok((created, held, more))
+    }
+
     /// An issue exists or changed on the source. Create its ticket the first
     /// time; resume it if it was waiting for the reporter and a person answered.
     pub async fn note_issue(&self, service: &str, reference: &str) -> Result<Noted, Error> {

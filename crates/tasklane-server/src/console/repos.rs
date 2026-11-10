@@ -258,7 +258,7 @@ pub async fn page(
         b.push_str(&format!(
             "<div class=\"card repo-card\"><div class=\"row tight\" style=\"align-items:center;gap:.5rem\"><h2 style=\"margin:0\">{}</h2>{}{}{}{}</div>\
 <form method=\"post\" action=\"/services/{id}/mode\" style=\"margin:.8rem 0\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"ret\" value=\"{here}\"><div class=\"seg\" role=\"group\" aria-label=\"Mode\">{}{}{}</div></form>\
-{}<div class=\"row tight muted small\" style=\"gap:1rem;margin-bottom:.6rem\"><span>{open} open</span><span>{merged} merged</span><span title=\"Model tokens used in the last 30 days\">{} tokens (30 d)</span>{}<span>{}</span></div>\
+{}<div class=\"row tight muted small\" style=\"gap:1rem;margin-bottom:.6rem\"><span>{open} open</span><span>{merged} merged</span>{}<span title=\"Model tokens used in the last 30 days\">{} tokens (30 d)</span>{}<span>{}</span></div>\
 <details style=\"margin-top:.7rem\"><summary class=\"btn small\">Settings and protected paths</summary><h3 style=\"margin-top:.9rem\">Protected paths</h3><div>{}</div><p class=\"hint\">Changes to these always need approval of the exact diff, on top of the built-in list (CI config, Dockerfiles, migrations, keys).</p><form method=\"post\" action=\"/services/{id}/profile\" style=\"margin-top:.8rem\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"ret\" value=\"{here}\">\
 <div class=\"field\"><label for=\"s{id}\">Instructions for the agent</label><textarea id=\"s{id}\" name=\"system\" maxlength=\"4000\" placeholder=\"For example: follow the existing code style; never change generated files.\">{}</textarea></div>\
 <div class=\"field\"><label for=\"t{id}\">Test command the agent may run</label><input id=\"t{id}\" type=\"text\" name=\"test_command\" maxlength=\"200\" value=\"{}\" placeholder=\"pytest -q\"><div class=\"hint\">One command, no parentheses or line breaks.</div></div>\
@@ -278,6 +278,11 @@ pub async fn page(
 <form method=\"post\" action=\"/services/{id}/takeover\" style=\"margin-top:.5rem\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"ret\" value=\"{here}\"><button class=\"btn small danger\" data-confirm=\"Take this repository over? The other install loses it and stops acting on it.\">Take over</button></form></div>", esc(owner_name.as_deref().unwrap_or("unknown")), sess.csrf)
             } else {
                 String::new()
+            },
+            if archived || mode == "watch" {
+                String::new()
+            } else {
+                format!("<form method=\"post\" action=\"/services/{id}/import\" style=\"display:inline\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><button class=\"btn small\" title=\"Issues that were already open before tasklane was connected are not picked up on their own. This turns them into tickets.\" data-confirm=\"Turn the open issues of this repository into tickets? In triage mode the agent will comment on each.\">Import open issues</button></form>", sess.csrf)
             },
             human_tokens(tokens),
             last.map(|s| format!("<span>active {}</span>", ago(s))).unwrap_or_else(|| "<span>no activity yet</span>".into()),
@@ -451,6 +456,39 @@ pub async fn take_over(
             (
                 axum::http::StatusCode::BAD_GATEWAY,
                 "The take-over did not work. The ticket source refused or could not be reached; try again in a minute.",
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Turn the issues that were already open into tickets (the first poll only sets a baseline).
+pub async fn import_open(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Form(f): Form<TakeoverIn>,
+) -> Response {
+    if !csrf_ok(&st, &headers, &f.csrf).await {
+        return forbidden();
+    }
+    match st.orch.import_open_issues(id).await {
+        Ok((created, _, _)) if created > 0 => redirect("/tickets"),
+        Ok((_, held, more)) => {
+            let msg = if held > 0 {
+                "Too many tickets are waiting for triage right now. Try the import again in a few minutes."
+            } else if more {
+                "No new tickets from the first 500 open issues; they are already tickets or not open issues."
+            } else {
+                "Nothing to import: every open issue is already a ticket, or this repository is in watch mode."
+            };
+            (axum::http::StatusCode::OK, msg).into_response()
+        }
+        Err(e) => {
+            eprintln!("import open issues {id}: {e}");
+            (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "The import did not work. The ticket source refused or could not be reached; try again in a minute.",
             )
                 .into_response()
         }

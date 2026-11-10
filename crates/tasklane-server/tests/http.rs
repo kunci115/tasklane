@@ -2487,6 +2487,53 @@ async fn repositories_the_source_no_longer_lists_are_hidden_until_asked_for() {
 }
 
 #[tokio::test]
+async fn issues_that_were_open_before_the_connection_can_be_imported_on_request() {
+    let Some(e) = env().await else { return };
+    std::fs::write(
+        e.dir.path().join("state/open_issues_org_repo.json"),
+        r#"["3","4","closed-5"]"#,
+    )
+    .unwrap();
+    let id: i64 = sqlx::query_scalar("SELECT id FROM services WHERE external_id = 'org/repo'")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    let (_, _, page) = send(&e.app, get("/services", Some(e.cookie.clone()))).await;
+    assert!(page.contains(&format!("/services/{id}/import")));
+    let url = format!("/services/{id}/import");
+    let (st, _, _) = send(
+        &e.app,
+        form(&url, "csrf=nope".into(), Some(e.cookie.clone())),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, _, _) = send(
+        &e.app,
+        form(&url, format!("csrf={}", e.csrf), Some(e.cookie.clone())),
+    )
+    .await;
+    assert!(
+        st.is_redirection(),
+        "created tickets lead to the ticket list"
+    );
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM tickets WHERE service_id = $1")
+        .bind(id)
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 2, "the closed issue stays out");
+    let (_, _, again) = send(
+        &e.app,
+        form(&url, format!("csrf={}", e.csrf), Some(e.cookie.clone())),
+    )
+    .await;
+    assert!(
+        again.contains("Nothing to import"),
+        "a second run adds nothing"
+    );
+}
+
+#[tokio::test]
 async fn tickets_of_an_archived_repository_leave_the_lists_but_not_the_database() {
     let Some(e) = env().await else { return };
     let id = seed_ticket(&e, "7", "Old account work", "merged", 1).await;

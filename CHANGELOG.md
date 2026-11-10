@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Import open issues** button on each repository card: issues that were open before GitHub was connected were never picked up (the first poll only sets a baseline). The button turns them into tickets on request, oldest first, up to 500, and holds back what would exceed the triage queue limit. New optional source operation `list_open_issues`.
 - Disconnecting GitHub in the console now archives the repositories that came through it (their tickets and history stay) and resets the sync cursor, so nothing lingers on the Repositories page; connecting again brings them back.
 - Pull requests: when the AI approved a pull request but there is no Merge button, the row says why (default branch, repository not in full mode, or merging from here not switched on) and links to the switch, which is now open by default.
 

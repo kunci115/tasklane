@@ -57,6 +57,7 @@ pub fn routes() -> Router<Arc<AppState>> {
             post(repos::delete_note),
         )
         .route("/services/{id}/takeover", post(repos::take_over))
+        .route("/services/{id}/import", post(repos::import_open))
         .route("/people", get(people::page).post(people::add))
         .route("/people/{id}/delete", post(people::delete))
         .route("/people/{id}/credit", post(people::set_credit))

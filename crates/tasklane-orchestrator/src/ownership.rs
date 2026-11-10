@@ -168,7 +168,7 @@ impl Orchestrator {
             .await;
     }
 
-    async fn external_id(&self, service_id: i64) -> Result<String, Error> {
+    pub(crate) async fn external_id(&self, service_id: i64) -> Result<String, Error> {
         Ok(
             sqlx::query_scalar("SELECT external_id FROM services WHERE id = $1")
                 .bind(service_id)

@@ -249,6 +249,8 @@ def handle(op, params):
                 "private": params.get("private", True), "seeded": ["README.md", ".tasklane.yml"], "seed_error": ""}
     if op == "get_pull":
         return read_json("pull_" + str(params["pr"]) + ".json", {"base": "main", "state": "open"})
+    if op == "list_open_issues":
+        return {"refs": read_json("open_issues_" + params.get("service", "").replace("/", "_") + ".json", []), "more": False}
     if op == "list_pulls":
         return {"pulls": read_json("pulls_" + params.get("service", "").replace("/", "_") + ".json", []), "truncated": False}
     if op == "list_changes":

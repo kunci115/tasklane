@@ -340,6 +340,13 @@ class Reading(Base):
         self.assertFalse(r["truncated"])
         self.assertEqual(self.err("list_pulls", {"service": "not a repo"})["kind"], "permanent")
 
+    def test_list_open_issues_leaves_pull_requests_out(self):
+        self.fake.routes[("GET", "/repos/acme/one/issues")] = (200, {}, [
+            {"number": 3}, {"number": 4, "pull_request": {}}, {"number": 9}])
+        r = self.ok("list_open_issues", {"service": "acme/one"})
+        self.assertEqual((r["refs"], r["more"]), (["3", "9"], False))
+        self.assertEqual(self.err("list_open_issues", {"service": "nope"})["kind"], "permanent")
+
     def test_get_pull_says_where_a_pull_request_goes(self):
         self.fake.routes[("GET", "/repos/acme/one/pulls/5")] = (200, {}, {
             "base": {"ref": "dev"}, "head": {"sha": "abc"}, "state": "open", "title": "T", "body": None})
