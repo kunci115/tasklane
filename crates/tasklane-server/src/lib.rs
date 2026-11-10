@@ -23,7 +23,7 @@ pub struct AppState {
     pub user_daily_limit: i64,
     pub secure_cookies: bool,
     /// (failed sign-ins, when the count started)
-    pub login_throttle: std::sync::Mutex<(u32, std::time::Instant)>,
+    pub login_throttle: std::sync::Mutex<console::Throttle>,
     /// Secrets saved from the console (files under the data directory).
     pub secrets: connections::Secrets,
     /// The plug-in specs the operator's environment describes; the console adds to them.

@@ -752,9 +752,10 @@ impl Orchestrator {
                 .await?;
         }
         tx.commit().await?;
+        // The issue may be public: the reason (git output, agent text, paths) stays in the console.
         self.say(
             &t,
-            &format!("tasklane stopped on this ticket and needs a person: {reason}"),
+            "tasklane stopped on this ticket and needs a person. The details are in the console.",
         )
         .await;
         Ok(RunResult::GaveUp)

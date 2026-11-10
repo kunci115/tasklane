@@ -105,7 +105,7 @@ async fn run(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
         jwt_secrets: s.jwt_secrets.clone(),
         user_daily_limit: s.user_daily_limit,
         secure_cookies: s.secure_cookies,
-        login_throttle: std::sync::Mutex::new((0, std::time::Instant::now())),
+        login_throttle: Default::default(),
         secrets,
         base_source: s.source.clone(),
         base_engine: s.engine.clone(),
@@ -118,19 +118,21 @@ async fn run(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
         "tasklane listening on {} with {} workers",
         s.bind, s.workers
     );
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            let mut term =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                    .expect("SIGTERM handler");
-            tokio::select! {
-                _ = tokio::signal::ctrl_c() => {}
-                _ = term.recv() => {}
-            }
-            eprintln!("shutting down");
-            let _ = stop_tx.send(true);
-        })
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = term.recv() => {}
+        }
+        eprintln!("shutting down");
+        let _ = stop_tx.send(true);
+    })
+    .await?;
     for t in tasks {
         let _ = t.await;
     }

@@ -365,6 +365,18 @@ class Reading(Base):
         r = self.ok("get_pull", {"service": "acme/one", "pr": "5"})
         self.assertEqual((r["base"], r["head_sha"], r["state"], r["body"]), ("dev", "abc", "open", ""))
 
+    def test_get_pull_flags_strangers_and_forks(self):
+        self.fake.routes[("GET", "/repos/acme/one/pulls/5")] = (200, {}, {
+            "base": {"ref": "dev"}, "head": {"sha": "abc", "repo": {"full_name": "someone/one"}},
+            "state": "open", "author_association": "NONE", "user": {"login": "x"}})
+        r = self.ok("get_pull", {"service": "acme/one", "pr": "5"})
+        self.assertEqual((r["author_trusted"], r["from_fork"]), (False, True))
+        self.fake.routes[("GET", "/repos/acme/one/pulls/6")] = (200, {}, {
+            "base": {"ref": "dev"}, "head": {"sha": "abc", "repo": {"full_name": "Acme/One"}},
+            "state": "open", "author_association": "MEMBER", "user": {"login": "y"}})
+        r = self.ok("get_pull", {"service": "acme/one", "pr": "6"})
+        self.assertEqual((r["author_trusted"], r["from_fork"]), (True, False))
+
     def test_create_repo_makes_the_repository_and_seeds_three_files(self):
         R = self.fake.routes
         R[("POST", "/orgs/acme/repos")] = (201, {}, {"full_name": "acme/new-app", "html_url": "https://github.com/acme/new-app",

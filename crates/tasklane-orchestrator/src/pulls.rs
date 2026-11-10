@@ -38,29 +38,18 @@ fn say(v: &Value, key: &str) -> String {
 }
 
 impl Orchestrator {
-    /// Review pull request `pr` of `service` (a registry `external_id` of a repository that is not
-    /// in watch mode), post the result on the pull request and record it in the audit log.
-    pub async fn review_pull(
-        &self,
-        service: &str,
-        pr: &str,
-        by: &str,
-    ) -> Result<PullReview, Error> {
-        let row: Option<(Value, Value, String)> = sqlx::query_as(
-            "SELECT facts, agent_profile, mode FROM services WHERE source = $1 AND external_id = $2 AND NOT archived",
-        )
-        .bind(&self.cfg.source_name)
-        .bind(service)
-        .fetch_optional(&self.pool)
-        .await?;
-        let Some((_facts, profile, mode)) = row else {
-            return Err(Error::Fatal(format!("unknown repository {service}")));
-        };
-        if mode == "watch" {
-            return Err(Error::Fatal(format!(
-                "{service} is in watch mode: set it to triage or full first"
-            )));
+    /// Another install may own the repository; then this one leaves it alone.
+    async fn own_or_refuse(&self, service_id: i64, service: &str) -> Result<(), Error> {
+        match self.ensure_owner(service_id, service).await? {
+            crate::Owner::Mine => Ok(()),
+            crate::Owner::Foreign(who) => Err(Error::Fatal(format!(
+                "{service} is handled by another tasklane install ({who}); take it over first"
+            ))),
         }
+    }
+
+    /// A clone URL with a short-lived read-only token.
+    async fn read_url(&self, service: &str) -> Result<String, Error> {
         let call = self.cfg.call_timeout;
         let token = self
             .source
@@ -83,11 +72,39 @@ impl Orchestrator {
                 call,
             )
             .await?;
-        let url = url
+        Ok(url
             .get("url")
             .and_then(Value::as_str)
             .ok_or_else(|| Error::BadOutput("repo_url without url".into()))?
-            .to_string();
+            .to_string())
+    }
+
+    /// Review pull request `pr` of `service` (a registry `external_id` of a repository that is not
+    /// in watch mode), post the result on the pull request and record it in the audit log.
+    pub async fn review_pull(
+        &self,
+        service: &str,
+        pr: &str,
+        by: &str,
+    ) -> Result<PullReview, Error> {
+        let row: Option<(Value, Value, String, i64)> = sqlx::query_as(
+            "SELECT facts, agent_profile, mode, id FROM services WHERE source = $1 AND external_id = $2 AND NOT archived",
+        )
+        .bind(&self.cfg.source_name)
+        .bind(service)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some((_facts, profile, mode, service_id)) = row else {
+            return Err(Error::Fatal(format!("unknown repository {service}")));
+        };
+        if mode == "watch" {
+            return Err(Error::Fatal(format!(
+                "{service} is in watch mode: set it to triage or full first"
+            )));
+        }
+        self.own_or_refuse(service_id, service).await?;
+        let call = self.cfg.call_timeout;
+        let url = self.read_url(service).await?;
         // The pull request is compared with the branch it goes into, which is often not the
         // default branch (here `dev`); otherwise everything dev has and main lacks counts as its change.
         let info = self
@@ -177,14 +194,14 @@ impl Orchestrator {
     /// branch (production is promoted by a person on the source), and the AI approved this exact
     /// commit. The source merges only if the head is still that commit.
     pub async fn merge_pull(&self, service: &str, pr: &str, by: &str) -> Result<(), Error> {
-        let row: Option<(Value, Value, String)> = sqlx::query_as(
-            "SELECT facts, agent_profile, mode FROM services WHERE source = $1 AND external_id = $2 AND NOT archived",
+        let row: Option<(Value, Value, String, i64)> = sqlx::query_as(
+            "SELECT facts, agent_profile, mode, id FROM services WHERE source = $1 AND external_id = $2 AND NOT archived",
         )
         .bind(&self.cfg.source_name)
         .bind(service)
         .fetch_optional(&self.pool)
         .await?;
-        let Some((facts, profile, mode)) = row else {
+        let Some((facts, profile, mode, service_id)) = row else {
             return Err(Error::Fatal(format!("unknown repository {service}")));
         };
         if mode != "full" || profile.get("console_merge").and_then(Value::as_bool) != Some(true) {
@@ -192,6 +209,7 @@ impl Orchestrator {
                 "merging from the console is off for this repository (it needs full mode and the switch on the Pull requests page)".into(),
             ));
         }
+        self.own_or_refuse(service_id, service).await?;
         let call = self.cfg.call_timeout;
         let info = self
             .source
@@ -199,6 +217,15 @@ impl Orchestrator {
             .await?;
         if say(&info, "state") != "open" {
             return Err(Error::Fatal("the pull request is not open".into()));
+        }
+        // The same rules as for tasklane's own work: a stranger's or a fork's pull request, or a
+        // diff that touches protected paths or is large, is for a person to merge.
+        if info.get("author_trusted").and_then(Value::as_bool) == Some(false)
+            || info.get("from_fork").and_then(Value::as_bool) == Some(true)
+        {
+            return Err(Error::Fatal(
+                "this pull request comes from someone without a role in the repository or from a fork: a person merges it on the source".into(),
+            ));
         }
         let base = usable_branch(&say(&info, "base"))?;
         let default = facts
@@ -225,6 +252,15 @@ impl Orchestrator {
             return Err(Error::Fatal(
                 "no approving AI review of this exact commit: review it again".into(),
             ));
+        }
+        let url = self.read_url(service).await?;
+        let (diff, files) = self.ws.pull_diff(service, &url, &base, pr).await?;
+        let chk = crate::steps::develop::check_diff(self, &facts, &diff, &files);
+        if chk.needs_person {
+            return Err(Error::Fatal(format!(
+                "a person must merge this one: {}",
+                chk.reasons.join("; ")
+            )));
         }
         let token = self
             .source

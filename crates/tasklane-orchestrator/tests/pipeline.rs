@@ -761,6 +761,21 @@ async fn an_approved_pull_request_is_merged_from_the_console_only_under_every_co
         .unwrap_err();
     assert!(refused.to_string().contains("checks_failing"), "{refused}");
     std::fs::remove_file(w.state_dir().join("merge_refuse")).unwrap();
+    // a stranger's or a fork's pull request is for a person, however the AI voted
+    for extra in [r#""author_trusted":false"#, r#""from_fork":true"#] {
+        std::fs::write(
+            w.state_dir().join("pull_8.json"),
+            format!(r#"{{"base":"dev","state":"open","head_sha":"aaa",{extra}}}"#),
+        )
+        .unwrap();
+        let e = w
+            .orch
+            .merge_pull("org/repo", "8", "tester")
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("a person merges it"), "{e}");
+    }
+    pull("dev", "aaa");
     w.orch.merge_pull("org/repo", "8", "tester").await.unwrap();
     assert!(w.read_state("merged").contains("contents:write"));
     let acts: Vec<String> = sqlx::query_scalar(
@@ -776,6 +791,45 @@ async fn an_approved_pull_request_is_merged_from_the_console_only_under_every_co
         .await
         .unwrap();
     assert!(w.orch.merge_pull("org/repo", "8", "tester").await.is_err());
+}
+
+#[tokio::test]
+async fn a_pull_request_that_touches_protected_paths_is_not_merged_from_the_console() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    let seed = w.dir.path().join("seed");
+    sh(
+        &seed,
+        &format!(
+            "git checkout -q -b dev && git push -q {0} dev && git checkout -q -b feature && mkdir -p .github/workflows && echo x > .github/workflows/ci.yml && git add . && git commit -qm ci && git push -q {0} feature:refs/pull/11/head && git checkout -q main",
+            w.remote().display()
+        ),
+    );
+    std::fs::write(
+        w.state_dir().join("pull_11.json"),
+        r#"{"base":"dev","state":"open","head_sha":"ccc"}"#,
+    )
+    .unwrap();
+    sqlx::query("UPDATE services SET agent_profile = agent_profile || '{\"console_merge\": true}'")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    w.orch
+        .review_pull("org/repo", "11", "tester")
+        .await
+        .unwrap();
+    let e = w
+        .orch
+        .merge_pull("org/repo", "11", "tester")
+        .await
+        .unwrap_err();
+    assert!(
+        e.to_string().contains("a person must merge this one"),
+        "{e}"
+    );
+    assert!(!w.state_dir().join("merged").exists());
 }
 
 fn read_state_contains(w: &World, name: &str, needle: &str) -> bool {

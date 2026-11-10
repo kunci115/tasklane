@@ -101,7 +101,7 @@ async fn env() -> Option<Env> {
         jwt_secrets: HashMap::from([("shop".to_string(), SECRET.to_string())]),
         user_daily_limit: 2,
         secure_cookies: false,
-        login_throttle: std::sync::Mutex::new((0, std::time::Instant::now())),
+        login_throttle: Default::default(),
         secrets: tasklane_server::connections::Secrets::new(dir.path()).unwrap(),
         base_source: spec(),
         base_engine: spec(),
@@ -650,6 +650,41 @@ async fn five_wrong_tokens_lock_sign_in_for_a_while() {
         StatusCode::TOO_MANY_REQUESTS,
         "even the right token waits"
     );
+}
+
+fn login_from(peer: &str, forwarded: Option<&str>, token: &str) -> Request<Body> {
+    let mut r = form("/login", format!("token={token}"), None);
+    r.extensions_mut().insert(axum::extract::ConnectInfo(
+        format!("{peer}:5000")
+            .parse::<std::net::SocketAddr>()
+            .unwrap(),
+    ));
+    if let Some(f) = forwarded {
+        r.headers_mut()
+            .insert("x-forwarded-for", f.parse().unwrap());
+    }
+    r
+}
+
+#[tokio::test]
+async fn wrong_tokens_from_one_client_do_not_lock_out_another() {
+    let Some(e) = env().await else { return };
+    for _ in 0..5 {
+        let (st, _, _) = send(&e.app, login_from("203.0.113.9", None, "nope")).await;
+        assert_eq!(st, StatusCode::UNAUTHORIZED);
+    }
+    let (st, _, _) = send(&e.app, login_from("203.0.113.9", None, ADMIN)).await;
+    assert_eq!(st, StatusCode::TOO_MANY_REQUESTS, "the guesser waits");
+    let (st, _, _) = send(&e.app, login_from("198.51.100.4", None, ADMIN)).await;
+    assert_eq!(st, StatusCode::SEE_OTHER, "somebody else signs in");
+    // behind a proxy on the private network the client is the address the proxy reports
+    for _ in 0..5 {
+        send(&e.app, login_from("10.0.0.2", Some("192.0.2.7"), "nope")).await;
+    }
+    let (st, _, _) = send(&e.app, login_from("10.0.0.2", Some("192.0.2.7"), ADMIN)).await;
+    assert_eq!(st, StatusCode::TOO_MANY_REQUESTS);
+    let (st, _, _) = send(&e.app, login_from("10.0.0.2", Some("192.0.2.8"), ADMIN)).await;
+    assert_eq!(st, StatusCode::SEE_OTHER);
 }
 
 #[tokio::test]

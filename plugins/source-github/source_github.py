@@ -946,7 +946,9 @@ def op_get_pull(params):
     return {"base": str((d.get("base") or {}).get("ref") or ""),
             "head_sha": str((d.get("head") or {}).get("sha") or ""),
             "state": str(d.get("state") or ""), "draft": bool(d.get("draft")),
-            "title": str(d.get("title") or ""), "body": str(d.get("body") or "")}
+            "title": str(d.get("title") or ""), "body": str(d.get("body") or ""),
+            "author_trusted": author_trusted(d),
+            "from_fork": str(((d.get("head") or {}).get("repo") or {}).get("full_name") or "").lower() != svc.lower()}
 
 
 def op_list_pulls(params):

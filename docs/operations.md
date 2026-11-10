@@ -225,6 +225,7 @@ Issues that existed before you installed the App are not imported on their own (
 
 ## 4. Approving, pausing, failing
 
+- A ticket that stops with an error gets a fixed comment on the issue ("needs a person, the details are in the console"); the reason (git output, the agent's words) is shown only in the console, because the issue may be public.
 - A ticket that needs a person shows as **waiting for approval** in the console and carries a comment on the issue. The ticket page shows the plan and, once there is one, the full diff. The approval is bound to a hash of exactly that text; if it changes, the old approval is refused.
 - **Approvals are asked for twice when needed.** A plan can be approved, and then the developed change still stops for approval of the diff itself if it touches protected paths (CI config, Dockerfiles, migrations, secrets, infrastructure, and a repository's own list) or is large. The ticket text is also scored again just before development, so a comment added after approval cannot smuggle in a riskier job.
 - The protected-path rules always apply, even for a repository whose own list is empty; a repository's list only adds to them (`crates/tasklane-core/src/paths.rs`). Moving a protected file away counts as touching it.

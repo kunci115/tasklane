@@ -183,35 +183,100 @@ struct LoginIn {
     token: String,
 }
 
-async fn login(State(st): State<Arc<AppState>>, Form(f): Form<LoginIn>) -> Response {
-    // After five wrong tokens the door stays shut for five minutes.
-    {
-        let mut t = st.login_throttle.lock().unwrap_or_else(|e| e.into_inner());
-        if t.1.elapsed() > std::time::Duration::from_secs(300) {
-            *t = (0, std::time::Instant::now());
+/// Wrong-token counters: one per client address (five wrong tokens shut that client out for five
+/// minutes) and one for everybody (a ceiling against guessing from many addresses).
+#[derive(Default)]
+pub struct Throttle {
+    per_client: std::collections::HashMap<String, (u32, std::time::Instant)>,
+    all: (u32, Option<std::time::Instant>),
+}
+
+const LOGIN_WINDOW: std::time::Duration = std::time::Duration::from_secs(300);
+
+impl Throttle {
+    fn shut(&mut self, client: &str) -> bool {
+        self.per_client.retain(|_, v| v.1.elapsed() < LOGIN_WINDOW);
+        if self.all.1.is_some_and(|t| t.elapsed() > LOGIN_WINDOW) {
+            self.all = (0, None);
         }
-        if t.0 >= 5 {
-            return (
-                StatusCode::TOO_MANY_REQUESTS,
-                login_page(
-                    "<p class=\"pill bad\">Too many wrong tokens. Try again in a few minutes.</p>",
-                ),
-            )
-                .into_response();
+        self.all.0 >= 50 || self.per_client.get(client).is_some_and(|v| v.0 >= 5)
+    }
+    fn wrong(&mut self, client: &str) {
+        let e = self
+            .per_client
+            .entry(client.to_string())
+            .or_insert((0, std::time::Instant::now()));
+        e.0 += 1;
+        self.all.0 += 1;
+        self.all.1.get_or_insert_with(std::time::Instant::now);
+    }
+    fn right(&mut self, client: &str) {
+        self.per_client.remove(client);
+    }
+}
+
+/// Who is asking: the connecting address; behind a proxy on the same machine or network (a private
+/// address) the first address the proxy reports.
+fn client_key(peer: Option<std::net::SocketAddr>, headers: &HeaderMap) -> String {
+    let Some(peer) = peer else {
+        return "unknown".into();
+    };
+    let ip = peer.ip();
+    let private = match ip {
+        std::net::IpAddr::V4(a) => a.is_loopback() || a.is_private() || a.is_link_local(),
+        std::net::IpAddr::V6(a) => a.is_loopback() || (a.segments()[0] & 0xfe00) == 0xfc00,
+    };
+    if private {
+        if let Some(f) = headers
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split(',').next())
+            .map(str::trim)
+            .filter(|v| v.parse::<std::net::IpAddr>().is_ok())
+        {
+            return f.to_string();
         }
     }
+    ip.to_string()
+}
+
+async fn login(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    peer: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
+    Form(f): Form<LoginIn>,
+) -> Response {
+    let client = client_key(peer.map(|c| (c.0).0), &headers);
+    // After five wrong tokens from one address the door stays shut for it for five minutes.
+    if st
+        .login_throttle
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .shut(&client)
+    {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            login_page(
+                "<p class=\"pill bad\">Too many wrong tokens. Try again in a few minutes.</p>",
+            ),
+        )
+            .into_response();
+    }
     if !ct_eq(&f.token, &st.admin_token) {
-        let mut t = st.login_throttle.lock().unwrap_or_else(|e| e.into_inner());
-        if t.0 == 0 {
-            t.1 = std::time::Instant::now();
-        }
-        t.0 += 1;
+        st.login_throttle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .wrong(&client);
         return (
             StatusCode::UNAUTHORIZED,
             login_page("<p class=\"pill bad\">That token is not right.</p>"),
         )
             .into_response();
     }
+    st.login_throttle
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .right(&client);
     let (id, csrf) = (random_hex(), random_hex());
     if sqlx::query("INSERT INTO console_sessions (id, csrf, expires_at) VALUES ($1, $2, now() + interval '8 hours')")
         .bind(&id)
