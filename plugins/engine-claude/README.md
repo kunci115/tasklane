@@ -33,12 +33,22 @@ network, no commit/push) are in `--append-system-prompt`, followed by `profile.s
 | `TASKLANE_SANDBOX_NETWORK` | docker network name; required in docker mode |
 | `TASKLANE_SANDBOX_IMAGE` | image containing the `claude` CLI; required in docker mode |
 | `TASKLANE_SANDBOX_CLAUDE_BIN` | CLI path inside the image, default `claude` |
+| `TASKLANE_CLAUDE_POOL_FILE` | A JSON file (mode 0600) with several model accounts, tried in order; see "Several accounts". The daemon sets it to `<data dir>/secrets/claude-accounts.json` |
+| `TASKLANE_CLAUDE_COOLDOWN_SECS` | How long an account that reached its usage limit sleeps (60 to 86400, default 1800) |
 | `TASKLANE_SANDBOX_MEMORY` / `_PIDS` | container limits, default `2g` / `256` |
 | `TASKLANE_DOCKER_BIN` | docker client, default `docker` |
 
 The CLI child gets only `PATH`, `HOME` (a fresh temp dir removed after each run) and the credential
 variables above. Nothing else is inherited. In docker mode the docker client also gets `DOCKER_HOST`
 if set.
+
+## Several accounts
+
+With `TASKLANE_CLAUDE_POOL_FILE` set, the plug-in keeps a list of credentials (`credential_pool.py`). The credential in its own environment is tried first, then the accounts in the file, top to bottom. If a run ends with a usage limit, that account sleeps (`TASKLANE_CLAUDE_COOLDOWN_SECS`; a refused credential sleeps a day) and the **same run starts again with the next account**. When every account sleeps, the call fails with `rate_limited` and `retry_after_secs`, and the daemon waits that long without using up an attempt.
+
+What carries over to the next account is what lives outside the conversation: the ticket text, the feedback, and the working copy (the developer is told that part of the work may already be there). A conversation cannot move between accounts, so the new run reads the code again.
+
+Manage the list on the console's Model accounts page, over the protocol (`accounts`, `account`), or with `python3 credential_pool.py list|add LABEL oauth|api_key|enable|disable|reset|remove` (`add` reads the token from standard input). Tokens are never returned by any operation (only their last four characters) and never put on a command line. Get a subscription token with `claude setup-token`; it is meant for your own use, so for a team use API keys.
 
 ## Sandbox modes
 

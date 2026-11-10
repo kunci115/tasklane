@@ -909,6 +909,114 @@ async fn repository_agent_settings_are_saved_validated_and_protected_by_csrf() {
 }
 
 #[tokio::test]
+async fn model_accounts_can_be_added_ordered_switched_off_and_removed_and_tokens_stay_hidden() {
+    let Some(e) = env().await else { return };
+    let token = "sk-ant-oat01-0123456789abcdefghij-SECRETTAIL";
+    let post = |path: &str, body: String| form(path, body, Some(e.cookie.clone()));
+    // a form without the session's token is refused
+    assert_eq!(
+        send(
+            &e.app,
+            post(
+                "/accounts",
+                format!("csrf=x&label=backup&kind=oauth&token={token}")
+            )
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    for label in ["main", "backup"] {
+        let (st, _, _) = send(
+            &e.app,
+            post(
+                "/accounts",
+                format!("csrf={}&label={label}&kind=oauth&token={token}", e.csrf),
+            ),
+        )
+        .await;
+        assert_eq!(st, StatusCode::SEE_OTHER, "{label}");
+    }
+    let (_, _, page) = send(&e.app, get("/accounts", Some(e.cookie.clone()))).await;
+    assert!(page.contains("main") && page.contains("backup"), "{page}");
+    assert!(page.contains("Model accounts"), "{page}");
+    assert!(
+        page.contains("TAIL"),
+        "the last characters identify an account"
+    );
+    assert!(
+        !page.contains("SECRETTAIL") && !page.contains("0123456789abcdefghij"),
+        "the token itself is never shown: {page}"
+    );
+    // a mistake says what was wrong
+    let (st, _, body) = send(
+        &e.app,
+        post(
+            "/accounts",
+            format!("csrf={}&label=main&kind=oauth&token={token}", e.csrf),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(body.contains("already exists"), "{body}");
+    let act = |label: &str, action: &str| {
+        post(
+            "/accounts/action",
+            format!("csrf={}&label={label}&action={action}", e.csrf),
+        )
+    };
+    assert_eq!(
+        send(&e.app, act("backup", "up")).await.0,
+        StatusCode::SEE_OTHER
+    );
+    let (_, _, page) = send(&e.app, get("/accounts", Some(e.cookie.clone()))).await;
+    assert!(
+        page.find("backup").unwrap() < page.find(">main<").unwrap_or(usize::MAX),
+        "backup is first after Up: {page}"
+    );
+    assert_eq!(
+        send(&e.app, act("main", "disable")).await.0,
+        StatusCode::SEE_OTHER
+    );
+    let (_, _, page) = send(&e.app, get("/accounts", Some(e.cookie.clone()))).await;
+    assert!(page.contains("disabled"), "{page}");
+    assert_eq!(
+        send(&e.app, act("main", "frobnicate")).await.0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        send(&e.app, act("backup", "remove")).await.0,
+        StatusCode::SEE_OTHER
+    );
+    let (_, _, page) = send(&e.app, get("/accounts", Some(e.cookie.clone()))).await;
+    assert!(!page.contains("backup</td>"), "{page}");
+    // the audit log records who changed what, never the token
+    let log: Vec<String> = sqlx::query_scalar(
+        "SELECT action || ' ' || detail::text FROM audit_events WHERE action LIKE 'accounts.%'",
+    )
+    .fetch_all(&e.pool)
+    .await
+    .unwrap();
+    assert!(
+        log.iter().any(|l| l.starts_with("accounts.added")),
+        "{log:?}"
+    );
+    assert!(log.iter().all(|l| !l.contains("SECRETTAIL")), "{log:?}");
+}
+
+#[tokio::test]
+async fn the_model_accounts_page_needs_a_session() {
+    let Some(e) = env().await else { return };
+    let (st, _, _) = send(&e.app, get("/accounts", None)).await;
+    assert!(
+        st == StatusCode::SEE_OTHER
+            || st == StatusCode::UNAUTHORIZED
+            || st == StatusCode::FORBIDDEN,
+        "{st}"
+    );
+}
+
+#[tokio::test]
 async fn people_can_be_added_changed_and_removed_but_not_the_built_in_admin() {
     let Some(e) = env().await else { return };
     let add = |channel: &str, who: &str, role: &str| {

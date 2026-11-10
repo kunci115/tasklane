@@ -18,6 +18,9 @@ import tempfile
 import time
 import uuid
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import credential_pool as pool  # noqa: E402  (a list of credentials: the next one takes over when one is used up)
+
 PROTOCOL_MAJOR = 1
 VERSION = "0.1.0"
 
@@ -102,7 +105,7 @@ class EngineError(Exception):
 
 def secret_values(env=None):
     env = os.environ if env is None else env
-    return [env[v] for v in CRED_VARS if env.get(v)]
+    return [env[v] for v in CRED_VARS if env.get(v)] + pool.all_tokens(pool.path_from(env))
 
 
 TOKEN_SHAPES = re.compile(
@@ -142,6 +145,11 @@ def build_prompt(role, params):
             else:
                 parts.append('<comment author="%s">\n%s\n</comment>' % (author, escape_untrusted(c.get("body", ""))))
     parts.append("</ticket>")
+    if role == "dev" and params.get("interrupted"):
+        # engine text, not data: the run before this one stopped (usage limit, another account took over)
+        parts += ["", "An earlier run on this ticket was cut off before it finished. The working directory may already "
+                  "contain part of the work. Run git status and git diff first, keep what is correct, and continue "
+                  "from there instead of starting over."]
     fb = params.get("feedback")
     if role == "dev" and isinstance(fb, str) and fb.strip():
         # why the last attempt did not finish (failed checks, a reviewer, people on the pull request):
@@ -511,6 +519,62 @@ def run(params):
     if isinstance(max_secs, bool) or not isinstance(max_secs, (int, float)) or max_secs <= 0:
         max_secs = DEFAULT_MAX_SECS
 
+    path = pool.path_from()
+    if not path:
+        return run_once(params, role, workspace, max_secs, None)
+    return run_with_pool(params, role, workspace, max_secs, path)
+
+
+def cooldown_secs(env=None):
+    raw = (os.environ if env is None else env).get("TASKLANE_CLAUDE_COOLDOWN_SECS", "").strip()
+    try:
+        return min(max(int(raw), 60), pool.DAY)
+    except ValueError:
+        return 1800
+
+
+def run_with_pool(params, role, workspace, max_secs, path):
+    """Try the credentials in order. One that hit its usage limit sleeps for a while, one the provider
+    refused sleeps for a day, and the same run goes on with the next. The ticket, its feedback and the
+    working directory are what carry over (a conversation cannot move between accounts), and the developer
+    is told that part of the work may already be there."""
+    tried = []
+    while True:
+        try:
+            cands = [c for c in pool.candidates(path) if c["label"] not in tried]
+        except pool.PoolError as e:
+            raise EngineError("permanent", str(e))
+        if not cands:
+            wake = pool.earliest_wake(path)
+            if tried or wake is not None:
+                raise EngineError("rate_limited", "every model account is used up or was refused (%s)" % (", ".join(tried) or "none tried"),
+                                  retry_after_secs=wake if wake is not None else 900)
+            raise EngineError("unauthorized", "no model credential: set CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY, or add an account")
+        c = cands[0]
+        tried.append(c["label"])
+        p = dict(params, interrupted=True) if len(tried) > 1 else params
+        try:
+            res = run_once(p, role, workspace, max_secs, c)
+        except EngineError as e:
+            if e.kind == "rate_limited":
+                pool.sleep_for(path, c["label"], "usage limit reached", cooldown_secs())
+                continue
+            if e.kind == "unauthorized":
+                pool.sleep_for(path, c["label"], "the provider refused this credential", pool.DAY)
+                continue
+            raise
+        pool.used(path, c["label"])
+        res["account"] = c["label"]
+        return res
+
+
+def run_once(params, role, workspace, max_secs, cred):
+    """One model run with one credential (None: whatever the environment holds)."""
+    base_env = dict(os.environ)
+    if cred:
+        for v in CRED_VARS:
+            base_env.pop(v, None)
+        base_env[cred["var"]] = cred["token"]
     mode = sandbox_mode()
     if role == "dev" and preview_of(params.get("profile")) and not os.environ.get("TASKLANE_SANDBOX_PROXY", "").strip():
         # the preview lets a browser load pages that repository code controls; only start it where the
@@ -525,16 +589,16 @@ def run(params):
     try:
         if mode == "docker":
             container = "tasklane-%s" % uuid.uuid4().hex[:12]
-            argv = docker_command(role, cargs, workspace, container,
+            argv = docker_command(role, cargs, workspace, container, env=base_env,
                                   preview=preview_of(params.get("profile")) if role == "dev" else None)
             cwd = None
-            env = {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"), "HOME": home}
+            env = {"PATH": base_env.get("PATH", "/usr/local/bin:/usr/bin:/bin"), "HOME": home}
             for v in CRED_VARS + ("DOCKER_HOST",):
-                if os.environ.get(v):
-                    env[v] = os.environ[v]
+                if base_env.get(v):
+                    env[v] = base_env[v]
         else:
             argv = [os.environ.get("TASKLANE_CLAUDE_BIN", "claude")] + cargs
-            env = child_env(home)
+            env = child_env(home, base_env)
             cwd = workspace
             if not cwd:
                 scratch = tempfile.mkdtemp(prefix="tasklane-claude-cwd-")
@@ -583,6 +647,44 @@ def check():
         return {"ok": False, "kind": e.kind, "message": scrub(str(e))[:300], "secs": round(time.monotonic() - t0, 1)}
     return {"ok": True, "answer": scrub(str(res.get("answer", "")))[:80], "secs": round(time.monotonic() - t0, 1),
             "sandbox": sandbox_mode()}
+
+
+def accounts():
+    """What the console shows: the list of model accounts without their tokens."""
+    path = pool.path_from()
+    if not path:
+        return {"configured": False, "rows": []}
+    try:
+        return {"configured": True, "rows": pool.status(path), "next_wake_secs": pool.earliest_wake(path)}
+    except pool.PoolError as e:
+        raise EngineError("permanent", str(e))
+
+
+def account_action(p):
+    path = pool.path_from()
+    if not path:
+        raise EngineError("permanent", "set TASKLANE_CLAUDE_POOL_FILE to keep a list of model accounts")
+    act, label = p.get("action"), p.get("label")
+    if not isinstance(label, str):
+        raise EngineError("permanent", "label is required")
+    try:
+        if act == "add":
+            pool.add(path, label, p.get("kind"), p.get("token"))
+        elif act == "remove":
+            pool.remove(path, label)
+        elif act == "enable":
+            pool.set_enabled(path, label, True)
+        elif act == "disable":
+            pool.set_enabled(path, label, False)
+        elif act == "reset":
+            pool.reset(path, label)
+        elif act in ("up", "down"):
+            pool.move(path, label, -1 if act == "up" else 1)
+        else:
+            raise EngineError("permanent", "unknown account action: %s" % (act,))
+    except pool.PoolError as e:
+        raise EngineError("permanent", str(e))
+    return {"ok": True}
 
 
 def capabilities():
@@ -635,6 +737,13 @@ def handle(req):
                    "credential": bool(secret_values())}
         elif op == "capabilities":
             res = capabilities()
+        elif op == "accounts":
+            res = accounts()
+        elif op == "account":
+            params = req.get("params")
+            if not isinstance(params, dict):
+                raise EngineError("permanent", "params must be an object")
+            res = account_action(params)
         elif op == "check":
             res = check()
         elif op == "sweep":

@@ -169,6 +169,7 @@ impl PluginClient {
                 return Err(CallError::Plugin(PluginError {
                     kind: ErrorKind::Permanent,
                     message: message.clone(),
+                    retry_after_secs: None,
                 }));
             }
         }
@@ -216,6 +217,7 @@ impl PluginClient {
             Ok(Ok(resp)) => Err(CallError::Plugin(resp.error.unwrap_or(PluginError {
                 kind: ErrorKind::Permanent,
                 message: "error without detail".into(),
+                retry_after_secs: None,
             }))),
         }
     }

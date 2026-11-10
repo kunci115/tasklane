@@ -3,6 +3,7 @@
 //! per-session CSRF token, and the session cookie is HttpOnly and SameSite=Lax (Lax, not Strict, so the browser still sends it when GitHub redirects back; every state-changing request is a POST that also needs the CSRF token).
 //! The pages work without JavaScript; the script only adds live updates and comfort.
 
+mod accounts;
 mod connect;
 mod dashboard;
 mod map;
@@ -50,6 +51,8 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/services/{id}/takeover", post(repos::take_over))
         .route("/people", get(people::page).post(people::add))
         .route("/people/{id}/delete", post(people::delete))
+        .route("/accounts", get(accounts::page).post(accounts::add))
+        .route("/accounts/action", post(accounts::action))
         .route("/chat", get(chat_page))
         .route("/chat/groups", post(add_group))
         .route("/chat/groups/{id}/delete", post(delete_group))

@@ -27,6 +27,12 @@ Add a webhook on the group or project that points to `https://<your host>/api/v1
 
 Differences you should know about: **GitLab cannot mint a token that lives only minutes**, so the per-run token tasklane hands to git is the bot's own token. Keep that bot's reach small (one group, Developer role) and rotate its token. The GitHub-App one-click connection in the console does not apply; the settings above are the setup. Links from the console to issues and merge requests are not shown for GitLab yet. **Verified here:** the plug-in against a fake GitLab (every operation, trust, webhooks, ownership, error handling). **Not verified here:** a real GitLab, so do a supervised dry run on a throwaway project first.
 
+## Several model accounts (when one runs out of usage)
+
+The **Model accounts** page in the console keeps a list of accounts for the Claude engine: a subscription token (from `claude setup-token`) or an Anthropic API key each. The first account that is ready does the work. When it reports that its usage limit is reached it sleeps for 30 minutes (`TASKLANE_CLAUDE_COOLDOWN_SECS`), a refused credential sleeps a day, and the same run goes on with the next account. If every account sleeps, tickets wait for the first to wake up; waiting costs no attempt, so a limit that lasts hours does not fail tickets.
+
+What carries over is the ticket, its feedback and the working copy, and the developer is told that part of the work may already be there. A conversation cannot move between accounts, so the new run reads the code again. Tokens are stored in the data directory (`secrets/claude-accounts.json`, readable only by tasklane), shown only by their last four characters, and never written to the audit log. A subscription token is for one person's own use; for a team, use API keys. Without the Docker image, set `TASKLANE_CLAUDE_POOL_FILE` yourself. Details: [plugins/engine-claude/README.md](../plugins/engine-claude/README.md).
+
 ## Using another coding agent (Codex, Gemini CLI, Aider, ...)
 
 Claude is built in, but `plugins/engine-cli` runs **any command-line coding agent** as the agent engine. It keeps the same rules as the Claude engine (the Docker sandbox is required, the read-only roles get a read-only mount, the egress allowlist applies, secrets are passed by name and scrubbed from output, and the agent's answers are checked before tasklane uses them). You supply the command and an image that contains the agent:

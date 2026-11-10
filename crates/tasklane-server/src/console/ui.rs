@@ -232,6 +232,7 @@ pub async fn render(
         item("tickets", "/tickets", "list", "Tickets", None),
         item("repos", "/services", "repo", "Repositories", None),
         item("connections", "/connections", "plug", "Connections", None),
+        item("accounts", "/accounts", "shield", "Model accounts", None),
         item("people", "/people", "users", "People", None),
         item("chat", "/chat", "chat", "Chat groups", None),
         item("activity", "/activity", "activity", "Activity", None),

@@ -13,7 +13,7 @@ tasklane talks to everything outside itself through plug-ins: a **ticket source*
 
 1. **`describe`** always works and returns `name`, `role`, `protocol_major` and `version`. The core refuses a plug-in whose `protocol_major` it does not know (it is `1`).
 2. Every response echoes the request's `id`. Responses may come in any order.
-3. Errors have a `kind`: `transient` (try again later), `permanent`, `unauthorized`, or `rate_limited`. The core decides about retries, not the plug-in.
+3. Errors have a `kind`: `transient` (try again later), `permanent`, `unauthorized`, or `rate_limited`. The core decides about retries, not the plug-in. A `rate_limited` error may carry `retry_after_secs`: the core then waits that long (60 to 3600 s) and runs the job again without counting an attempt.
 4. **Expected business outcomes are results, not errors.** A merge refused because the head moved is `{"merged": false, "reason": "head_moved"}`.
 5. **Tokens and keys passed in `params` are secrets.** Never log them and never put them in error messages. Tests should check for that (the GitHub plug-in's tests have a leak check to copy).
 6. Never crash the read loop: catch every exception and answer with an error. A line that is not JSON is ignored.

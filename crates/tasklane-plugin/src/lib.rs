@@ -28,6 +28,9 @@ pub enum ErrorKind {
 pub struct PluginError {
     pub kind: ErrorKind,
     pub message: String,
+    /// For `rate_limited`: how long until the plug-in expects to be usable again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_after_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -57,6 +60,7 @@ impl Response {
             error: Some(PluginError {
                 kind,
                 message: message.into(),
+                retry_after_secs: None,
             }),
         }
     }

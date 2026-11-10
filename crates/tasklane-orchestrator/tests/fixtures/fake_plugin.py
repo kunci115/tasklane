@@ -23,6 +23,10 @@ def once(name):
     return False
 
 
+class UsedUp(Exception):
+    """Every model account is used up (what engine-claude reports when its pool is empty)."""
+
+
 def remote_head(service, branch):
     out = subprocess.run(["git", f"--git-dir={REMOTE}/{service}.git", "rev-parse", f"refs/heads/{branch}"],
                          capture_output=True, text=True)
@@ -70,6 +74,8 @@ def run(params):
             f.write(json.dumps({"ref": ref, "ws": ws, "readme": bool(ws) and os.path.exists(os.path.join(ws, "README"))}) + "\n")
         if "slow" in ref:
             time.sleep(2.5)
+        if "usedup" in ref and once("used_up"):
+            raise UsedUp()
         if "crash" in ref:
             os._exit(1)
         if "badjson" in ref:
@@ -131,7 +137,41 @@ def owner_call(op, params):
     return {"owner": o.get("owner", ""), "mine": o.get("mine", True), "others": [], "since": 0, "guard": "on"}
 
 
+def accounts_file():
+    return os.path.join(STATE, "accounts.json")
+
+
+def accounts_op(op, params):
+    """A list of model accounts like engine-claude keeps (without any real secret handling)."""
+    rows = json.load(open(accounts_file())) if os.path.exists(accounts_file()) else []
+    if op == "accounts":
+        return {"configured": True, "rows": [dict(r, token="\u2026" + r["token"][-4:]) for r in rows]}
+    act, label = params.get("action"), params.get("label")
+    i = next((n for n, r in enumerate(rows) if r["label"] == label), None)
+    if act == "add":
+        if i is not None:
+            raise ValueError(f"an account called {label!r} already exists")
+        if len(params.get("token") or "") < 20:
+            raise ValueError("that does not look like a token")
+        rows.append({"label": label, "kind": params["kind"], "token": params["token"], "enabled": True,
+                     "cooldown_secs": 0, "last_error": "", "removable": True})
+    elif i is None:
+        raise ValueError(f"no account called {label!r}")
+    elif act == "remove":
+        rows.pop(i)
+    elif act in ("enable", "disable"):
+        rows[i]["enabled"] = act == "enable"
+    elif act in ("up", "down"):
+        j = i + (-1 if act == "up" else 1)
+        if 0 <= j < len(rows):
+            rows[i], rows[j] = rows[j], rows[i]
+    json.dump(rows, open(accounts_file(), "w"))
+    return {"ok": True}
+
+
 def handle(op, params):
+    if op in ("accounts", "account"):
+        return accounts_op(op, params)
     if op in ("claim_repo", "takeover_repo", "release_repo"):
         return owner_call(op, params)
     if op == "describe":
@@ -235,6 +275,8 @@ for line in sys.stdin:
         resp = {"id": req["id"], "ok": True, "result": handle(req["op"], req.get("params") or {})}
     except KeyError as e:
         resp = {"id": req["id"], "ok": False, "error": {"kind": "permanent", "message": f"unknown op {e}"}}
+    except UsedUp:
+        resp = {"id": req["id"], "ok": False, "error": {"kind": "rate_limited", "message": "every model account is used up", "retry_after_secs": 60}}
     except ValueError as e:
         resp = {"id": req["id"], "ok": False, "error": {"kind": "permanent", "message": str(e)}}
     sys.stdout.write(json.dumps(resp) + "\n")

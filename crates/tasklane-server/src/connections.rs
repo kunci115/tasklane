@@ -193,6 +193,12 @@ pub fn source_spec(base: &PluginSpec, gh: Option<&GithubConn>, secrets: &Secrets
 /// The agent-engine plug-in's spec.
 pub fn engine_spec(base: &PluginSpec, agent: &AgentSettings, secrets: &Secrets) -> PluginSpec {
     let mut spec = base.clone();
+    // the list of model accounts (the Model accounts page) is kept next to the other secrets
+    set_missing(
+        &mut spec.env,
+        "TASKLANE_CLAUDE_POOL_FILE",
+        secrets.path("claude-accounts.json").display().to_string(),
+    );
     if let Some(key) = secrets.read(AGENT_KEY) {
         if !has(&spec.env, "CLAUDE_CODE_OAUTH_TOKEN") && !has(&spec.env, "ANTHROPIC_API_KEY") {
             set_missing(&mut spec.env, agent.credential_var(), key);

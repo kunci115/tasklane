@@ -283,6 +283,39 @@ async fn pending_ci_is_polled_without_using_up_attempts() {
 }
 
 #[tokio::test]
+async fn when_every_model_account_is_used_up_the_job_waits_and_no_attempt_is_spent() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    w.arm("used_up");
+    let t = ticket(&w, "T-usedup").await;
+    let first = w.orch.run_one().await.unwrap();
+    assert_eq!(first, RunResult::Waiting, "deferred, not retried or failed");
+    assert_ne!(state(&w.pool, t).await, "failed");
+    let (attempts, wait): (i16, f64) = sqlx::query_as(
+        "SELECT attempts, extract(epoch FROM run_after - now())::float8 FROM jobs WHERE ticket_id = $1 AND kind = 'triage'",
+    )
+    .bind(t)
+    .fetch_one(&w.pool)
+    .await
+    .unwrap();
+    assert_eq!(attempts, 0, "waiting for an account costs no attempt");
+    assert!(
+        (30.0..=61.0).contains(&wait),
+        "waits as long as the plug-in said (60 s): {wait}"
+    );
+    // the account comes back: the same job runs and the ticket goes on
+    sqlx::query("UPDATE jobs SET run_after = now() WHERE ticket_id = $1")
+        .bind(t)
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    drive(&w).await;
+    assert_eq!(state(&w.pool, t).await, "merged");
+}
+
+#[tokio::test]
 async fn a_reviewer_who_asks_for_changes_sends_the_ticket_back_with_the_notes() {
     let Some(pool) = test_pool().await else {
         return;

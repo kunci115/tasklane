@@ -339,6 +339,22 @@ impl Orchestrator {
                 Ok(RunResult::Skipped)
             }
             Err(Error::Fatal(msg)) => self.fail_ticket(&job, &msg, true).await,
+            // Every model account is used up: wait for the first one to come back. This costs no attempt
+            // (a limit that lasts hours must not fail the ticket), and the plug-in's own estimate decides how long.
+            Err(Error::Plugin(crate::host::CallError::Plugin(e)))
+                if e.kind == tasklane_plugin::ErrorKind::RateLimited =>
+            {
+                let wait = e.retry_after_secs.unwrap_or(900).clamp(60, 3600);
+                eprintln!(
+                    "job {} ({}): model accounts used up, waiting {wait}s",
+                    job.id, job.kind
+                );
+                match self.queue.defer(&job, wait as f64).await {
+                    Ok(()) => Ok(RunResult::Waiting),
+                    Err(tasklane_queue::Error::LeaseLost) => Ok(RunResult::LeaseLost),
+                    Err(e) => Err(e.into()),
+                }
+            }
             Err(e @ (Error::Plugin(_) | Error::BadOutput(_) | Error::Git(_))) => {
                 eprintln!("job {} ({}): {e}", job.id, job.kind);
                 match self.queue.fail(&job).await {
