@@ -2542,6 +2542,35 @@ async fn issues_that_were_open_before_the_connection_can_be_imported_on_request(
 }
 
 #[tokio::test]
+async fn the_branch_pull_requests_go_to_is_set_per_repository_and_checked() {
+    let Some(e) = env().await else { return };
+    let id: i64 = sqlx::query_scalar("SELECT id FROM services WHERE external_id = 'org/repo'")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    let url = format!("/services/{id}/profile");
+    let body = |b: &str| {
+        format!(
+            "csrf={}&system=&test_command=&preview_command=&preview_port=&target_branch={b}",
+            e.csrf
+        )
+    };
+    let (st, _, _) = send(&e.app, form(&url, body("--evil"), Some(e.cookie.clone()))).await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    let (st, _, _) = send(&e.app, form(&url, body("dev"), Some(e.cookie.clone()))).await;
+    assert!(st.is_redirection());
+    let t: String =
+        sqlx::query_scalar("SELECT agent_profile->>'target_branch' FROM services WHERE id = $1")
+            .bind(id)
+            .fetch_one(&e.pool)
+            .await
+            .unwrap();
+    assert_eq!(t, "dev");
+    let (_, _, page) = send(&e.app, get("/services", Some(e.cookie.clone()))).await;
+    assert!(page.contains("Branch pull requests go to") && page.contains("value=\"dev\""));
+}
+
+#[tokio::test]
 async fn tickets_of_an_archived_repository_leave_the_lists_but_not_the_database() {
     let Some(e) = env().await else { return };
     let id = seed_ticket(&e, "7", "Old account work", "merged", 1).await;

@@ -135,7 +135,8 @@ const EDGES: &[(State, State, &[Actor])] = &[
     (Reviewing, Developing, &[Orchestrator]),
     (Reviewing, AwaitingApproval, &[Orchestrator]),
     (MergeReady, Merged, &[Runner]),
-    (Merged, ClosedDone, &[Approver]),
+    // the runner closes it once the change reached the default branch
+    (Merged, ClosedDone, &[Approver, Runner]),
     // Approved work resumes where it stopped: a rescored diff goes on to its PR,
     // a reviewer escalation goes on to the merge, and a moved head is checked again.
     (Queued, Rescoring, &[Orchestrator]),

@@ -219,6 +219,8 @@ The agent-engine plug-in has its own switch, `TASKLANE_ALLOW_UNSANDBOXED=1`, exp
 3. In **full** mode, a ticket that the rules and the agent both rate level 1 runs through to a merge without a person, **if its author is a collaborator** (owner, member or collaborator of the repository, or tasklane itself acting for a reporter). An issue from anyone else always waits for approval. Levels 2 and 3 wait for approval first.
 4. Change a repository's mode at any time in the console, under "Repositories". **watch** stops all activity for it.
 
+**Which branch, and when the issue closes.** Pull requests go to the repository's default branch unless you set "Branch pull requests go to" (for example `dev`) in its Settings. After the merge the ticket is `merged`. The issue is closed (with a note) only when the merged commit is part of the default branch, so a repository that requires the change to reach `main` first keeps the issue open until then. The check runs on each sync pass.
+
 Issues that existed before you installed the App are not imported on their own (the first poll only sets a baseline, so the agent does not comment on years of old issues). To bring them in, press **Import open issues** on the repository's card under "Repositories"; each open issue becomes a ticket. Or create a new issue, or use the report button.
 
 ## 4. Approving, pausing, failing

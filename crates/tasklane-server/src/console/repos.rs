@@ -250,6 +250,14 @@ pub async fn page(
             .get("preview_command")
             .and_then(Value::as_str)
             .unwrap_or("");
+        let target_v = profile
+            .get("target_branch")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let default_v = facts
+            .get("default_branch")
+            .and_then(Value::as_str)
+            .unwrap_or("main");
         let pport_v = profile
             .get("preview_port")
             .and_then(Value::as_i64)
@@ -263,6 +271,7 @@ pub async fn page(
 <div class=\"field\"><label for=\"s{id}\">Instructions for the agent</label><textarea id=\"s{id}\" name=\"system\" maxlength=\"4000\" placeholder=\"For example: follow the existing code style; never change generated files.\">{}</textarea></div>\
 <div class=\"field\"><label for=\"t{id}\">Test command the agent may run</label><input id=\"t{id}\" type=\"text\" name=\"test_command\" maxlength=\"200\" value=\"{}\" placeholder=\"pytest -q\"><div class=\"hint\">One command, no parentheses or line breaks.</div></div>\
 <div class=\"field\"><label for=\"pc{id}\">Preview: command that starts the app</label><input id=\"pc{id}\" type=\"text\" name=\"preview_command\" maxlength=\"300\" value=\"{}\" placeholder=\"python3 -m http.server 3000\"></div><div class=\"field\"><label for=\"pp{id}\">Preview: port</label><input id=\"pp{id}\" type=\"text\" name=\"preview_port\" maxlength=\"5\" value=\"{}\" placeholder=\"3000\"><div class=\"hint\">Lets the developer agent look at what it builds (a screenshot, with Obscura). Needs the sandbox image built with Obscura; see the operations guide. Leave both empty to turn it off.</div></div>\
+<div class=\"field\"><label for=\"tb{id}\">Branch pull requests go to</label><input id=\"tb{id}\" type=\"text\" name=\"target_branch\" maxlength=\"100\" value=\"{}\" placeholder=\"{}\"><div class=\"hint\">Empty means the default branch. With another branch (for example dev), the issue stays open after the merge and tasklane closes it once the change reaches the default branch.</div></div>\
 <button class=\"btn primary small\">Save</button></form>{}</details></div>",
             if link.is_empty() { esc(&name) } else { format!("<a href=\"{}\" target=\"_blank\" rel=\"noopener\">{} {}</a>", esc(&link), esc(&name), icon("external")) },
             if archived { "<span class=\"pill\">archived</span>" } else { "" },
@@ -293,6 +302,8 @@ pub async fn page(
             esc(testc),
             esc(pcmd_v),
             esc(&pport_v),
+            esc(target_v),
+            esc(default_v),
             notes_html(id, notes_by.get(&id).map(Vec::as_slice).unwrap_or(&[]), &sess.csrf, &here)
         ));
     }
@@ -504,6 +515,8 @@ pub struct ProfileIn {
     preview_command: String,
     #[serde(default)]
     preview_port: String,
+    #[serde(default)]
+    target_branch: String,
     ret: Option<String>,
 }
 
@@ -548,9 +561,23 @@ pub async fn set_profile(
         )
             .into_response();
     }
+    let target = f.target_branch.trim();
+    if target.len() > 100
+        || !target
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._/-".contains(&b))
+        || target.starts_with('-')
+        || target.contains("..")
+    {
+        return (
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "the branch name may use letters, digits and . _ / - only",
+        )
+            .into_response();
+    }
     let _ = sqlx::query("UPDATE services SET agent_profile = agent_profile || $2 WHERE id = $1")
         .bind(id)
-        .bind(json!({"system": system, "test_command": cmd, "preview_command": pcmd, "preview_port": port}))
+        .bind(json!({"system": system, "test_command": cmd, "preview_command": pcmd, "preview_port": port, "target_branch": target}))
         .execute(st.orch.pool())
         .await;
     let _ = sqlx::query("INSERT INTO audit_events (actor, action, detail) VALUES ('console:admin', 'service.profile', $1)")

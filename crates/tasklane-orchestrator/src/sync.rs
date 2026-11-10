@@ -132,6 +132,7 @@ impl Orchestrator {
             }
         }
         self.fill_missing_titles().await;
+        self.settle_merged().await;
         // Advance the cursor only after every item was handled (not while some were held back).
         if deferred {
             return Ok(report);
@@ -143,6 +144,83 @@ impl Orchestrator {
                 .await?;
         }
         Ok(report)
+    }
+
+    /// A ticket whose pull request was merged is done when the change is in the default branch:
+    /// then its issue is closed with a note. A change merged into another branch (dev) waits there
+    /// until a person promotes it. Best effort, a few per pass; a source that cannot answer is skipped.
+    async fn settle_merged(&self) {
+        let rows: Vec<(i64, String, String, Option<String>, String, String)> = sqlx::query_as(
+            "SELECT t.id, s.external_id, t.external_ref, t.pr_ref,
+                    a.detail->>'merge_sha', a.detail->>'closes_on'
+             FROM tickets t JOIN services s ON s.id = t.service_id
+             JOIN LATERAL (SELECT detail FROM audit_events WHERE ticket_id = t.id AND action = 'ticket.merged'
+                           ORDER BY id DESC LIMIT 1) a ON true
+             WHERE t.state = 'merged' AND s.source = $1 AND NOT s.archived
+               AND coalesce(a.detail->>'merge_sha', '') <> '' AND coalesce(a.detail->>'closes_on', '') <> ''
+             ORDER BY t.updated_at LIMIT 20",
+        )
+        .bind(&self.cfg.source_name)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default();
+        for (id, service, reference, pr, sha, branch) in rows {
+            let call = self.cfg.call_timeout;
+            let there = match self
+                .source
+                .call(
+                    "in_branch",
+                    json!({"service": service, "sha": sha, "branch": branch}),
+                    call,
+                )
+                .await
+            {
+                Ok(v) => v.get("in_branch").and_then(Value::as_bool) == Some(true),
+                Err(e) => {
+                    eprintln!("settle: {service}#{reference}: {e}");
+                    continue;
+                }
+            };
+            if !there {
+                continue;
+            }
+            let said = format!(
+                "The change{} is now in `{branch}`. Closing this issue.",
+                pr.map(|p| format!(" (pull request {p})"))
+                    .unwrap_or_default()
+            );
+            let _ = self
+                .source
+                .call(
+                    "comment",
+                    json!({"service": service, "ref": reference, "body": said}),
+                    call,
+                )
+                .await;
+            if let Err(e) = self
+                .source
+                .call(
+                    "close_item",
+                    json!({"service": service, "ref": reference}),
+                    call,
+                )
+                .await
+            {
+                eprintln!("settle: closing {service}#{reference}: {e}");
+                continue;
+            }
+            if transition(State::Merged, State::ClosedDone, Actor::Runner).is_ok() {
+                let _ = sqlx::query("UPDATE tickets SET state = 'closed_done', updated_at = now() WHERE id = $1 AND state = 'merged'")
+                    .bind(id)
+                    .execute(&self.pool)
+                    .await;
+                let _ = sqlx::query("INSERT INTO audit_events (actor, action, ticket_id, detail) VALUES ('sync', 'ticket.closed_done', $1, $2)")
+                    .bind(id)
+                    .bind(json!({"in": branch}))
+                    .execute(&self.pool)
+                    .await;
+            }
+        }
     }
 
     /// Tickets made before titles were kept (or imported without one) get theirs from the source,

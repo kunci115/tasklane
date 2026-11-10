@@ -251,6 +251,12 @@ def handle(op, params):
         return read_json("pull_" + str(params["pr"]) + ".json", {"base": "main", "state": "open"})
     if op == "list_open_issues":
         return {"refs": read_json("open_issues_" + params.get("service", "").replace("/", "_") + ".json", []), "more": False}
+    if op == "in_branch":
+        return {"in_branch": flag("in_branch")}
+    if op == "close_item":
+        with open(os.path.join(STATE, "closed.log"), "a") as f:
+            f.write(params["ref"] + "\n")
+        return {"closed": True}
     if op == "list_pulls":
         return {"pulls": read_json("pulls_" + params.get("service", "").replace("/", "_") + ".json", []), "truncated": False}
     if op == "list_changes":

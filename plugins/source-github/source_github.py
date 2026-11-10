@@ -1067,6 +1067,30 @@ def op_merge_pr(params):
     return out
 
 
+BRANCH_RE = re.compile(r"[A-Za-z0-9._/-]{1,100}")
+
+
+def op_in_branch(params):
+    """Is this commit part of that branch? (Promotion check: a change merged into dev is 'in' main once main has it.)"""
+    svc, sha, branch = p_service(params), p_str(params, "sha"), p_str(params, "branch")
+    if not re.fullmatch(r"[0-9a-fA-F]{7,64}", sha) or not BRANCH_RE.fullmatch(branch):
+        raise permanent("invalid sha or branch")
+    try:
+        d = app_api("GET", f"/repos/{svc}/compare/{q(branch)}...{sha}").data or {}
+    except PluginError as e:
+        if e.status in (404, 422):  # unknown commit or branch
+            return {"in_branch": False}
+        raise
+    return {"in_branch": d.get("status") in ("behind", "identical")}
+
+
+def op_close_item(params):
+    """Close an issue as completed."""
+    svc, ref = p_service(params), p_num(params, "ref")
+    app_api("PATCH", f"/repos/{svc}/issues/{ref}", body={"state": "closed", "state_reason": "completed"})
+    return {"closed": True}
+
+
 def op_verify_webhook(params):
     secret = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
     if not secret:
@@ -1120,7 +1144,7 @@ def op_verify_webhook(params):
 
 OPS = {
     "describe": op_describe, "list_services": op_list_services,
-    "list_changes": op_list_changes, "list_open_issues": op_list_open_issues, "get_item": op_get_item,
+    "list_changes": op_list_changes, "list_open_issues": op_list_open_issues, "in_branch": op_in_branch, "close_item": op_close_item, "get_item": op_get_item,
     "create_item": op_create_item, "comment": op_comment,
     "set_labels": op_set_labels, "detect_facts": op_detect_facts, "read_overrides": op_read_overrides,
     "repo_url": op_repo_url, "mint_run_token": op_mint_run_token,

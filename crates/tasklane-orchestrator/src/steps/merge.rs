@@ -65,7 +65,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
             &mut tx,
             t.id,
             "ticket.merged",
-            json!({"pr": pr, "head": head, "merge_sha": r.get("sha")}),
+            json!({"pr": pr, "head": head, "merge_sha": r.get("sha"), "into": t.base_branch(), "closes_on": t.default_branch()}),
         )
         .await?;
         State::Merged
@@ -99,7 +99,12 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
     o.finish_job(&mut tx, job).await?;
     tx.commit().await?;
     match to {
-        State::Merged => o.say(&t, &format!("Merged pull request {pr} into the development branch. Production is promoted by a person.")).await,
+        State::Merged if t.base_branch() == t.default_branch() => {
+            o.say(&t, &format!("Merged pull request {pr} into `{}`. This issue is closed once the merge is confirmed.", t.base_branch())).await
+        }
+        State::Merged => {
+            o.say(&t, &format!("Merged pull request {pr} into `{}`. This issue stays open until the change reaches `{}`; tasklane closes it then.", t.base_branch(), t.default_branch())).await
+        }
         _ => o.say(&t, &format!("Merge was refused ({reason}); checking again.")).await,
     }
     Ok(RunResult::Moved {

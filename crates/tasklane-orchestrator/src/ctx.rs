@@ -182,7 +182,19 @@ pub(crate) struct Ticket {
 }
 
 impl Ticket {
+    /// Where pull requests go: the branch set for this repository in the console, else its default branch.
     pub fn base_branch(&self) -> String {
+        if let Some(b) = self
+            .agent_profile
+            .get("target_branch")
+            .and_then(Value::as_str)
+            .filter(|b| !b.is_empty())
+        {
+            return b.to_string();
+        }
+        self.default_branch()
+    }
+    pub fn default_branch(&self) -> String {
         self.facts
             .get("default_branch")
             .and_then(Value::as_str)

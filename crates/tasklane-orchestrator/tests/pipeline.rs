@@ -360,6 +360,47 @@ async fn a_reviewer_escalation_needs_approval_and_then_resumes_at_the_merge() {
 }
 
 #[tokio::test]
+async fn a_merged_ticket_closes_its_issue_only_once_the_change_is_in_the_default_branch() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    sqlx::query("UPDATE services SET agent_profile = '{\"target_branch\":\"dev\"}'")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    assert!(std::process::Command::new("git")
+        .args(["branch", "dev", "main"])
+        .current_dir(w.remote())
+        .status()
+        .unwrap()
+        .success());
+    let t = ticket(&w, "T-plain").await;
+    drive(&w).await;
+    assert_eq!(state(&w.pool, t).await, "merged");
+    let said = w.read_state("comments.log");
+    assert!(
+        said.contains("stays open until the change reaches `main`"),
+        "{said}"
+    );
+    std::fs::write(
+        w.state_dir().join("services.json"),
+        r#"[{"external_id":"org/repo","default_branch":"main","archived":false,"private":true}]"#,
+    )
+    .unwrap();
+    w.orch.sync_once().await.unwrap();
+    assert_eq!(state(&w.pool, t).await, "merged", "not in main yet");
+    assert!(w.read_state("closed.log").is_empty());
+    w.set_flag("in_branch");
+    w.orch.sync_once().await.unwrap();
+    assert_eq!(state(&w.pool, t).await, "closed_done");
+    assert_eq!(w.read_state("closed.log").trim(), "T-plain");
+    assert!(w.read_state("comments.log").contains("Closing this issue"));
+    w.orch.sync_once().await.unwrap();
+    assert_eq!(w.read_state("closed.log").lines().count(), 1, "closed once");
+}
+
+#[tokio::test]
 async fn a_head_that_moved_before_the_merge_is_not_merged_until_it_is_checked_and_reviewed_again() {
     let Some(pool) = test_pool().await else {
         return;

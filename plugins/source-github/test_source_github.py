@@ -90,7 +90,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    do_GET = do_POST = do_PUT = do_DELETE = _do
+    do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = _do
 
 
 ALL_OUTPUT = []
@@ -346,6 +346,18 @@ class Reading(Base):
         r = self.ok("list_open_issues", {"service": "acme/one"})
         self.assertEqual((r["refs"], r["more"]), (["3", "9"], False))
         self.assertEqual(self.err("list_open_issues", {"service": "nope"})["kind"], "permanent")
+
+    def test_in_branch_tells_whether_a_commit_reached_a_branch(self):
+        R = self.fake.routes
+        R[("GET", "/repos/acme/one/compare/main...abc1234")] = (200, {}, {"status": "behind"})
+        self.assertTrue(self.ok("in_branch", {"service": "acme/one", "sha": "abc1234", "branch": "main"})["in_branch"])
+        R[("GET", "/repos/acme/one/compare/main...abc1234")] = (200, {}, {"status": "ahead"})
+        self.assertFalse(self.ok("in_branch", {"service": "acme/one", "sha": "abc1234", "branch": "main"})["in_branch"])
+        self.assertEqual(self.err("in_branch", {"service": "acme/one", "sha": "x;y", "branch": "main"})["kind"], "permanent")
+
+    def test_close_item_closes_the_issue_as_completed(self):
+        self.fake.routes[("PATCH", "/repos/acme/one/issues/4")] = (200, {}, {"state": "closed"})
+        self.assertTrue(self.ok("close_item", {"service": "acme/one", "ref": "4"})["closed"])
 
     def test_get_pull_says_where_a_pull_request_goes(self):
         self.fake.routes[("GET", "/repos/acme/one/pulls/5")] = (200, {}, {
