@@ -49,6 +49,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         }
     };
     let pending = o.pending_messages(t.id).await;
+    let attached = o.attachments_for(&t, "triage").await;
     let out = o
         .engine
         .call(
@@ -61,6 +62,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
                 "account_owner": o.account_owner(t.id, &super::text_of(&item, "author")).await,
                 "references": o.references_for(&t.service).await,
                 "messages": pending.0,
+                "attachments": attached.json(),
                 "run_key": format!("t{}", t.id),
                 "tools": o.tools_for(&t.service, "triage").await,
                 "workspace": workspace.as_ref().map(|p| p.worktree.clone()),
@@ -70,6 +72,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
             o.cfg.dev_timeout,
         )
         .await;
+    o.drop_attachments(&attached);
     if let Some(p) = &workspace {
         o.ws.remove_worktree(p).await;
     }

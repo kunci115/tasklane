@@ -603,6 +603,52 @@ class Sweep(unittest.TestCase):
             self.assertEqual(r["result"], {"removed": 0})
 
 
+class Attachments(unittest.TestCase):
+    def make(self, names):
+        d = tempfile.mkdtemp(prefix="att-")
+        for n in names:
+            with open(os.path.join(d, n), "wb") as f:
+                f.write(b"x")
+        return d
+
+    def items(self, d, names, frm="issue"):
+        return [{"path": os.path.join(d, n), "type": n.split(".")[-1], "from": frm, "author": "ann"} for n in names]
+
+    def test_files_are_listed_for_the_prompt_and_the_directory_is_opened_to_the_agent(self):
+        d = self.make(["1.png", "2.pdf"])
+        params = {"attachments": self.items(d, ["1.png", "2.pdf"])}
+        shown, mount, add = ev.attachments_of(params, "host")
+        self.assertEqual((mount, add), (None, d))
+        self.assertIn("picture", shown[0])
+        self.assertIn("PDF document", shown[1])
+        prompt = ev.build_prompt("triage", dict(params, attachments_shown=shown, ticket={}))
+        self.assertIn("<attachments>", prompt)
+        self.assertIn(os.path.join(d, "1.png"), prompt)
+        args = ev.claude_args("triage", {"profile": {}}, "sys", None, add)
+        self.assertEqual(args[args.index("--add-dir") + 1], d)
+
+    def test_in_a_sandbox_the_directory_is_mounted_read_only_and_shown_by_its_inside_path(self):
+        d = self.make(["1.png"])
+        shown, mount, add = ev.attachments_of({"attachments": self.items(d, ["1.png"])}, "docker")
+        self.assertEqual((mount, add), ((d, "/tl/attach"), "/tl/attach"))
+        self.assertTrue(shown[0].startswith("/tl/attach/1.png"))
+        argv = ev.docker_command("triage", ["-p"], None, "tasklane-x", env=DeveloperBrowser.ENV, mounts=[mount])
+        self.assertIn("%s:/tl/attach:ro" % d, argv)
+
+    def test_odd_names_links_and_mixed_directories_are_left_out(self):
+        d = self.make(["1.png", "evil.sh", "3.png"])
+        os.symlink("/etc/passwd", os.path.join(d, "2.png"))
+        other = self.make(["4.png"])
+        items = self.items(d, ["evil.sh", "2.png", "1.png"]) + self.items(other, ["4.png"]) + [{"path": "rel/1.png"}, "x"]
+        shown, _, add = ev.attachments_of({"attachments": items}, "host")
+        self.assertEqual(len(shown), 1)
+        self.assertEqual(add, d)
+        self.assertEqual(ev.attachments_of({"attachments": []}, "host"), ([], None, None))
+
+    def test_rules_say_that_words_inside_files_are_data(self):
+        self.assertIn("<attachments>", ev.SYSTEM_RULES)
+
+
 if __name__ == "__main__":
     unittest.main()
 

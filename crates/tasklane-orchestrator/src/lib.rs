@@ -12,6 +12,7 @@
 
 pub mod approval;
 mod ask;
+mod attachments;
 mod attribution;
 mod ctx;
 mod duplicates;

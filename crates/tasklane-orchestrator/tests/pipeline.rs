@@ -1118,6 +1118,47 @@ async fn tools_reach_only_the_roles_and_repositories_they_were_granted_for_and_t
 }
 
 #[tokio::test]
+async fn pictures_from_the_issue_reach_triage_and_the_developer_and_are_removed_afterwards() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    let t = ticket(&w, "T-pictures").await;
+    w.arm("attachments");
+    drive(&w).await;
+    assert_eq!(state(&w.pool, t).await, "merged");
+    let runs: Vec<serde_json::Value> = w
+        .read_state("profile.log")
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    for role in ["triage", "dev"] {
+        let r = runs.iter().find(|o| o["role"] == role).unwrap();
+        assert_eq!(r["attachments"][0]["type"], "png", "{role}: {r}");
+    }
+    let asked: Vec<serde_json::Value> = w
+        .read_state("attachments.log")
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    assert_eq!(asked.len(), 2);
+    assert_eq!(
+        asked[0]["trusted_only"], false,
+        "triage may look at a stranger's picture"
+    );
+    assert_eq!(
+        asked[1]["trusted_only"], true,
+        "the developer only at a trusted person's"
+    );
+    for a in &asked {
+        assert!(
+            !std::path::Path::new(a["dest"].as_str().unwrap()).exists(),
+            "the files are removed after the run"
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_message_reaches_the_next_run_once_and_a_stopped_run_starts_again_without_using_an_attempt(
 ) {
     let Some(pool) = test_pool().await else {

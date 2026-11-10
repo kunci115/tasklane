@@ -74,7 +74,7 @@ def _run(params):
     with open(os.path.join(STATE, "profile.log"), "a") as f:
         f.write(json.dumps({"role": role, "system": (params.get("profile") or {}).get("system", ""),
                             "owner": params.get("account_owner"), "messages": params.get("messages"), "run_key": params.get("run_key"),
-                            "references": [r["name"] for r in params.get("references") or []],
+                            "references": [r["name"] for r in params.get("references") or []], "attachments": params.get("attachments"),
                             "tools": [{"name": t["name"], "header": t.get("header_value")} for t in params.get("tools") or []]}) + "\n")
     ref = params["ticket"]["ref"]
     if role == "planner":
@@ -280,6 +280,15 @@ def handle(op, params):
         return read_json("pull_" + str(params["pr"]) + ".json", {"base": "main", "state": "open"})
     if op == "list_open_issues":
         return {"refs": read_json("open_issues_" + params.get("service", "").replace("/", "_") + ".json", []), "more": False}
+    if op == "fetch_attachments":
+        if not flag("arm_attachments"):
+            raise ValueError("unknown operation")
+        with open(os.path.join(STATE, "attachments.log"), "a") as f:
+            f.write(json.dumps(params) + "\n")
+        os.makedirs(params["dest"], exist_ok=True)
+        path = os.path.join(params["dest"], "1.png")
+        open(path, "wb").write(b"\x89PNG\r\n\x1a\n")
+        return {"files": [{"path": path, "type": "png", "bytes": 8, "from": "issue", "author": "ann"}], "skipped": []}
     if op == "reference":
         with open(os.path.join(STATE, "references.log"), "a") as f:
             f.write(json.dumps({"url": params["url"], "header": params.get("header_name"), "value": params.get("header_value")}) + "\n")

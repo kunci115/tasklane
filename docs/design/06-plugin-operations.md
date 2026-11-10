@@ -30,6 +30,7 @@ Errors use `kind`: `transient`, `permanent`, `unauthorized`, `rate_limited`. Exp
 | `branch_exists` | `{service, branch}` | `{exists}` (optional; checked when the target branch is saved) |
 | `in_branch` | `{service, sha, branch}` | `{in_branch}` (optional; is the commit part of the branch, for closing issues after promotion) |
 | `close_item` | `{service, ref}` | `{closed}` (optional; closes the issue as completed) |
+| `fetch_attachments` | `{service, ref, dest, trusted_only, max_files, max_bytes}` | `{files: [{path, type, bytes, from, author}], skipped: [string]}` (optional; pictures and PDFs shown in the issue, for the agents to open) |
 | `list_open_issues` | `{service}` | `{refs: [string], more}` (optional; open issues without pull requests, oldest first, for the console's "Import open issues") |
 | `list_pulls` | `{service}` | `{pulls: [{number, title, author, bot, draft, branch, base, url, updated_at, ours}], truncated}` (optional; open pull requests, read only, for the console page) |
 | `get_checks` | `{service, pr}` | `{head_sha, state: "pending"\|"success"\|"failure", checks: [{name, state}]}` |

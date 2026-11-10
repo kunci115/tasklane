@@ -3869,3 +3869,47 @@ async fn a_new_project_is_created_registered_in_triage_and_gets_a_first_ticket()
             .unwrap();
     assert_eq!(audited, 1);
 }
+
+#[tokio::test]
+async fn looking_at_pictures_in_issues_is_on_by_default_and_can_be_switched_off_per_repository() {
+    let Some(e) = env().await else { return };
+    let id: i64 = sqlx::query_scalar("SELECT id FROM services WHERE external_id = 'org/repo'")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    let (_, _, page) = send(&e.app, get("/services", Some(e.cookie.clone()))).await;
+    assert!(page.contains("checked> Let the agents look at pictures and PDFs in the issue"));
+    let url = format!("/services/{id}/profile");
+    let save = |extra: &str| {
+        form(
+            &url,
+            format!("csrf={}&system=&test_command=&{extra}", e.csrf),
+            Some(e.cookie.clone()),
+        )
+    };
+    send(&e.app, save("")).await;
+    let on: bool = sqlx::query_scalar(
+        "SELECT (agent_profile->>'attachments')::bool FROM services WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(&e.pool)
+    .await
+    .unwrap();
+    assert!(!on, "an unticked box is saved as off");
+    let (_, _, page) = send(&e.app, get("/services", Some(e.cookie.clone()))).await;
+    assert!(
+        page.contains(&format!(
+            "id=\"at{id}\" type=\"checkbox\" name=\"attachments\" value=\"on\"> Let the agents"
+        )),
+        "this repository's box is no longer ticked"
+    );
+    send(&e.app, save("attachments=on")).await;
+    let on: bool = sqlx::query_scalar(
+        "SELECT (agent_profile->>'attachments')::bool FROM services WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(&e.pool)
+    .await
+    .unwrap();
+    assert!(on);
+}

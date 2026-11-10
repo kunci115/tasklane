@@ -237,11 +237,11 @@ def next_link(headers):
     return None
 
 
-def paginate(path, *, auth, key=None, max_pages=100):
+def paginate(path, *, auth, key=None, max_pages=100, headers=None):
     out = []
     url = path
     for _ in range(max_pages):
-        r = api("GET", url, auth=auth)
+        r = api("GET", url, auth=auth, headers=headers)
         data = r.data
         if key:
             data = (data or {}).get(key, [])
@@ -344,13 +344,13 @@ def app_api(method, path, **kw):
         raise
 
 
-def app_paginate(path, key=None):
+def app_paginate(path, key=None, headers=None):
     try:
-        return paginate(path, auth=app_token(), key=key)
+        return paginate(path, auth=app_token(), key=key, headers=headers)
     except PluginError as e:
         if e.status == 401:
             _state["token"] = None
-            return paginate(path, auth=app_token(), key=key)
+            return paginate(path, auth=app_token(), key=key, headers=headers)
         raise
 
 
@@ -612,6 +612,114 @@ def op_list_open_issues(params):
         refs.extend(str(i["number"]) for i in (r.data or []) if "pull_request" not in i)
         url, pages = next_link(r.headers), pages + 1
     return {"refs": refs, "more": bool(url)}
+
+
+LINK_SRC = re.compile(r'<(?:img|a)\b[^>]*?\s(?:src|href)="([^"]+)"', re.I)
+IMG_MAX_SIDE = 8000
+PDF_MAX_BYTES = 10_000_000
+
+
+def file_kind(data):
+    """(kind, width, height) from the bytes themselves, or None. kind is png, jpg, gif, webp or pdf.
+    The name and the Content-Type a server gives are never trusted."""
+    if data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) >= 24:
+        return "png", int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    if data[:3] == b"\xff\xd8\xff":
+        return "jpg", 0, 0
+    if data[:6] in (b"GIF87a", b"GIF89a") and len(data) >= 10:
+        return "gif", int.from_bytes(data[6:8], "little"), int.from_bytes(data[8:10], "little")
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp", 0, 0
+    if data[:5] == b"%PDF-":
+        return "pdf", 0, 0
+    return None
+
+
+def attachment_host_ok(url):
+    u = urllib.parse.urlsplit(url)
+    host = (u.hostname or "").lower()
+    if u.scheme != "https" or u.username or u.port not in (None, 443):
+        return False
+    if host == "github.com":
+        return u.path.startswith("/user-attachments/")
+    return host.endswith(".githubusercontent.com")
+
+
+def fetch_attachment(url, max_bytes):
+    """Bytes of one attachment, following at most three redirects, every hop on a GitHub attachment host.
+    The App token goes only to github.com (signed links on githubusercontent.com carry their own proof)."""
+    for _ in range(4):
+        if not attachment_host_ok(url):
+            raise permanent("not a GitHub attachment address")
+        hdrs = {"User-Agent": "tasklane-source-github/" + VERSION}
+        if urllib.parse.urlsplit(url).hostname == "github.com":
+            hdrs["Authorization"] = "Bearer " + app_token()
+        try:
+            with OPENER.open(urllib.request.Request(url, headers=hdrs), timeout=TIMEOUT) as r:
+                data = r.read(max_bytes + 1)
+            if len(data) > max_bytes:
+                raise permanent("attachment is larger than %d bytes" % max_bytes)
+            return data
+        except urllib.error.HTTPError as e:
+            loc = e.headers.get("Location") if e.headers else None
+            if e.code in (301, 302, 303, 307, 308) and loc:
+                url = urllib.parse.urljoin(url, loc)
+                continue
+            raise permanent("download answered %d" % e.code)
+        except (urllib.error.URLError, OSError, http.client.HTTPException):
+            raise PluginError("transient", "network error while downloading an attachment")
+    raise permanent("too many redirects")
+
+
+def op_fetch_attachments(params):
+    """Download the pictures and PDFs an issue shows (body and comments) into `dest`, for an agent to look at.
+    Only PNG/JPEG/GIF/WebP/PDF by content, bounded count and size, only from GitHub's attachment hosts.
+    `trusted_only` leaves out files written by people with no relationship to the repository."""
+    svc, ref = p_service(params), p_num(params, "ref")
+    dest = p_str(params, "dest")
+    if not os.path.isabs(dest) or ".." in dest.split(os.sep):
+        raise permanent("dest must be an absolute path")
+    cap = min(max(int(params.get("max_files") or 5), 1), 8)
+    max_bytes = min(max(int(params.get("max_bytes") or 5_000_000), 1000), PDF_MAX_BYTES)
+    only_trusted = bool(params.get("trusted_only"))
+    full = {"Accept": "application/vnd.github.full+json"}
+    issue = app_api("GET", f"/repos/{svc}/issues/{ref}", headers=full).data or {}
+    sources = [("issue", (issue.get("user") or {}).get("login", ""), author_trusted(issue), issue.get("body_html") or "")]
+    for c in app_paginate(f"/repos/{svc}/issues/{ref}/comments?per_page=100", headers=full):
+        if not is_own_comment(c):
+            sources.append(("comment", (c.get("user") or {}).get("login", ""), author_trusted(c), c.get("body_html") or ""))
+    files, skipped, seen = [], [], set()
+    os.makedirs(dest, mode=0o755, exist_ok=True)
+    for kind, author, trusted, html in sources:
+        if only_trusted and not trusted:
+            continue
+        for url in LINK_SRC.findall(html):
+            url = url.replace("&amp;", "&")
+            if url in seen or not attachment_host_ok(url):
+                continue
+            seen.add(url)
+            if len(files) >= cap:
+                skipped.append("more files than the limit of %d" % cap)
+                break
+            try:
+                data = fetch_attachment(url, max_bytes)
+            except PluginError as e:
+                skipped.append(e.message)
+                continue
+            info = file_kind(data)
+            if not info:
+                skipped.append("not a PNG, JPEG, GIF, WebP or PDF file")
+                continue
+            ext, w, h = info
+            if w > IMG_MAX_SIDE or h > IMG_MAX_SIDE:
+                skipped.append("picture is larger than %d pixels on a side" % IMG_MAX_SIDE)
+                continue
+            path = os.path.join(dest, "%d.%s" % (len(files) + 1, ext))
+            with open(path, "wb") as f:
+                f.write(data)
+            os.chmod(path, 0o644)
+            files.append({"path": path, "type": ext, "bytes": len(data), "from": kind, "author": author})
+    return {"files": files, "skipped": skipped[:10]}
 
 
 def op_get_item(params):
@@ -1172,7 +1280,7 @@ def op_verify_webhook(params):
 
 OPS = {
     "describe": op_describe, "list_services": op_list_services,
-    "list_changes": op_list_changes, "list_open_issues": op_list_open_issues, "in_branch": op_in_branch, "branch_exists": op_branch_exists, "close_item": op_close_item, "get_item": op_get_item,
+    "list_changes": op_list_changes, "list_open_issues": op_list_open_issues, "in_branch": op_in_branch, "branch_exists": op_branch_exists, "close_item": op_close_item, "get_item": op_get_item, "fetch_attachments": op_fetch_attachments,
     "create_item": op_create_item, "comment": op_comment,
     "set_labels": op_set_labels, "detect_facts": op_detect_facts, "read_overrides": op_read_overrides,
     "repo_url": op_repo_url, "mint_run_token": op_mint_run_token,
