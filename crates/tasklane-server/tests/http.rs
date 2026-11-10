@@ -2480,3 +2480,25 @@ async fn repositories_the_source_no_longer_lists_are_hidden_until_asked_for() {
     let (_, _, all) = send(&e.app, get("/services?archived=1", Some(e.cookie.clone()))).await;
     assert!(all.contains("old/gone") && all.contains("Hide archived"));
 }
+
+#[tokio::test]
+async fn tickets_of_an_archived_repository_leave_the_lists_but_not_the_database() {
+    let Some(e) = env().await else { return };
+    let id = seed_ticket(&e, "7", "Old account work", "merged", 1).await;
+    let (_, _, before) = send(&e.app, get("/tickets", Some(e.cookie.clone()))).await;
+    assert!(before.contains("Old account work"));
+    sqlx::query("UPDATE services SET archived = true WHERE external_id = 'org/repo'")
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    let (_, _, after) = send(&e.app, get("/tickets", Some(e.cookie.clone()))).await;
+    assert!(!after.contains("Old account work"));
+    let (_, _, home) = send(&e.app, get("/", Some(e.cookie.clone()))).await;
+    assert!(!home.contains("Old account work"));
+    let (st, _, _) = send(
+        &e.app,
+        get(&format!("/tickets/{id}"), Some(e.cookie.clone())),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "a direct link still opens the history");
+}

@@ -206,7 +206,8 @@ pub async fn render(
     let pool = st.orch.pool();
     let paused = st.orch.is_paused().await.unwrap_or(false);
     let needs: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM tickets WHERE state IN ('awaiting_approval','failed')",
+        "SELECT count(*) FROM tickets t JOIN services s ON s.id = t.service_id
+         WHERE NOT s.archived AND t.state IN ('awaiting_approval','failed')",
     )
     .fetch_one(pool)
     .await

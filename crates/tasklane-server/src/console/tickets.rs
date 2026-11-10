@@ -788,7 +788,7 @@ pub async fn list(
     let states_v = states.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     let total: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM tickets t JOIN services s ON s.id = t.service_id
-         WHERE (cardinality($1::text[]) = 0 OR t.state = ANY($1))
+         WHERE NOT s.archived AND (cardinality($1::text[]) = 0 OR t.state = ANY($1))
            AND ($2::text IS NULL OR t.title ILIKE $2 OR t.external_ref ILIKE $2 OR s.external_id ILIKE $2)",
     )
     .bind(&states_v)
@@ -801,7 +801,7 @@ pub async fn list(
     let rows = sqlx::query(
         "SELECT t.id, t.state, t.level, t.external_ref, coalesce(t.title,'') AS title, s.external_id, extract(epoch FROM now()-t.updated_at)::bigint AS secs
          FROM tickets t JOIN services s ON s.id = t.service_id
-         WHERE (cardinality($1::text[]) = 0 OR t.state = ANY($1))
+         WHERE NOT s.archived AND (cardinality($1::text[]) = 0 OR t.state = ANY($1))
            AND ($2::text IS NULL OR t.title ILIKE $2 OR t.external_ref ILIKE $2 OR s.external_id ILIKE $2)
          ORDER BY t.updated_at DESC, t.id DESC LIMIT $3 OFFSET $4",
     )

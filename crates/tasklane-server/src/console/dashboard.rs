@@ -42,7 +42,7 @@ async fn load(st: &AppState) -> Vec<T> {
         "SELECT t.id, t.state, t.level, coalesce(t.title, '#' || t.external_ref) AS title, s.external_id,
                 extract(epoch FROM now() - t.updated_at)::bigint AS secs
          FROM tickets t JOIN services s ON s.id = t.service_id
-         WHERE t.state NOT LIKE 'closed_%' OR t.updated_at > now() - interval '7 days'
+         WHERE NOT s.archived AND (t.state NOT LIKE 'closed_%' OR t.updated_at > now() - interval '7 days')
          ORDER BY t.updated_at DESC LIMIT 400",
     )
     .fetch_all(st.orch.pool())
