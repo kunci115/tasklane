@@ -443,7 +443,12 @@ fn list_html(
                         } else if !full {
                             "this repository is not in full mode: set it on <a href=\"/services\">Repositories</a>, then switch merging on below".to_string()
                         } else {
-                            "merging from here is off for this repository: <a href=\"#merging\">switch it on below</a>".to_string()
+                            format!(
+                                "merging from here is off for this repository. <form method=\"post\" action=\"/pulls/switch\" style=\"display:inline\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><input type=\"hidden\" name=\"service\" value=\"{}\"><input type=\"hidden\" name=\"on\" value=\"1\"><button class=\"btn small\" data-confirm=\"Allow merging from this page for {}? A Merge button then appears for pull requests the AI approved, never for the default branch.\">Switch it on</button></form>",
+                                esc(csrf),
+                                esc(&r.repo),
+                                esc(&r.repo)
+                            )
                         };
                         format!("<div class=\"muted small\" style=\"margin:.3rem 0\"><strong>No Merge button:</strong> {why}.</div>")
                     }

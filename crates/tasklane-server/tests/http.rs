@@ -2661,6 +2661,11 @@ async fn the_merge_button_appears_only_for_an_approved_commit_in_a_switched_on_r
         .execute(&e.pool)
         .await
         .unwrap();
+    let full_but_off = list("full").await;
+    assert!(
+        full_but_off.contains("Switch it on") && full_but_off.contains("merging from here is off"),
+        "full mode, switch off: one click away"
+    );
     assert_eq!(
         send(
             &e.app,
