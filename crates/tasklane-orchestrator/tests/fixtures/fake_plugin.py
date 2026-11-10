@@ -124,7 +124,7 @@ def run(params):
             return {"verdict": "changes", "notes": "please add a test"}
         if "escalate" in ref and once("escalate"):
             return {"verdict": "escalate", "notes": "touches billing"}
-        return {"verdict": "approve", "notes": "looks fine"}
+        return {"verdict": "approve", "notes": "looks fine", "complexity": "O(n) in the changed lines"}
     raise ValueError(role)
 
 
@@ -275,6 +275,12 @@ def handle(op, params):
             return {"head_sha": head, "state": "failure", "checks": [{"name": "tests", "state": "failure", "output": "FAILED test_login: expected 200, got 500"}]}
         return {"head_sha": head, "state": "success", "checks": [{"name": "tests", "state": "success"}]}
     if op == "merge_pr":
+        if not os.path.exists(os.path.join(STATE, "pr_branch")):
+            # a person's pull request merged from the console: no ticket branch to compare
+            if flag("merge_refuse"):
+                return {"merged": False, "reason": "checks_failing"}
+            open(os.path.join(STATE, "merged"), "w").write(params["token"])
+            return {"merged": True, "sha": "abc"}
         branch = open(os.path.join(STATE, "pr_branch")).read()
         if once("head_moves") or remote_head(params["service"], branch) != params["expected_head_sha"]:
             return {"merged": False, "reason": "head_moved"}

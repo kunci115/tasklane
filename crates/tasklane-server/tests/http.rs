@@ -2580,15 +2580,179 @@ async fn the_review_button_needs_a_session_a_clean_number_and_a_repository_that_
     .unwrap();
     let (_, _, list) = send(&e.app, get("/fragments/pulls", Some(e.cookie.clone()))).await;
     assert!(list.contains("/pulls/review") && list.contains("Review with AI"));
-    sqlx::query("INSERT INTO audit_events (actor, action, detail) VALUES ('console:admin','pull.reviewed','{\"service\":\"org/repo\",\"pr\":\"9\",\"verdict\":\"changes\",\"notes\":\"split <this> PR\"}')")
+    sqlx::query("INSERT INTO audit_events (actor, action, detail) VALUES ('console:admin','pull.reviewed','{\"service\":\"org/repo\",\"pr\":\"9\",\"verdict\":\"changes\",\"notes\":\"split <this> PR\",\"complexity\":\"O(n^2) over rows\"}')")
         .execute(&e.pool)
         .await
         .unwrap();
     let (_, _, list) = send(&e.app, get("/fragments/pulls", Some(e.cookie.clone()))).await;
     assert!(
         list.contains("split &lt;this&gt; PR")
+            && list.contains("Complexity (Big-O): O(n^2) over rows")
             && list.contains("Ask the author")
             && list.contains("Review again"),
         "the review is readable in the row, with what to do next: {list}"
     );
+}
+
+#[tokio::test]
+async fn the_merge_button_appears_only_for_an_approved_commit_in_a_switched_on_repository() {
+    let Some(e) = env().await else { return };
+    let post = |path: &str, body: String| form(path, body, Some(e.cookie.clone()));
+    let pr = |base: &str, head: &str| {
+        std::fs::write(
+            e.dir.path().join("state/pulls_org_repo.json"),
+            format!(
+                r#"[{{"number":"9","title":"x","author":"a","bot":false,"draft":false,"branch":"b","base":"{base}","head_sha":"{head}","url":"https://github.com/org/repo/pull/9","updated_at":"t","ours":false}}]"#
+            ),
+        )
+        .unwrap();
+    };
+    sqlx::query("INSERT INTO audit_events (actor, action, detail) VALUES ('console:admin','pull.reviewed','{\"service\":\"org/repo\",\"pr\":\"9\",\"verdict\":\"approve\",\"notes\":\"ok\",\"head_sha\":\"aaa\"}')")
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE services SET facts = facts || '{\"default_branch\":\"main\"}' WHERE external_id = 'org/repo'")
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    let list = |label: &'static str| {
+        let (app, cookie) = (e.app.clone(), e.cookie.clone());
+        async move {
+            let _ = send(&app, get("/pulls?refresh=1", Some(cookie.clone()))).await;
+            let (_, _, l) = send(&app, get("/fragments/pulls", Some(cookie))).await;
+            let _ = label;
+            l
+        }
+    };
+    pr("dev", "aaa");
+    assert!(
+        !list("off").await.contains("/pulls/merge"),
+        "off until switched on"
+    );
+    // the switch needs full mode, a session and a clean answer
+    assert_eq!(
+        send(
+            &e.app,
+            post(
+                "/pulls/switch",
+                "csrf=bad&service=org%2Frepo&on=1".to_string()
+            )
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        send(
+            &e.app,
+            post(
+                "/pulls/switch",
+                format!("csrf={}&service=org%2Fwatched&on=1", e.csrf)
+            )
+        )
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "a repository in watch mode cannot be switched on"
+    );
+    sqlx::query("UPDATE services SET mode = 'full' WHERE external_id = 'org/repo'")
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        send(
+            &e.app,
+            post(
+                "/pulls/switch",
+                format!("csrf={}&service=org%2Frepo&on=1", e.csrf)
+            )
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    assert!(
+        list("on").await.contains("/pulls/merge"),
+        "approved, same commit, switched on"
+    );
+    pr("dev", "zzz");
+    let moved = list("moved").await;
+    assert!(!moved.contains("/pulls/merge") && moved.contains("changed since review"));
+    pr("main", "aaa");
+    assert!(
+        !list("default").await.contains("/pulls/merge"),
+        "never into the default branch from here"
+    );
+    // the endpoint says no by itself, whatever the page offered
+    let (st, _, _) = send(
+        &e.app,
+        post("/pulls/merge", "csrf=bad&service=org%2Frepo&pr=9".into()),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, loc, _) = send(
+        &e.app,
+        post(
+            "/pulls/merge",
+            format!("csrf={}&service=org%2Frepo&pr=9", e.csrf),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::SEE_OTHER);
+    let _ = loc;
+    let n: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit_events WHERE action = 'pull.merged'")
+            .fetch_one(&e.pool)
+            .await
+            .unwrap();
+    assert_eq!(n, 0, "nothing was merged");
+}
+
+#[tokio::test]
+async fn the_live_map_ties_pull_requests_to_their_repository_ticket_and_review() {
+    let Some(e) = env().await else { return };
+    let tid = seed_ticket(&e, "7", "Ours", "ci_running", 1).await;
+    std::fs::write(
+        e.dir.path().join("state/pulls_org_repo.json"),
+        format!(
+            r#"[{{"number":"9","title":"By a person","author":"nabil","bot":false,"draft":false,"branch":"fix","base":"dev","head_sha":"a","url":"https://github.com/org/repo/pull/9","updated_at":"t","ours":false}},
+                {{"number":"10","title":"By tasklane","author":"app","bot":true,"draft":false,"branch":"tasklane/{tid}","base":"dev","head_sha":"b","url":"https://github.com/org/repo/pull/10","updated_at":"t","ours":true}}]"#
+        ),
+    )
+    .unwrap();
+    sqlx::query("INSERT INTO audit_events (actor, action, detail) VALUES ('console:admin','pull.reviewed','{\"service\":\"org/repo\",\"pr\":\"9\",\"verdict\":\"changes\",\"notes\":\"n\",\"head_sha\":\"a\"}')")
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    // the map never asks GitHub itself: the first look starts a background load, a later one has the list
+    let mut pulls = serde_json::Value::Null;
+    for _ in 0..40 {
+        let (_, _, body) = send(&e.app, get("/map/data", Some(e.cookie.clone()))).await;
+        let d: serde_json::Value = serde_json::from_str(&body).unwrap();
+        if d["pulls"].as_array().is_some_and(|a| !a.is_empty()) {
+            pulls = d["pulls"].clone();
+            assert!(d["pull_events"]
+                .as_array()
+                .is_some_and(|a| a.iter().any(|x| x["key"] == "org/repo#9")));
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    let by = |n: &str| {
+        pulls
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["num"] == n)
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(by("9")["state"], "changes");
+    assert!(by("9")["ticket"].is_null());
+    assert_eq!(
+        by("10")["ticket"],
+        tid,
+        "tasklane's own pull request is tied to its ticket"
+    );
+    assert_eq!(by("10")["state"], "open");
 }

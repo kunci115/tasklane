@@ -53,7 +53,8 @@ still make every change you can, and say in the summary what is left for a perso
 Finish with a short plain-text summary of what you changed and why.""",
     "reviewer": """\
 Role: reviewer (read-only). Review the diff against the ticket.
-Reply with ONLY one JSON object: {"verdict": "approve"|"changes"|"escalate", "notes": "<short notes>"}""",
+Also give a short Big-O analysis of the code the diff adds or changes, in "complexity": time and memory in terms of the sizes that matter (rows, items, users, requests). Look for loops over collections, nested loops, a query or request inside a loop (N+1), repeated scans or sorts, unbounded recursion, and data held whole in memory. Name the worst path and say what it grows with, for example "O(n) queries for n rows: batch them". If nothing meaningful changes, say "no meaningful change". A new path worse than linear on data that can grow is a reason for "changes".
+Reply with ONLY one JSON object: {"verdict": "approve"|"changes"|"escalate", "notes": "<short notes>", "complexity": "<short Big-O analysis>"}""",
     "duplicate": """\
 Role: duplicate finder (read-only, no tools needed). Decide whether the new ticket reports the SAME problem as one of the earlier tickets listed in <candidates>.
 Reply with ONLY one JSON object: {"duplicate_of": "<ref of the earlier ticket>" or null, "reason": "<one short sentence>"}.
@@ -76,7 +77,7 @@ SCHEMAS = {
         "questions": {"type": "array", "items": {"type": "string"}}}},
     "reviewer": {"type": "object", "required": ["verdict", "notes"], "properties": {
         "verdict": {"type": "string", "enum": ["approve", "changes", "escalate"]},
-        "notes": {"type": "string"}}},
+        "notes": {"type": "string"}, "complexity": {"type": "string"}}},
     "duplicate": {"type": "object", "required": ["duplicate_of", "reason"], "properties": {
         "duplicate_of": {"type": ["string", "null"]}, "reason": {"type": "string"}}},
     "device": {"type": "object", "required": ["status", "reason"], "properties": {
@@ -381,7 +382,11 @@ def validate(role, obj):
         notes = obj.get("notes", "")
         if not isinstance(notes, str):
             return None
-        return {"verdict": obj["verdict"], "notes": notes}
+        out = {"verdict": obj["verdict"], "notes": notes}
+        cx = obj.get("complexity")
+        if isinstance(cx, str) and cx.strip():
+            out["complexity"] = cx.strip()[:2000]
+        return out
     if role == "device":
         st = obj.get("status")
         if st not in ("continue", "done", "escalate"):

@@ -73,7 +73,9 @@
     }
   }
 
-  var repos = {}, tickets = {}, agents = {}, pulses = [], busyNow = {}, paused = false;
+  var repos = {}, tickets = {}, agents = {}, pulses = [], busyNow = {}, paused = false, prs = {};
+  var PR_COLOR = { open: "#a78bfa", reviewing: "#00e5ff", approve: "#39ffb6", changes: "#ffb800", escalate: "#ff7ab6", failed: "#ff3b6b" };
+  var PR_LABEL = { open: "open", reviewing: "being reviewed by the AI", approve: "AI: no changes needed", changes: "AI: changes asked", escalate: "AI: needs a person", failed: "AI review failed" };
   var core = { x: 0, y: 0, z: 40 };
   var mode = "live", replay = null;
 
@@ -164,9 +166,42 @@
     t.repo = meta.repo; t.title = meta.title; t.level = meta.level;
     return t;
   }
+  // open pull requests: tied to their repository, to their ticket when tasklane opened them, and to the
+  // review agent while the AI reads them
+  function setPulls(list, events) {
+    var keep = {};
+    list.forEach(function (x) {
+      var o = prs[x.key];
+      if (!o) { var r = repos[x.repo] || { x: 0, y: 0, z: 0 }; o = prs[x.key] = { key: x.key, x: r.x, y: r.y, z: r.z, tx: r.x, ty: r.y, tz: r.z, alpha: 0, seed: hash(x.num * 1 + x.repo) }; }
+      var changed = o.state && o.state !== x.state;
+      o.repo = x.repo; o.num = x.num; o.title = x.title; o.author = x.author; o.ours = x.ours; o.ticket = x.ticket; o.url = x.url; o.state = x.state; keep[x.key] = 1;
+      if (changed) ripple(o, PR_COLOR[x.state] || "#a78bfa", 40, 1000);
+    });
+    Object.keys(prs).forEach(function (k) { if (!keep[k]) delete prs[k]; });
+    events.forEach(function (e) {
+      var id = e.key + "|" + e.action + "|" + e.secs, o = prs[e.key];
+      if (seenEvents[id]) return; seenEvents[id] = 1;
+      if (!o) return;
+      if (e.action === "pull.merged") { burst(o, "#39ffb6"); pulse(o, "runner"); } else pulse(o, "review");
+    });
+  }
+  function prTarget(o, now) {
+    var r = repos[o.repo]; if (!r) return;
+    var ang = o.seed * 6.283 + (reduce ? 0 : now / 11000 * (0.4 + o.seed));
+    var tk = o.ticket && tickets[o.ticket];
+    if (o.state === "reviewing" && agents.review) {
+      var a = agents.review, k = 0.62;
+      o.tx = r.x + (a.x - r.x) * k + Math.cos(ang) * 14; o.ty = r.y + (a.y - r.y) * k + Math.sin(ang) * 14; o.tz = r.z + (a.z - r.z) * k + 6;
+    } else if (tk) {
+      o.tx = tk.x + Math.cos(ang) * 14; o.ty = tk.y + Math.sin(ang) * 14; o.tz = tk.z + 8;
+    } else {
+      var rad = 62 + o.seed * 26;
+      o.tx = r.x + Math.cos(ang) * rad; o.ty = r.y + Math.sin(ang) * rad; o.tz = r.z + 12 + (o.seed - .4) * 30;
+    }
+  }
   function pulse(t, agentKey) {
     if (!agentKey || !agents[agentKey] || reduce) return;
-    pulses.push({ id: t.id, agent: agentKey, t0: performance.now(), dur: mode === "replay" ? 700 : 1100, color: agents[agentKey].def.color });
+    pulses.push({ id: t.id, o: t, agent: agentKey, t0: performance.now(), dur: mode === "replay" ? 700 : 1100, color: agents[agentKey].def.color });
     agents[agentKey].flash = performance.now();
   }
 
@@ -187,6 +222,7 @@
       });
       Object.keys(tickets).forEach(function (k) { if (!keep[k]) delete tickets[k]; });
       busyNow = {}; d.busy.forEach(function (b) { (busyNow[b.agent] = busyNow[b.agent] || []).push(b); });
+      setPulls(d.pulls || [], d.pull_events || []);
       var now = Math.floor(Date.now() / 1000);
       d.recent.forEach(function (e) {
         var key = e.ticket + "|" + e.action + "|" + (now - e.secs);
@@ -203,12 +239,12 @@
       var meta = {}; d.tickets.forEach(function (t) { meta[t.id] = t; });
       var from = d.now - hours * 3600; var t0 = d.events.length ? Math.max(from, d.events[0].t - 5) : from;
       replay = { events: d.events, meta: meta, t0: t0, t1: d.now, vt: t0, idx: 0, playing: false, speed: parseInt(document.getElementById("mp-speed").value, 10) || 60 };
-      setRepos(d.repos); tickets = {}; pulses = []; busyNow = {};
+      setRepos(d.repos); tickets = {}; prs = {}; pulses = []; busyNow = {};
       document.getElementById("mp-slider").value = 0; setPlaying(false); updateClock(); updateNow();
     });
   }
   function resetTo(vt, silent) {
-    tickets = {}; pulses = []; replay.idx = 0; replay.vt = vt;
+    tickets = {}; prs = {}; pulses = []; replay.idx = 0; replay.vt = vt;
     while (replay.idx < replay.events.length && replay.events[replay.idx].t <= vt) { applyEvent(replay.events[replay.idx], silent); replay.idx++; }
   }
   function applyEvent(ev, silent) {
@@ -248,7 +284,7 @@
     });
     if (!any) { var e = document.createElement("div"); e.textContent = paused && mode === "live" ? "Work is paused." : (mode === "live" ? "Nothing running." : "Nobody active at this moment."); nowList.appendChild(e); }
   }
-  AGENTS.concat([{ label: "Needs you", color: "#fbbf24" }, { label: "Failed", color: "#f87171" }, { label: "Merged", color: "#34d399" }]).forEach(function (a) {
+  AGENTS.concat([{ label: "Needs you", color: "#fbbf24" }, { label: "Failed", color: "#f87171" }, { label: "Merged", color: "#34d399" }, { label: "Pull request", color: "#a78bfa" }]).forEach(function (a) {
     var s = document.createElement("span"); s.className = "lg"; var i = document.createElement("i"); i.style.background = a.color; s.appendChild(i); s.appendChild(document.createTextNode(a.label)); legend.appendChild(s);
   });
 
@@ -375,6 +411,12 @@
       if (t.fx === undefined) { t.fx = 1; if (t.alpha < 1 && t.state && !isClosed(t.state)) ripple(t, STATE_COLOR[t.state] || "#38bdf8", 40, 1000); }
       t.P = proj(t.x, t.y, t.z);
     });
+    var pl = Object.keys(prs).map(function (k) { return prs[k]; });
+    pl.forEach(function (o) {
+      prTarget(o, now); var k = Math.min(1, dt * 3);
+      o.x += (o.tx - o.x) * k; o.y += (o.ty - o.y) * k; o.z += (o.tz - o.z) * k; o.alpha = Math.min(1, o.alpha + dt * 2);
+      o.P = proj(o.x, o.y, o.z);
+    });
     var repoList = Object.keys(repos).map(function (k) { return repos[k]; });
     repoList.forEach(function (r) { r.P = proj(r.x, r.y, r.z); });
     AGENTS.forEach(function (d) { var a = agents[d.key]; if (a) a.P = proj(a.x, a.y, a.z); });
@@ -398,13 +440,26 @@
         }
       }
     });
+    // repo -> pull request threads; a pull request tasklane opened is tied to its ticket; one the AI is
+    // reading is tied to the review agent with a flowing line, like a ticket in someone's hands
+    pl.forEach(function (o) {
+      var r = repos[o.repo], tk = o.ticket && tickets[o.ticket], col = PR_COLOR[o.state] || "#a78bfa";
+      if (r && r.P) { ctx.strokeStyle = "rgba(167,139,250,.14)"; ctx.beginPath(); ctx.moveTo(r.P.x, r.P.y); ctx.lineTo(o.P.x, o.P.y); ctx.stroke(); }
+      if (tk && tk.P) { ctx.strokeStyle = "rgba(255,184,0,.35)"; ctx.setLineDash([2, 4]); ctx.beginPath(); ctx.moveTo(tk.P.x, tk.P.y); ctx.lineTo(o.P.x, o.P.y); ctx.stroke(); ctx.setLineDash([]); }
+      if (o.state === "reviewing" && agents.review && agents.review.P) {
+        var A = agents.review, hot = hover && (hover.o === o || hover.o === A);
+        ctx.strokeStyle = A.def.color + (hot ? "cc" : "88"); ctx.lineWidth = hot ? 1.8 : 1.4; ctx.setLineDash([5, 7]); ctx.lineDashOffset = reduce ? 0 : -now / 40;
+        ctx.beginPath(); ctx.moveTo(o.P.x, o.P.y); ctx.lineTo(A.P.x, A.P.y); ctx.stroke(); ctx.setLineDash([]); ctx.lineWidth = 1;
+        if (!reduce) { var kk = ((now / 1500) + o.seed) % 1, px = o.P.x + (A.P.x - o.P.x) * kk, py = o.P.y + (A.P.y - o.P.y) * kk; ctx.globalCompositeOperation = "lighter"; glow(px, py, 9, A.def.color, .9); ctx.globalCompositeOperation = "source-over"; }
+      }
+    });
     // pulses leave a comet tail
     var ended = [];
     pulses = pulses.filter(function (p) { var live = now - p.t0 < p.dur; if (!live) ended.push(p); return live; });
     ended.forEach(function (p) { var a = agents[p.agent]; if (a) ripple(a, p.color, 52, 900); });
     ctx.globalCompositeOperation = "lighter";
     pulses.forEach(function (p) {
-      var t = tickets[p.id], a = agents[p.agent]; if (!t || !a) return;
+      var t = p.o || tickets[p.id], a = agents[p.agent]; if (!t || !a) return;
       var k = (now - p.t0) / p.dur, q = proj(t.x + (a.x - t.x) * k, t.y + (a.y - t.y) * k, t.z + (a.z - t.z) * k), x = q.x, y = q.y;
       p.trail = p.trail || []; p.trail.push([x, y]); if (p.trail.length > 16) p.trail.shift();
       for (var i = 0; i < p.trail.length; i++) { var f = i / p.trail.length; glow(p.trail[i][0], p.trail[i][1], 4 + 9 * f, p.color, .55 * f); }
@@ -475,6 +530,19 @@
         ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
       } });
     });
+    // open pull requests: a diamond, violet until the AI has looked, then coloured by what it said
+    pl.forEach(function (o) {
+      items.push({ c: o.P.c, f: function () {
+        var P = o.P, u = P.s, col = PR_COLOR[o.state] || "#a78bfa", hot = hover && hover.o === o, a = o.alpha * fog(P), br = reduce ? 0 : Math.sin(now / 420 + o.seed * 9) * .5 + .5;
+        var rr = (7 + (o.state === "reviewing" ? br * 2.5 : 0) + (hot ? 2 : 0)) * u;
+        ctx.globalAlpha = a; ctx.globalCompositeOperation = "lighter"; glow(P.x, P.y, (o.state === "reviewing" ? 26 + br * 8 : 17) * u, col, .5); ctx.globalCompositeOperation = "source-over";
+        taken.push([P.x - rr, P.y - rr, P.x + rr, P.y + rr]);
+        ctx.fillStyle = "#050812"; ctx.strokeStyle = col; ctx.lineWidth = 1.8; ctx.beginPath(); ctx.moveTo(P.x, P.y - rr); ctx.lineTo(P.x + rr, P.y); ctx.lineTo(P.x, P.y + rr); ctx.lineTo(P.x - rr, P.y); ctx.closePath(); ctx.fill(); ctx.stroke();
+        if (o.ours) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(P.x, P.y, 1.8 * u, 0, 7); ctx.fill(); }
+        ctx.globalAlpha = 1;
+        if (hot || cam.zoom > 1.9) chip("#" + o.num, P.x, P.y - 18 * u, col, hot, a);
+      } });
+    });
     items.sort(function (p, q) { return p.c - q.c; }).forEach(function (it) { it.f(); });
     drawTags();
 
@@ -495,6 +563,7 @@
     var best = null, bc = -1e9;
     function consider(type, o, rad) { if (!o.P) return; var d = Math.hypot(o.P.x - mx, o.P.y - my); if (d < Math.max(11, rad * o.P.s) && o.P.c > bc) { bc = o.P.c; best = { type: type, o: o }; } }
     Object.keys(tickets).forEach(function (k) { consider("ticket", tickets[k], 8); });
+    Object.keys(prs).forEach(function (k) { consider("pull", prs[k], 9); });
     if (best) return best;
     AGENTS.forEach(function (def) { var a = agents[def.key]; if (a) consider("agent", a, 24); });
     Object.keys(repos).forEach(function (k) { consider("repo", repos[k], 18); });
@@ -510,6 +579,7 @@
     while (tip.firstChild) tip.removeChild(tip.firstChild);
     var t1 = document.createElement("strong"), t2 = document.createElement("div");
     if (h.type === "ticket") { t1.textContent = h.o.title; t2.textContent = (STATE_LABEL[h.o.state] || h.o.state) + (h.o.level ? " · level " + h.o.level : ""); }
+    else if (h.type === "pull") { t1.textContent = "#" + h.o.num + " " + h.o.title; t2.textContent = (h.o.ours ? "opened by tasklane" : "by " + h.o.author) + " · " + (PR_LABEL[h.o.state] || h.o.state) + " · click to open on GitHub"; }
     else if (h.type === "agent") { t1.textContent = h.o.def.label; var bl = (busyNow[h.o.def.key] || []); t2.textContent = mode === "live" ? (bl.length ? "Working on: " + bl.map(function (x) { return x.title; }).join(", ") : "Idle") : "Replay"; }
     else { t1.textContent = h.o.name; t2.textContent = "Mode: " + h.o.mode + (h.o.open ? " · " + h.o.open + " open" : ""); }
     tip.appendChild(t1); tip.appendChild(t2); tip.hidden = false;
@@ -538,7 +608,7 @@
       }
       return;
     }
-    hover = hit(mx, my); canvas.style.cursor = hover && hover.type === "ticket" ? "pointer" : "grab"; showTip(hover, mx, my);
+    hover = hit(mx, my); canvas.style.cursor = hover && (hover.type === "ticket" || hover.type === "pull") ? "pointer" : "grab"; showTip(hover, mx, my);
   });
   function release(e) {
     var b = canvas.getBoundingClientRect(), was = count();
@@ -546,6 +616,7 @@
     if (was === 1 && e.type === "pointerup" && moved < 6) {
       var h = hit(e.clientX - b.left, e.clientY - b.top);
       if (h && h.type === "ticket") location.href = "/tickets/" + h.o.id;
+      else if (h && h.type === "pull" && /^https:\/\//.test(h.o.url || "")) window.open(h.o.url, "_blank", "noopener");
     }
     canvas.style.cursor = "grab";
   }
@@ -572,7 +643,7 @@
     btn.addEventListener("click", function () {
       mode = btn.getAttribute("data-map-mode");
       document.querySelectorAll("[data-map-mode]").forEach(function (x) { x.setAttribute("aria-pressed", x === btn ? "true" : "false"); });
-      bar.hidden = mode !== "replay"; tickets = {}; pulses = []; busyNow = {};
+      bar.hidden = mode !== "replay"; tickets = {}; prs = {}; pulses = []; busyNow = {};
       if (mode === "replay") loadReplay(parseInt(document.getElementById("mp-range").value, 10)); else { replay = null; seenEvents = {}; pollLive(); }
       updateNow();
     });

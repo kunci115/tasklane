@@ -3,6 +3,10 @@
 ## Unreleased
 
 - Disconnecting GitHub in the console now archives the repositories that came through it (their tickets and history stay) and resets the sync cursor, so nothing lingers on the Repositories page; connecting again brings them back.
+- **Merge** button on the Pull requests page: it appears only for a pull request the AI approved at its latest commit, in a repository that is in full mode and switched on under "Merging from here" (off by default), and never when the pull request goes into the default branch. The orchestrator checks all of it again and GitHub merges only if the head is still that commit and its checks pass. Every press is in the audit log.
+- The AI review now includes a Big-O analysis of the changed code (new optional `complexity` in the reviewer reply), posted in the comment and shown in the list; a new path worse than linear on growing data is a reason to ask for changes.
+- The live map shows open pull requests as diamonds tied to their repository, to their ticket when tasklane opened them, and, while the AI reads one, to the review agent (the agent lights up and "Working now" lists it). Reviews and merges pulse. Click a diamond to open it on GitHub. The map reads the Pull requests list from cache and never asks GitHub itself.
+
 - Fix: a long sync (every repository scanned after a reconnect) made pages that ask GitHub, such as Pull requests, wait behind it and time out. The GitHub plug-in now answers requests side by side (answers can arrive in any order; they carry the request `id`) and mints its installation token once.
 
 - Fix: the AI review compared a pull request with the repository's default branch instead of the branch the pull request goes into, so work already on that branch (for example `dev`) counted as part of the pull request. It now asks the source for the target branch (new optional operation `get_pull`) and refuses closed pull requests. The review is also readable in the list row, with what to do next.

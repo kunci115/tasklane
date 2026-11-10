@@ -896,7 +896,7 @@ def op_list_pulls(params):
             "draft": bool(d.get("draft")), "branch": branch[:200],
             "base": str((d.get("base") or {}).get("ref") or ""),
             "url": str(d.get("html_url") or ""), "updated_at": str(d.get("updated_at") or ""),
-            "ours": branch.startswith("tasklane/"),
+            "ours": branch.startswith("tasklane/"), "head_sha": str(head.get("sha") or ""),
         })
     return {"pulls": pulls, "truncated": len(raw) >= PULLS_LISTED}
 

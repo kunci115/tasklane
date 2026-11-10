@@ -581,6 +581,11 @@ async fn a_pull_request_somebody_opened_gets_a_read_only_review_posted_as_a_comm
         ("approve", "looks fine")
     );
     let comments = w.read_state("comments.log");
+    assert_eq!(r.complexity, "O(n) in the changed lines");
+    assert!(
+        read_state_contains(&w, "comments.log", "Complexity (Big-O)"),
+        "the comment carries the Big-O analysis"
+    );
     assert!(
         comments.contains("\"ref\": \"7\"")
             && comments.contains("looks fine")
@@ -652,4 +657,86 @@ async fn a_pull_request_is_reviewed_against_the_branch_it_goes_into_not_the_defa
         .review_pull("org/repo", "10", "tester")
         .await
         .is_err());
+}
+
+#[tokio::test]
+async fn an_approved_pull_request_is_merged_from_the_console_only_under_every_condition() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    let seed = w.dir.path().join("seed");
+    sh(
+        &seed,
+        &format!(
+            "git checkout -q -b dev && git push -q {0} dev && git checkout -q -b feature && echo mine >> README && git commit -qam mine && git push -q {0} feature:refs/pull/8/head && git checkout -q main",
+            w.remote().display()
+        ),
+    );
+    let pull = |base: &str, head: &str| {
+        std::fs::write(
+            w.state_dir().join("pull_8.json"),
+            format!(r#"{{"base":"{base}","state":"open","head_sha":"{head}"}}"#),
+        )
+        .unwrap();
+    };
+    pull("dev", "aaa");
+    // no review yet, and the switch is off: both refuse
+    assert!(w.orch.merge_pull("org/repo", "8", "tester").await.is_err());
+    w.orch.review_pull("org/repo", "8", "tester").await.unwrap();
+    let off = w
+        .orch
+        .merge_pull("org/repo", "8", "tester")
+        .await
+        .unwrap_err();
+    assert!(off.to_string().contains("off for this repository"), "{off}");
+    sqlx::query("UPDATE services SET agent_profile = agent_profile || '{\"console_merge\": true}'")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    // the head moved after the review
+    pull("dev", "bbb");
+    let moved = w
+        .orch
+        .merge_pull("org/repo", "8", "tester")
+        .await
+        .unwrap_err();
+    assert!(moved.to_string().contains("exact commit"), "{moved}");
+    // into the default branch: a person's job
+    pull("main", "aaa");
+    let prod = w
+        .orch
+        .merge_pull("org/repo", "8", "tester")
+        .await
+        .unwrap_err();
+    assert!(prod.to_string().contains("default branch"), "{prod}");
+    // GitHub refusing (checks failing) is reported, not hidden
+    pull("dev", "aaa");
+    w.set_flag("merge_refuse");
+    let refused = w
+        .orch
+        .merge_pull("org/repo", "8", "tester")
+        .await
+        .unwrap_err();
+    assert!(refused.to_string().contains("checks_failing"), "{refused}");
+    std::fs::remove_file(w.state_dir().join("merge_refuse")).unwrap();
+    w.orch.merge_pull("org/repo", "8", "tester").await.unwrap();
+    assert!(w.read_state("merged").contains("contents:write"));
+    let acts: Vec<String> = sqlx::query_scalar(
+        "SELECT action FROM audit_events WHERE action LIKE 'pull.merge%' ORDER BY id",
+    )
+    .fetch_all(&w.pool)
+    .await
+    .unwrap();
+    assert_eq!(acts, vec!["pull.merge_refused", "pull.merged"]);
+    // watch or triage mode never merges
+    sqlx::query("UPDATE services SET mode = 'triage'")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    assert!(w.orch.merge_pull("org/repo", "8", "tester").await.is_err());
+}
+
+fn read_state_contains(w: &World, name: &str, needle: &str) -> bool {
+    w.read_state(name).contains(needle)
 }

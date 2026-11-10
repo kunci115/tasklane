@@ -44,7 +44,7 @@ pub async fn page(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Respon
 <input id=\"mp-slider\" type=\"range\" min=\"0\" max=\"1000\" value=\"0\" aria-label=\"Time\"><span id=\"mp-clock\" class=\"small muted mono\">--</span>\
 <select id=\"mp-speed\" aria-label=\"Speed\"><option value=\"1\">1x</option><option value=\"10\">10x</option><option value=\"60\" selected>60x</option><option value=\"300\">300x</option><option value=\"1200\">1200x</option></select>\
 <select id=\"mp-range\" aria-label=\"Range\"><option value=\"1\">last hour</option><option value=\"6\">last 6 hours</option><option value=\"24\" selected>last 24 hours</option><option value=\"168\">last 7 days</option></select></div></div>\
-<p class=\"hint\">Drag to turn the map, scroll or pinch to zoom, right-drag or Shift-drag to move it, double-click to reset. Click a ticket to open it. Dots are tickets coloured by state; a line from a dot to an agent means that agent has it. Agents sit on the upper tier, repositories on the lower one, grouped by kind.</p><script src=\"/static/map.js\" defer></script>",
+<p class=\"hint\">Drag to turn the map, scroll or pinch to zoom, right-drag or Shift-drag to move it, double-click to reset. Click a ticket to open it, a diamond to open the pull request on GitHub. Dots are tickets coloured by state; diamonds are open pull requests, tied to their repository and, when tasklane opened them, to their ticket. A line from a dot or a diamond to an agent means that agent has it. Agents sit on the upper tier, repositories on the lower one, grouped by kind.</p><script src=\"/static/map.js\" defer></script>",
         icon("play")
     ));
     render(&st, &sess.csrf, "map", "Live map", &b)
@@ -93,6 +93,23 @@ pub async fn snapshot(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Re
             busy.push(json!({"agent": a, "kind": kind, "ticket": r.get::<i64, _>("ticket_id"), "title": r.get::<String, _>("title")}));
         }
     }
+    busy.extend(super::pulls::busy_reviews(&st));
+    let repo_ids: std::collections::HashMap<String, i64> = repos
+        .iter()
+        .filter_map(|r| Some((r["name"].as_str()?.to_string(), r["id"].as_i64()?)))
+        .collect();
+    let pulls = super::pulls::map_state(&st, &repo_ids).await;
+    let pull_events = sqlx::query("SELECT action, detail, extract(epoch FROM now() - at)::bigint AS secs FROM audit_events WHERE action IN ('pull.reviewed', 'pull.merged') AND at > now() - interval '90 seconds' ORDER BY id")
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| {
+            let d: Value = r.get("detail");
+            let s = |k: &str| d.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+            json!({"key": format!("{}#{}", s("service"), s("pr")), "action": r.get::<String, _>("action"), "verdict": s("verdict"), "secs": r.get::<i64, _>("secs")})
+        })
+        .collect::<Vec<_>>();
     let recent = sqlx::query("SELECT ticket_id, action, extract(epoch FROM now() - at)::bigint AS secs FROM audit_events WHERE ticket_id IS NOT NULL AND at > now() - interval '90 seconds' ORDER BY id")
         .fetch_all(pool)
         .await
@@ -100,7 +117,7 @@ pub async fn snapshot(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Re
         .into_iter()
         .map(|r| json!({"ticket": r.get::<i64, _>("ticket_id"), "action": r.get::<String, _>("action"), "secs": r.get::<i64, _>("secs")}))
         .collect::<Vec<_>>();
-    Json(json!({"paused": paused, "repos": repos, "tickets": tickets, "busy": busy, "recent": recent})).into_response()
+    Json(json!({"paused": paused, "repos": repos, "tickets": tickets, "busy": busy, "recent": recent, "pulls": pulls, "pull_events": pull_events})).into_response()
 }
 
 #[derive(Deserialize)]
