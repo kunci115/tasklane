@@ -1563,9 +1563,9 @@ async fn starting_the_github_app_hands_the_browser_to_github_with_a_manifest_and
         html.contains("/organizations/my-company/settings/apps/new"),
         "a name typed in the organization box means an organization"
     );
-    let (_, html) = start_github(&e, "&org=https%3A%2F%2Fgithub.com%2FAquila-Team-Group").await;
+    let (_, html) = start_github(&e, "&org=https%3A%2F%2Fgithub.com%2Facme-corp").await;
     assert!(
-        html.contains("/organizations/Aquila-Team-Group/settings/apps/new"),
+        html.contains("/organizations/acme-corp/settings/apps/new"),
         "a pasted link works too"
     );
     let body = format!(

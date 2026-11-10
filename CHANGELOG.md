@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.3 (2026-11-10)
+
 - **Tools the agents may use** (Knowledge page): an owner grants a read-only tool per repository and per agent role (triage and reviewer by default, the developer only if ticked): a name, a base address, an optional credential header and a call limit. While it works the agent can look things up (for example an API's description or a schema service) through an MCP shim that talks to a broker on the host over a Unix socket; the broker does the GET below the base address with the credential and returns text. No network or secret is added to the sandbox (the image already has node). Calls are counted per tool; the Try button runs one the way the agent would. New engine operation `tool_test`; new file `tl_mcp_shim.js`; threat T13 in the threat model.
 - **Documents the agents can read** (Knowledge page): point tasklane at an internal wiki page, an API description or a runbook, for every repository or one. tasklane fetches the page itself (text only, no redirects, size-capped, kept for ten minutes, the last good copy used if the address fails; an optional header credential is stored as a secret file and never reaches the agent) and gives the text to triage, development, review and project planning as background data. New engine operation `reference`. Interactive tools (MCP servers) are still only a design note.
 - Before anyone has approved a ticket, its work (triage) now runs on the account of the person who opened the issue when the system knows them (a person in People with that GitHub login); otherwise on the shared accounts. People who are not owners no longer see the Pause button.

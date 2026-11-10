@@ -142,6 +142,12 @@ The agent can run **unsandboxed** only if you explicitly opt in; the default is 
 | Review loop | Collaborators' comments and change requests on the pull request are given back to the developer agent; the new change is re-scored, tested and reviewed again |
 | Chat | Telegram bot for questions and `/task`, approvals by button, and the outcome of each ticket reported back to the group that raised it |
 | Console | Setup, approvals, tickets (search and paging), repositories, people, activity, live map, replay, health |
+| Pull requests | A page of the open pull requests in your repositories: an **AI review** (verdict, notes, Big-O analysis) against the branch each one goes into, and a **Merge** button that appears only for a pull request the AI approved at its latest commit, in a repository you switched on, never into the default branch and never from a fork or a stranger |
+| Starting projects | **New project**: tasklane creates the repository, or plans it with you first (the AI asks what it needs and proposes small tickets you edit), then opens the tickets; **Import open issues** brings in issues that existed before GitHub was connected |
+| Branches and closing | Pull requests go to the branch you set per repository (for example `dev`); the issue stays open and tasklane closes it only once the merged change is in the default branch |
+| People | Each person can sign in with a token of their own, approve as themselves within their role, and keep **their own Claude account**: work runs on the account of the person who approved it, never on somebody else's |
+| Knowledge | Notes for every repository or one, documents the agents read first, **documents tasklane fetches for them** (an internal wiki page, an API description) and **read-only tools** they can call while they work through a broker on the host, with no network or secret added to the sandbox |
+| Visibility | Which model ran each ticket; pin a model per repository; every console action in the audit log |
 | Per-repository control | Mode (`watch`, `triage`, `full`), protected paths, agent instructions, notes for the agents, and a `.tasklane.yml` that can only tighten the rules |
 | Duplicates | A new ticket that repeats an earlier one is held for a person to confirm (optional model suggestion) |
 | Cost and limits | Model tokens counted per ticket with a budget, attempt and wall-time limits, a cap on parallel development and on pull requests waiting for CI |
@@ -158,7 +164,7 @@ The agent can run **unsandboxed** only if you explicitly opt in; the default is 
 
 **Can it merge to production?** No. It merges to a development branch after CI and review. Promotion is yours.
 
-**Does every developer need a Claude account?** No. One install uses one agent credential for all tickets. Use an API key for a team; a subscription token is one person's plan.
+**Does every developer need a Claude account?** No. One install can use shared accounts for everything. If your company gives each person an account, people can sign in to the console and add their own: work then runs on the account of whoever approved it, and shared accounts are the fallback. Use API keys for shared accounts; a subscription token is one person's plan.
 
 **Which models and trackers work today?** Claude and GitHub Issues. Both sit behind plug-in interfaces so others can be added without touching the core.
 
@@ -166,10 +172,10 @@ The agent can run **unsandboxed** only if you explicitly opt in; the default is 
 
 ## Project status
 
-tasklane is **pre-release (0.1.0-alpha.2)**. Expect rough edges, and read the next two points before you rely on it.
+tasklane is **pre-release (0.1.0-alpha.3)**. Expect rough edges, and read the next two points before you rely on it.
 
 - **Verified:** the whole pipeline from issue to merge runs in tests against a real Postgres and git. Two supervised runs against live GitHub and live Claude (one-click App creation, subscription token, Docker sandbox) took issues to merged pull requests, two installs on one repository were run side by side, and the developer was shown to act on reported feedback inside the sandbox. They found and fixed seven bugs, listed in the [CHANGELOG](CHANGELOG.md).
-- **Not yet run for real:** Telegram (fake API only), more than one approver, and the newest console features, which are tested against a stand-in ticket source only: the Pull requests page (AI review and Merge), New project (and planning it with the AI), importing open issues, the branch pull requests go to, closing an issue once its change reaches the default branch, and the Knowledge page. The checklist for running them once on a throwaway organization is in [docs/real-run-checklist.md](docs/real-run-checklist.md). GitHub webhooks have run for real (issue and comment events through a tunnel).
+- **Not yet run for real:** Telegram (fake API only), more than one approver, and the newest features, which are tested against a stand-in ticket source and model only: the Pull requests page (AI review and Merge), New project (and planning it with the AI), importing open issues, the branch pull requests go to, closing an issue once its change reaches the default branch, people with their own sign-in and model account, and the Knowledge page with its documents and tools (the tool broker was exercised with a fake agent and a real local HTTP server, not with the Claude CLI in Docker). The checklist for running them once on a throwaway organization is in [docs/real-run-checklist.md](docs/real-run-checklist.md). GitHub webhooks have run for real (issue and comment events through a tunnel).
 - **Please do your own supervised dry run** on a throwaway repository before you point it at real work. [docs/operations.md](docs/operations.md) lists the limits honestly.
 
 ## Built with

@@ -285,7 +285,7 @@ pub async fn github_start(
     if for_org && (org.is_empty() || !org.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')) {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
-            "The organization name is only letters, numbers and hyphens, for example Aquila-Team-Group.",
+            "The organization name is only letters, numbers and hyphens, for example acme-corp.",
         )
             .into_response();
     }
@@ -934,13 +934,13 @@ mod org_name_tests {
     #[test]
     fn an_organization_can_be_pasted_as_a_name_or_a_link() {
         for raw in [
-            "Aquila-Team-Group",
-            " @Aquila-Team-Group ",
-            "https://github.com/Aquila-Team-Group",
-            "https://github.com/Aquila-Team-Group/",
-            "github.com/Aquila-Team-Group/some-repo",
+            "acme-corp",
+            " @acme-corp ",
+            "https://github.com/acme-corp",
+            "https://github.com/acme-corp/",
+            "github.com/acme-corp/some-repo",
         ] {
-            assert_eq!(org_name(raw), "Aquila-Team-Group", "{raw}");
+            assert_eq!(org_name(raw), "acme-corp", "{raw}");
         }
         assert_eq!(org_name(""), "");
     }
