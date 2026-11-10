@@ -392,7 +392,7 @@ async fn git_does_not_run_code_planted_in_the_agents_worktree() {
         format!("#!/bin/sh\ntouch {}\n", marker.display()),
     )
     .unwrap();
-    let committed = ws.commit_all(&p, "msg").await.unwrap();
+    let committed = ws.commit_all(&p, "msg", None).await.unwrap();
     assert!(
         committed,
         "the commit still works, using the trusted git directory"

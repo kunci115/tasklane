@@ -12,6 +12,7 @@
 
 pub mod approval;
 mod ask;
+mod attribution;
 mod ctx;
 mod duplicates;
 mod feedback;
@@ -22,6 +23,7 @@ mod steps;
 pub mod sync;
 pub mod workspace;
 
+pub use attribution::valid_login;
 pub use ctx::{Config, Orchestrator, RunResult, MARKER};
 pub use ownership::{Instance, Owner};
 

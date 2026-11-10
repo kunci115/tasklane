@@ -363,7 +363,13 @@ impl Workspaces {
 
     /// Commit everything the agent changed. Returns false if nothing changed.
     /// Runs with an explicit, trusted git directory; see the module notes.
-    pub async fn commit_all(&self, p: &Prepared, message: &str) -> Result<bool, Error> {
+    /// Commit everything. `author` ("Name <email>") is whom the commit is credited to; the committer is always tasklane.
+    pub async fn commit_all(
+        &self,
+        p: &Prepared,
+        message: &str,
+        author: Option<&str>,
+    ) -> Result<bool, Error> {
         let r = || Run {
             dir: &p.mirror,
             explicit: Some((&p.gitdir, &p.worktree)),
@@ -373,7 +379,12 @@ impl Workspaces {
         if run(r(), &["diff", "--cached", "--quiet"]).await.is_ok() {
             return Ok(false);
         }
-        run(r(), &["commit", "-q", "--no-verify", "-m", message]).await?;
+        let mut args = vec!["commit", "-q", "--no-verify"];
+        if let Some(a) = author {
+            args.extend(["--author", a]);
+        }
+        args.extend(["-m", message]);
+        run(r(), &args).await?;
         Ok(true)
     }
 

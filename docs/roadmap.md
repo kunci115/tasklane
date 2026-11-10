@@ -26,6 +26,7 @@ Each part of the architecture ([docs/design](design) and the C4 diagrams in [doc
 | Fix loop: red CI or a reviewer's "changes" sends the ticket back to the developer with what the failed checks said, limited by `max_dev_attempts` and `max_ci_runs`, then a person | Built; the loop ran for real, the check text is tested against a fake GitHub only |
 | Evaluations of the model roles (`evals/`, 28 cases, baseline comparison) and outcome metrics (first-try merges, reviewer verdicts, tokens per role) | Built; runner and case files tested in CI. No baseline is committed yet: it needs a run against a model |
 | Several model accounts with automatic switch when one runs out of usage, managed on a console page; jobs wait (no attempt used) when all are used up | Built; tested with a stand-in CLI, not with real usage limits |
+| Credit in the GitHub history for the person the agent works for (opt-in per person), plus requested-by and approved-by trailers | Built; tested against a fake source. A real GitHub contribution graph was not checked |
 | Threat-model tests (prompt-injection set for every role, lease races, approval binding) | Built |
 
 ## Next

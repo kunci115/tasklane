@@ -423,3 +423,139 @@ async fn only_so_many_development_runs_start_at_once() {
     assert_eq!(state(&w.pool, a).await, "queued", "not started");
     assert_eq!(count(&w.pool, "SELECT count(*) FROM jobs WHERE ticket_id = (SELECT id FROM tickets WHERE external_ref = 'T-plain') AND kind = 'develop' AND attempts = 0").await, 1, "waiting did not use an attempt");
 }
+
+// ---- who gets the credit in the history
+
+async fn credit_person(pool: &sqlx::PgPool, channel: &str, who: &str, login: &str, credit: bool) {
+    sqlx::query("INSERT INTO principals (channel, ref, role, github_login, credit_coauthor) VALUES ($1, $2, 'owner', $3, $4) ON CONFLICT (channel, ref) DO UPDATE SET github_login = $3, credit_coauthor = $4")
+        .bind(channel)
+        .bind(who)
+        .bind(login)
+        .bind(credit)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// author name | author email | committer name | message, of the pushed branch
+fn pushed_commit(w: &World, t: i64) -> (String, String, String, String) {
+    let out = sh(
+        &w.remote(),
+        &format!("git log -1 --format='%an|%ae|%cn|%B' tasklane/{t}"),
+    );
+    let mut parts = out.splitn(4, '|');
+    let mut next = || parts.next().unwrap().trim().to_string();
+    (next(), next(), next(), next())
+}
+
+#[tokio::test]
+async fn the_person_who_approved_is_the_author_and_the_requester_is_a_co_author() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    credit_person(&w.pool, "console", "boss", "rino", true).await;
+    credit_person(&w.pool, "github", "nabil", "", true).await;
+    let t = ticket(&w, "T-l3-credit").await;
+    drive(&w).await;
+    assert_eq!(state(&w.pool, t).await, "awaiting_approval");
+    let hash = plan_hash(&w, t).await;
+    decide(
+        &w.pool,
+        t,
+        &console("boss"),
+        "console",
+        Decision::Approve,
+        &hash,
+    )
+    .await
+    .unwrap();
+    drive(&w).await;
+    assert_eq!(state(&w.pool, t).await, "merged");
+    let (an, ae, cn, msg) = pushed_commit(&w, t);
+    assert_eq!(
+        (an.as_str(), ae.as_str()),
+        ("rino", "777+rino@users.noreply.github.com")
+    );
+    assert_eq!(cn, "tasklane", "tasklane stays the committer");
+    for line in [
+        "Requested-by: nabil",
+        "Approved-by: rino",
+        "Co-authored-by: nabil <4242+nabil@users.noreply.github.com>",
+    ] {
+        assert!(msg.contains(line), "{line} missing in {msg}");
+    }
+    let id: Option<i64> =
+        sqlx::query_scalar("SELECT github_id FROM principals WHERE github_login = 'rino'")
+            .fetch_one(&w.pool)
+            .await
+            .unwrap();
+    assert_eq!(id, Some(777), "the id is looked up once and remembered");
+    let body = w.read_state("pr_body");
+    assert!(
+        body.contains("Requested by nabil. Approved by rino. Credited to rino"),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn nobody_is_credited_as_an_author_unless_they_turned_it_on() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    credit_person(&w.pool, "github", "nabil", "", false).await;
+    let t = ticket(&w, "T-credit").await;
+    drive(&w).await;
+    assert_eq!(state(&w.pool, t).await, "merged");
+    let (an, _, _, msg) = pushed_commit(&w, t);
+    assert_eq!(an, "tasklane");
+    assert!(msg.contains("Requested-by: nabil"), "{msg}");
+    assert!(!msg.contains("Co-authored-by"), "{msg}");
+    assert!(!w.read_state("pr_body").contains("Credited to"));
+}
+
+#[tokio::test]
+async fn a_requester_who_opted_in_is_the_author_when_nobody_had_to_approve() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    credit_person(&w.pool, "github", "nabil", "", true).await;
+    let t = ticket(&w, "T-credit").await;
+    drive(&w).await;
+    let (an, ae, cn, msg) = pushed_commit(&w, t);
+    assert_eq!(
+        (an.as_str(), ae.as_str(), cn.as_str()),
+        ("nabil", "4242+nabil@users.noreply.github.com", "tasklane")
+    );
+    assert!(
+        !msg.contains("Co-authored-by"),
+        "no duplicate credit: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn attribution_can_be_switched_off_and_a_missing_id_only_costs_the_credit() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |c| c.attribution = false).await;
+    credit_person(&w.pool, "github", "nabil", "", true).await;
+    let t = ticket(&w, "T-credit").await;
+    drive(&w).await;
+    let (an, _, _, msg) = pushed_commit(&w, t);
+    assert_eq!(an, "tasklane");
+    assert_eq!(msg, "tasklane: Fix T-credit (T-credit)");
+
+    // the source cannot look the person up: the ticket still goes through, without credit
+    let w = world(test_pool().await.unwrap(), |_| {}).await;
+    w.set_flag("no_user_lookup");
+    credit_person(&w.pool, "github", "nabil", "", true).await;
+    let t = ticket(&w, "T-credit").await;
+    drive(&w).await;
+    assert_eq!(state(&w.pool, t).await, "merged");
+    let (an, _, _, msg) = pushed_commit(&w, t);
+    assert_eq!(an, "tasklane");
+    assert!(msg.contains("Requested-by: nabil"), "{msg}");
+}

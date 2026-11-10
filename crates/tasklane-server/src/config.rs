@@ -31,6 +31,7 @@ pub struct Settings {
     pub dev_timeout_secs: u64,
     pub ci_timeout_secs: i64,
     pub allow_no_checks: bool,
+    pub attribution: bool,
     pub retention_days: i64,
     pub public_url: Option<String>,
 }
@@ -194,6 +195,7 @@ impl Settings {
             dev_timeout_secs: num(vars, "TASKLANE_DEV_TIMEOUT_SECS", 1800u64)?.clamp(60, 86_400),
             ci_timeout_secs: num(vars, "TASKLANE_CI_TIMEOUT_SECS", 3600i64)?.clamp(60, 172_800),
             allow_no_checks: get(vars, "TASKLANE_ALLOW_NO_CHECKS").as_deref() == Some("1"),
+            attribution: get(vars, "TASKLANE_ATTRIBUTION").as_deref() != Some("off"),
             retention_days: num(vars, "TASKLANE_RETENTION_DAYS", 365i64)?.max(7),
             public_url: get(vars, "TASKLANE_PUBLIC_URL")
                 .map(|u| u.trim_end_matches('/').to_string()),

@@ -46,6 +46,8 @@ def item(ref):
     if "risky" in ref:
         body = "Needs a database migration and a password reset flow."
     out = {"title": f"Fix {ref}", "body": body, "comments": comments, "state": "open", "is_pull_request": False}
+    if "credit" in ref:
+        out["author"] = "nabil"
     if "stranger" in ref:
         out["author_trusted"] = False
     if ref.startswith("pr-"):
@@ -203,6 +205,11 @@ def handle(op, params):
         return {"overrides": read_json("overrides.json", {}), "found": True}
     if op == "get_item":
         return item(params["ref"])
+    if op == "get_user":
+        ids = {"nabil": 4242, "rino": 777}
+        if params["login"] not in ids or flag("no_user_lookup"):
+            raise ValueError("not a user account")
+        return {"id": ids[params["login"]], "login": params["login"]}
     if op == "run":
         return run(params)
     if op == "receive":
@@ -251,6 +258,7 @@ def handle(op, params):
         if flag("pr_branch"):
             raise ValueError("A pull request already exists")
         open(os.path.join(STATE, "pr_branch"), "w").write(params["branch"])
+        open(os.path.join(STATE, "pr_body"), "w").write(params.get("body") or "")
         return {"pr": "7"}
     if op == "get_checks":
         branch = open(os.path.join(STATE, "pr_branch")).read()

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Credit in the GitHub history goes to the person the agent worked for. On the People page each person sets their GitHub login and a **credit me** box (off by default). The last person who approved a change (or whoever opened the issue, when nobody had to approve) becomes the commit's author with tasklane as committer, so it counts in their contribution graph; other opted-in people are `Co-authored-by`. Commits always carry `Requested-by` and `Approved-by` trailers and the pull request says who asked and who approved. Only valid GitHub logins reach a commit message; ticket titles can no longer add lines to it. New optional source operation `get_user`. `TASKLANE_ATTRIBUTION=off` switches it all off.
+
 - Several model accounts: the console has a Model accounts page (add, order, disable, remove; tokens are never shown again). When an account reports its usage limit, the same run goes on with the next one; a limited account sleeps 30 minutes, a refused one a day. The developer is told that part of the work may already be in the working copy. When every account sleeps, jobs wait for the first to wake without using up an attempt (the plug-in protocol's `rate_limited` error now carries `retry_after_secs`). A conversation cannot move between accounts; the ticket, feedback and working copy carry over. Tested with a stand-in CLI.
 
 - Engine role `device` (both engine plug-ins): given an incident, what was tried and the only allowed actions, the agent picks the next step (`continue`, `done` or `escalate`). Its input is marked data that cannot close its block, and its answer is checked. Used by the device worker of the commercial edition.

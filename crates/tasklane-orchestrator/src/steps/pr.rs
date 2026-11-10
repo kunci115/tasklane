@@ -42,7 +42,13 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         None => {
             let item = o.item(&t).await?;
             let title = format!("{} (#{})", text_of(&item, "title"), t.external_ref);
-            let body = format!("Automated change for #{}.\n\nThis pull request was produced by tasklane and is reviewed and merged by it only after CI passes.", t.external_ref);
+            let credit = o.credit_for(t.id, &text_of(&item, "author")).await;
+            let who = if credit.is_empty() {
+                String::new()
+            } else {
+                format!("\n\n{}", credit.pr_line())
+            };
+            let body = format!("Automated change for #{}.\n\nThis pull request was produced by tasklane and is reviewed and merged by it only after CI passes.{who}", t.external_ref);
             let pr = o
                 .source
                 .call(

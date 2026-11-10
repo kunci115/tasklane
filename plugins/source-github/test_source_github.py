@@ -303,6 +303,17 @@ class Reading(Base):
         self.assertNotIn("output", by["lint"])
         self.assertEqual(by["legacy"]["output"], "build broke")
 
+    def test_get_user_gives_the_id_behind_a_login_and_only_for_people(self):
+        R = self.fake.routes
+        R[("GET", "/users/nabil")] = (200, {}, {"id": 4242, "login": "Nabil", "type": "User"})
+        R[("GET", "/users/some-app")] = (200, {}, {"id": 9, "login": "some-app", "type": "Bot"})
+        R[("GET", "/users/acme")] = (200, {}, {"id": 8, "login": "acme", "type": "Organization"})
+        self.assertEqual(self.ok("get_user", {"login": "nabil"}), {"id": 4242, "login": "Nabil"})
+        for login in ("some-app", "acme"):
+            self.assertEqual(self.err("get_user", {"login": login})["kind"], "permanent", login)
+        for bad in ("a b", "x/../y", "-x", "a--b", "", "a" * 40):
+            self.assertEqual(self.err("get_user", {"login": bad})["kind"], "permanent", bad)
+
     def test_detect_facts(self):
         import base64 as b
         R = self.fake.routes

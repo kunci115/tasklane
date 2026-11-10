@@ -27,6 +27,16 @@ Add a webhook on the group or project that points to `https://<your host>/api/v1
 
 Differences you should know about: **GitLab cannot mint a token that lives only minutes**, so the per-run token tasklane hands to git is the bot's own token. Keep that bot's reach small (one group, Developer role) and rotate its token. The GitHub-App one-click connection in the console does not apply; the settings above are the setup. Links from the console to issues and merge requests are not shown for GitLab yet. **Verified here:** the plug-in against a fake GitLab (every operation, trust, webhooks, ownership, error handling). **Not verified here:** a real GitLab, so do a supervised dry run on a throwaway project first.
 
+## Who gets the credit in the GitHub history
+
+The agent works on behalf of a person, so the person it answers to gets the credit. On the **People** page each person has a GitHub login and a **credit me** box (off by default; it is a claim on their public contribution graph, so they choose). For a change:
+
+- the **author** of the commit is the last person who approved it and turned credit on; if nobody had to approve, the person who opened the issue (if they turned it on). `tasklane` stays the **committer**, so the history shows both. GitHub counts the commit in the author's contribution graph through their `ID+login@users.noreply.github.com` address, which tasklane looks up once and remembers.
+- other people who turned credit on and took part (the requester, an earlier approver) are `Co-authored-by`.
+- trailers `Requested-by` and `Approved-by` name who asked and who approved, whatever anyone chose, and the pull request says the same in one line (as plain names, no `@mention`).
+
+Notes: GitHub counts commits only on a repository's default branch, so a repository that merges into `dev` shows the squares once `dev` reaches the default branch. The author is fixed when the agent commits, so a person who approves only the final diff (after the commit) is named in the pull request line and trailers of later commits, not as author of that commit. Only logins that fit GitHub's rules ever reach a commit message. `TASKLANE_ATTRIBUTION=off` turns all of it off.
+
 ## Several model accounts (when one runs out of usage)
 
 The **Model accounts** page in the console keeps a list of accounts for the Claude engine: a subscription token (from `claude setup-token`) or an Anthropic API key each. The first account that is ready does the work. When it reports that its usage limit is reached it sleeps for 30 minutes (`TASKLANE_CLAUDE_COOLDOWN_SECS`), a refused credential sleeps a day, and the same run goes on with the next account. If every account sleeps, tickets wait for the first to wake up; waiting costs no attempt, so a limit that lasts hours does not fail tickets.
@@ -198,6 +208,7 @@ The console covers everything a normal install needs. Environment variables are 
 | `TASKLANE_SOURCE_NAME` | no | Registry name of the source, default `github`. |
 | `TASKLANE_RETENTION_DAYS` | no | Audit rows older than this are deleted (default 365, minimum 7). Finished jobs are deleted after 30 days. |
 | `TASKLANE_ALLOW_NO_CHECKS` | no | `1` treats a pull request with no CI checks as green. Default off. |
+| `TASKLANE_ATTRIBUTION` | no | `off` stops naming who requested and approved a change (commit trailers, pull request line, credit). Default on. See "Who gets the credit". |
 
 The agent-engine plug-in has its own switch, `TASKLANE_ALLOW_UNSANDBOXED=1`, explained in section 7. Plug-in specific variables are documented in `plugins/source-github/README.md` and `plugins/engine-claude/README.md`.
 

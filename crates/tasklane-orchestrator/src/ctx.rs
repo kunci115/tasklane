@@ -45,6 +45,8 @@ pub struct Config {
     /// Treat a pull request with no checks at all as green. Off by default: a PR
     /// whose checks have not registered yet must not be merged on an empty list.
     pub allow_no_checks: bool,
+    /// Name who requested and approved a change in its commit trailers and pull request (off: `TASKLANE_ATTRIBUTION=off`).
+    pub attribution: bool,
     /// Stop creating tickets from the source while this many triage jobs are already waiting
     /// (a flood of issues cannot queue unlimited model runs). The skipped issues are picked up
     /// again later because the sync cursor does not move past them.
@@ -78,6 +80,7 @@ impl Config {
             max_diff_lines: 800,
             max_diff_bytes: 200_000,
             allow_no_checks: false,
+            attribution: true,
             max_pending_triage: 25,
             token_ttl_secs: 3600,
             max_tokens_per_ticket: 3_000_000,

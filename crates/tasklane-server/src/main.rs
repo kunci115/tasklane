@@ -70,6 +70,7 @@ async fn run(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
     cfg.dev_timeout = std::time::Duration::from_secs(s.dev_timeout_secs);
     cfg.ci_timeout_secs = s.ci_timeout_secs;
     cfg.allow_no_checks = s.allow_no_checks;
+    cfg.attribution = s.attribution;
     // what the console connected (an App, the agent's key and isolation) is added to what the environment says
     let gh: Option<connections::GithubConn> = connections::get(&pool, "github").await;
     let agent: connections::AgentSettings =

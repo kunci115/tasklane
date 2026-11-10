@@ -51,6 +51,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/services/{id}/takeover", post(repos::take_over))
         .route("/people", get(people::page).post(people::add))
         .route("/people/{id}/delete", post(people::delete))
+        .route("/people/{id}/credit", post(people::set_credit))
         .route("/accounts", get(accounts::page).post(accounts::add))
         .route("/accounts/action", post(accounts::action))
         .route("/chat", get(chat_page))

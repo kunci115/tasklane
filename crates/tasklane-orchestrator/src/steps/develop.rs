@@ -257,10 +257,13 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         .unwrap_or("(no summary)")
         .to_string();
 
+    // the person this work is done for gets the credit in the history (see attribution.rs)
+    let credit = o.credit_for(t.id, &text_of(&item, "author")).await;
     let committed =
         o.ws.commit_all(
             &prepared,
-            &format!("tasklane: {title} ({})", t.external_ref),
+            &crate::attribution::commit_message(&title, &t.external_ref, &credit),
+            credit.author_arg().as_deref(),
         )
         .await;
     o.ws.remove_worktree(&prepared).await;

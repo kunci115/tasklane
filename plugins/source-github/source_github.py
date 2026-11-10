@@ -858,6 +858,18 @@ def op_get_checks(params):
     return {"head_sha": sha, "state": state, "checks": checks}
 
 
+def op_get_user(params):
+    """The numeric id behind a login (GitHub links `ID+login@users.noreply.github.com` to the account).
+    Only real people: a bot or an organisation is refused."""
+    login = p_str(params, "login")
+    if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}", login):
+        raise permanent("login is not a GitHub login")
+    d = app_api("GET", f"/users/{q(login)}").data or {}
+    if d.get("type") != "User" or not isinstance(d.get("id"), int) or isinstance(d.get("id"), bool):
+        raise permanent("not a user account")
+    return {"id": d["id"], "login": d.get("login", login)}
+
+
 def op_list_pr_feedback(params):
     """What people with a real relationship to the repository said on a pull request since `since`
     (an ISO time): review comments on lines, reviews that ask for changes or comment, and ordinary
@@ -1000,7 +1012,7 @@ OPS = {
     "create_item": op_create_item, "comment": op_comment,
     "set_labels": op_set_labels, "detect_facts": op_detect_facts, "read_overrides": op_read_overrides,
     "repo_url": op_repo_url, "mint_run_token": op_mint_run_token,
-    "open_pr": op_open_pr, "get_checks": op_get_checks,
+    "open_pr": op_open_pr, "get_checks": op_get_checks, "get_user": op_get_user,
     "merge_pr": op_merge_pr, "list_pr_feedback": op_list_pr_feedback, "verify_webhook": op_verify_webhook,
     "app_manifest_convert": op_app_manifest_convert, "list_installations": op_list_installations,
     "claim_repo": op_claim_repo, "release_repo": op_release_repo, "takeover_repo": op_takeover_repo,

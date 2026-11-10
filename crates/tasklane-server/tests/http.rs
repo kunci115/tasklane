@@ -1017,6 +1017,107 @@ async fn the_model_accounts_page_needs_a_session() {
 }
 
 #[tokio::test]
+async fn a_person_chooses_whether_the_history_credits_them_and_only_a_real_login_is_accepted() {
+    let Some(e) = env().await else { return };
+    let admin: i64 =
+        sqlx::query_scalar("SELECT id FROM principals WHERE channel = 'console' AND ref = 'admin'")
+            .fetch_one(&e.pool)
+            .await
+            .unwrap();
+    let path = format!("/people/{admin}/credit");
+    let post = |body: String| form(&path, body, Some(e.cookie.clone()));
+    assert_eq!(
+        send(&e.app, post("csrf=x&github_login=rino&credit=on".into()))
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    // not a login: spaces, a line break that would add a trailer, too long
+    for bad in ["a%20b", "rino%0AApproved-by:%20x", "-rino", &"a".repeat(40)] {
+        let (st, _, _) = send(
+            &e.app,
+            post(format!("csrf={}&github_login={bad}&credit=on", e.csrf)),
+        )
+        .await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
+    }
+    // being credited needs a login (the console admin has none yet)
+    assert_eq!(
+        send(
+            &e.app,
+            post(format!("csrf={}&github_login=&credit=on", e.csrf))
+        )
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        send(
+            &e.app,
+            post(format!("csrf={}&github_login=rino&credit=on", e.csrf))
+        )
+        .await
+        .0,
+        StatusCode::SEE_OTHER
+    );
+    let (login, credit): (Option<String>, bool) =
+        sqlx::query_as("SELECT github_login, credit_coauthor FROM principals WHERE id = $1")
+            .bind(admin)
+            .fetch_one(&e.pool)
+            .await
+            .unwrap();
+    assert_eq!((login.as_deref(), credit), (Some("rino"), true));
+    let (_, _, page) = send(&e.app, get("/people", Some(e.cookie.clone()))).await;
+    assert!(
+        page.contains("value=\"rino\"") && page.contains("checked"),
+        "{page}"
+    );
+    // a different login is a different person: the remembered id must not carry over
+    sqlx::query("UPDATE principals SET github_id = 777 WHERE id = $1")
+        .bind(admin)
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    send(
+        &e.app,
+        post(format!("csrf={}&github_login=rino&credit=on", e.csrf)),
+    )
+    .await;
+    let kept: Option<i64> = sqlx::query_scalar("SELECT github_id FROM principals WHERE id = $1")
+        .bind(admin)
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(kept, Some(777), "same login keeps its id");
+    send(
+        &e.app,
+        post(format!(
+            "csrf={}&github_login=someone-else&credit=on",
+            e.csrf
+        )),
+    )
+    .await;
+    let reset: Option<i64> = sqlx::query_scalar("SELECT github_id FROM principals WHERE id = $1")
+        .bind(admin)
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(reset, None, "another login drops the old id");
+    // turning it off is just leaving the box empty
+    send(
+        &e.app,
+        post(format!("csrf={}&github_login=someone-else", e.csrf)),
+    )
+    .await;
+    let credit: bool = sqlx::query_scalar("SELECT credit_coauthor FROM principals WHERE id = $1")
+        .bind(admin)
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert!(!credit);
+}
+
+#[tokio::test]
 async fn people_can_be_added_changed_and_removed_but_not_the_built_in_admin() {
     let Some(e) = env().await else { return };
     let add = |channel: &str, who: &str, role: &str| {
