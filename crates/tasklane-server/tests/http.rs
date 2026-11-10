@@ -2683,6 +2683,65 @@ async fn a_ticket_that_stopped_with_nothing_to_change_can_be_closed_as_done() {
 }
 
 #[tokio::test]
+async fn the_model_is_pinned_per_repository_and_the_ticket_shows_what_ran() {
+    let Some(e) = env().await else { return };
+    let id: i64 = sqlx::query_scalar("SELECT id FROM services WHERE external_id = 'org/repo'")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    let url = format!("/services/{id}/profile");
+    let body = |m: &str| {
+        format!(
+            "csrf={}&system=&test_command=&preview_command=&preview_port=&model={m}",
+            e.csrf
+        )
+    };
+    let (st, _, _) = send(&e.app, form(&url, body("a%20b"), Some(e.cookie.clone()))).await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    let (st, _, _) = send(
+        &e.app,
+        form(&url, body("claude-sonnet-5-5"), Some(e.cookie.clone())),
+    )
+    .await;
+    assert!(st.is_redirection());
+    let m: String =
+        sqlx::query_scalar("SELECT agent_profile->>'model' FROM services WHERE id = $1")
+            .bind(id)
+            .fetch_one(&e.pool)
+            .await
+            .unwrap();
+    assert_eq!(m, "claude-sonnet-5-5");
+    let t = seed_ticket(&e, "41", "Model check", "merged", 1).await;
+    let (before_job,): (i64,) = sqlx::query_as(
+        "INSERT INTO jobs (ticket_id, kind, status) VALUES ($1, 'triage', 'done') RETURNING id",
+    )
+    .bind(t)
+    .fetch_one(&e.pool)
+    .await
+    .unwrap();
+    let (_, _, none) = send(
+        &e.app,
+        get(&format!("/tickets/{t}"), Some(e.cookie.clone())),
+    )
+    .await;
+    assert!(none.contains("not reported yet"));
+    sqlx::query("INSERT INTO runs (job_id, actor, usage) VALUES ($1, 'triage', '{\"model\":\"claude-sonnet-5-5\"}')")
+        .bind(before_job)
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    let (_, _, shown) = send(
+        &e.app,
+        get(&format!("/tickets/{t}"), Some(e.cookie.clone())),
+    )
+    .await;
+    assert!(
+        shown.contains("<dt>Model</dt><dd>claude-sonnet-5-5</dd>"),
+        "{shown}"
+    );
+}
+
+#[tokio::test]
 async fn tickets_of_an_archived_repository_leave_the_lists_but_not_the_database() {
     let Some(e) = env().await else { return };
     let id = seed_ticket(&e, "7", "Old account work", "merged", 1).await;

@@ -441,7 +441,11 @@ def parse_cli_output(stdout):
               ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
     text = doc.get("result")
     so = doc.get("structured_output")
-    return {"text": text if isinstance(text, str) else "",
+    mu = doc.get("modelUsage")
+    models = sorted(k for k in mu if isinstance(k, str) and re.fullmatch(r"[A-Za-z0-9._:\[\]/-]{1,100}", k)) \
+        if isinstance(mu, dict) else []
+    return {"model": ",".join(models[:3]),
+            "text": text if isinstance(text, str) else "",
             "structured": so if isinstance(so, dict) else None,
             "tokens_in": int(tin), "tokens_out": int(num(usage.get("output_tokens"))),
             "duration": num(doc.get("duration_ms")) / 1000.0 if doc.get("duration_ms") else None,
@@ -461,6 +465,8 @@ def classify_failure(text):
 def finish(role, parsed, secs, exit_reason="ok"):
     usage = {"tokens_in": parsed["tokens_in"], "tokens_out": parsed["tokens_out"],
              "secs": round(parsed["duration"] if parsed["duration"] else secs, 2)}
+    if parsed.get("model"):
+        usage["model"] = parsed["model"]  # the model the CLI reports it ran (not the one asked for)
     if role == "dev":
         summary = parsed["text"].strip()
         if not summary:

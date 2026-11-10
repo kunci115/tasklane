@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Which model ran.** The Claude engine reports the model the CLI says it used, the ticket page shows it under Details, and each repository has a **Model** setting (Settings) to pin one instead of following the connected account's default.
 - **Import open issues** now runs in the background and covers up to 2000 issues; the repository's card shows when it is running and what it did (new tickets, how many were held back, whether there were more).
 - A ticket whose developer found nothing to change (the work already exists) says so on the issue and in the console, which offers **close the issue as done**, try again, or close the ticket only, instead of a generic failure.
 - Closing issues after promotion is sturdier: tickets are checked in turn (a pile of changes still waiting on `dev` no longer starves newer ones), the issue is closed first and the note is posted only after it worked, the merge commit is looked up if the merge answer lacked it, and a merge refused three times stops with a person instead of looping.

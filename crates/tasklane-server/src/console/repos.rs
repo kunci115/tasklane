@@ -255,6 +255,7 @@ pub async fn page(
             .get("target_branch")
             .and_then(Value::as_str)
             .unwrap_or("");
+        let model_v = profile.get("model").and_then(Value::as_str).unwrap_or("");
         let default_v = facts
             .get("default_branch")
             .and_then(Value::as_str)
@@ -283,6 +284,7 @@ pub async fn page(
 <div class=\"field\"><label for=\"t{id}\">Test command the agent may run</label><input id=\"t{id}\" type=\"text\" name=\"test_command\" maxlength=\"200\" value=\"{}\" placeholder=\"pytest -q\"><div class=\"hint\">One command, no parentheses or line breaks.</div></div>\
 <div class=\"field\"><label for=\"pc{id}\">Preview: command that starts the app</label><input id=\"pc{id}\" type=\"text\" name=\"preview_command\" maxlength=\"300\" value=\"{}\" placeholder=\"python3 -m http.server 3000\"></div><div class=\"field\"><label for=\"pp{id}\">Preview: port</label><input id=\"pp{id}\" type=\"text\" name=\"preview_port\" maxlength=\"5\" value=\"{}\" placeholder=\"3000\"><div class=\"hint\">Lets the developer agent look at what it builds (a screenshot, with Obscura). Needs the sandbox image built with Obscura; see the operations guide. Leave both empty to turn it off.</div></div>\
 <div class=\"field\"><label for=\"tb{id}\">Branch pull requests go to</label><input id=\"tb{id}\" type=\"text\" name=\"target_branch\" maxlength=\"100\" value=\"{}\" placeholder=\"{}\"><div class=\"hint\">Empty means the default branch. With another branch (for example dev), the issue stays open after the merge and tasklane closes it once the change reaches the default branch.</div></div>\
+<div class=\"field\"><label for=\"md{id}\">Model</label><input id=\"md{id}\" type=\"text\" name=\"model\" maxlength=\"100\" value=\"{}\" placeholder=\"account default\"><div class=\"hint\">Empty uses the default of the connected Claude account, which can change. Set a name such as claude-sonnet-5-5 to pin it. The ticket page shows the model each run reported.</div></div>\
 <button class=\"btn primary small\">Save</button></form>{}</details></div>",
             if link.is_empty() { esc(&name) } else { format!("<a href=\"{}\" target=\"_blank\" rel=\"noopener\">{} {}</a>", esc(&link), esc(&name), icon("external")) },
             if archived { "<span class=\"pill\">archived</span>" } else { "" },
@@ -310,6 +312,7 @@ pub async fn page(
             esc(&pport_v),
             esc(target_v),
             esc(default_v),
+            esc(model_v),
             notes_html(id, notes_by.get(&id).map(Vec::as_slice).unwrap_or(&[]), &sess.csrf, &here)
         ));
     }
@@ -549,6 +552,8 @@ pub struct ProfileIn {
     preview_port: String,
     #[serde(default)]
     target_branch: String,
+    #[serde(default)]
+    model: String,
     ret: Option<String>,
 }
 
@@ -593,6 +598,19 @@ pub async fn set_profile(
         )
             .into_response();
     }
+    let model = f.model.trim();
+    if model.len() > 100
+        || !model
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._:[]/-".contains(&b))
+        || model.starts_with('-')
+    {
+        return (
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "the model name may use letters, digits and . _ : [ ] / - only",
+        )
+            .into_response();
+    }
     let target = f.target_branch.trim();
     if target.len() > 100
         || !target
@@ -616,7 +634,7 @@ pub async fn set_profile(
     }
     let _ = sqlx::query("UPDATE services SET agent_profile = agent_profile || $2 WHERE id = $1")
         .bind(id)
-        .bind(json!({"system": system, "test_command": cmd, "preview_command": pcmd, "preview_port": port, "target_branch": target}))
+        .bind(json!({"system": system, "test_command": cmd, "preview_command": pcmd, "preview_port": port, "target_branch": target, "model": model}))
         .execute(st.orch.pool())
         .await;
     let _ = sqlx::query("INSERT INTO audit_events (actor, action, detail) VALUES ('console:admin', 'service.profile', $1)")

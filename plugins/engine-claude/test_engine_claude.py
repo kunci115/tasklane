@@ -39,7 +39,7 @@ else:
     print(json.dumps({{"type": "result", "subtype": cfg.get("subtype", "success"),
         "is_error": cfg.get("is_error", False), "result": cfg.get("result", ""),
         "duration_ms": 1500, "usage": {{"input_tokens": 100, "cache_read_input_tokens": 20,
-        "output_tokens": 30}}}}))
+        "output_tokens": 30}}, **({{"modelUsage": {{m: {{}} for m in cfg["models"]}}}} if cfg.get("models") else {{}})}}))
 sys.exit(cfg.get("exit", 0))
 """
 
@@ -148,6 +148,12 @@ class Roles(Fixture):
         r = self.run_role("ask")
         self.assertEqual(r["result"]["answer"], "because")
         self.assertIn("<question>", self.record()["stdin"])
+
+    def test_the_model_the_cli_reports_is_passed_on_in_the_usage(self):
+        self.behave(result='{"verdict": "approve", "notes": "ok"}', models=["claude-sonnet-5-5", "claude-haiku-5-5"])
+        self.assertEqual(self.run_role("reviewer")["result"]["usage"]["model"], "claude-haiku-5-5,claude-sonnet-5-5")
+        self.behave(result='{"verdict": "approve", "notes": "ok"}')
+        self.assertNotIn("model", self.run_role("reviewer")["result"]["usage"])
 
     def test_reviewer_may_add_a_big_o_analysis_and_it_is_capped(self):
         self.behave(result='{"verdict": "approve", "notes": "ok", "complexity": "O(n) queries for n rows: batch them"}')
