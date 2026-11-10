@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- A ticket's pull-request branch is fixed when development starts, so changing "Branch pull requests go to" later cannot move a ticket that is under way. At most three AI reviews of pull requests run at once. Five evaluation cases for the planner role (33 in all).
 - **Plan it with the AI first** on the New project page: a planner role reads the brief, asks the questions it cannot assume (up to five, then it plans), and proposes up to eight small tickets in order. You edit or untick them; the repository and the ticked tickets are created only when you confirm. Nothing is saved between the steps (the answers travel in the page). New engine role `planner`.
 - **Knowledge** page: notes that hold for every repository (added, edited and removed there), an overview of each repository's notes, documents and instructions, and editing of any note. Each repository can list **documents the agents read first** (paths inside the repository, for example `CONTRIBUTING.md`); the agents are told to read them before they start. Notes are sent to the agents together: the team's notes for every repository, then the repository's own.
 - **Which model ran.** The Claude engine reports the model the CLI says it used, the ticket page shows it under Details, and each repository has a **Model** setting (Settings) to pin one instead of following the connected account's default.

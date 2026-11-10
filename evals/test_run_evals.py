@@ -77,6 +77,15 @@ class Harness(unittest.TestCase):
         self.assertGreaterEqual(len(cases), 20)
         self.assertEqual({c["role"] for c in cases}, set(ev.ROLES))
 
+    def test_the_planner_is_judged_on_questions_and_the_number_of_tickets(self):
+        j = ev.judge
+        self.assertIsNone(j("planner", {"questions": "some"}, {"questions": ["which?"], "tickets": []}))
+        self.assertIsNotNone(j("planner", {"questions": "some"}, {"questions": [], "tickets": [{"title": "a"}]}))
+        self.assertIsNotNone(j("planner", {"questions": "none"}, {"questions": ["why?"], "tickets": []}))
+        self.assertIsNotNone(j("planner", {"tickets_min": 2}, {"tickets": [{"title": "a"}]}))
+        self.assertIsNotNone(j("planner", {"tickets_max": 1}, {"tickets": [{}, {}]}))
+        self.assertIsNone(j("planner", {"tickets_min": 1, "tickets_max": 3}, {"tickets": [{}, {}]}))
+
     def test_a_good_engine_passes_every_case_and_tokens_are_counted(self):
         code, out = self.run_cli("--write-baseline")
         self.assertEqual(code, 0, out)

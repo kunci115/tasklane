@@ -179,11 +179,16 @@ pub(crate) struct Ticket {
     pub mode: String,
     /// From `.tasklane.yml` in the repository; it can only tighten (see the source plug-in).
     pub overrides: Value,
+    /// Fixed when development starts (see `base_branch`).
+    pub stored_base: Option<String>,
 }
 
 impl Ticket {
     /// Where pull requests go: the branch set for this repository in the console, else its default branch.
     pub fn base_branch(&self) -> String {
+        if let Some(b) = self.stored_base.as_deref().filter(|b| !b.is_empty()) {
+            return b.to_string();
+        }
         if let Some(b) = self
             .agent_profile
             .get("target_branch")
@@ -520,10 +525,10 @@ impl Orchestrator {
 
     pub(crate) async fn load_ticket(&self, ticket_id: i64) -> Result<Ticket, Error> {
         #[allow(clippy::type_complexity)]
-        let r: (String, String, String, Option<i16>, Option<String>, i16, i16, Option<String>, Option<String>, Option<String>, Option<String>, Value, Value, String, Value) =
+        let r: (String, String, String, Option<i16>, Option<String>, i16, i16, Option<String>, Option<String>, Option<String>, Option<String>, Value, Value, String, Value, Option<String>) =
             sqlx::query_as(
                 "SELECT t.state, t.external_ref, s.external_id, t.level, t.plan_hash, t.ci_runs, t.dev_attempts,
-                        t.head_sha, t.branch, t.pr_ref, t.last_error, s.facts, s.agent_profile, s.mode, s.overrides
+                        t.head_sha, t.branch, t.pr_ref, t.last_error, s.facts, s.agent_profile, s.mode, s.overrides, t.base_branch
                  FROM tickets t JOIN services s ON s.id = t.service_id WHERE t.id = $1",
             )
             .bind(ticket_id)
@@ -550,6 +555,7 @@ impl Orchestrator {
             agent_profile: r.12,
             mode: capped_mode(&r.13, &r.14),
             overrides: r.14,
+            stored_base: r.15,
         })
     }
 

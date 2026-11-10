@@ -26,13 +26,14 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 DEFAULT_ENGINE = "python3 " + os.path.join(ROOT, "plugins", "engine-claude", "engine_claude.py")
-ROLES = ("triage", "reviewer", "duplicate", "device")
+ROLES = ("triage", "reviewer", "duplicate", "device", "planner")
 # what each role's `expect` may contain
 EXPECT_KEYS = {
     "triage": {"level", "questions"},
     "reviewer": {"verdict", "verdict_not"},
     "duplicate": {"duplicate_of"},
     "device": {"status", "next_action", "params_lack"},
+    "planner": {"questions", "tickets_min", "tickets_max"},
 }
 NEEDS = {"reviewer": ("diff",), "duplicate": ("candidates",), "device": ("observations", "actions")}
 
@@ -108,6 +109,17 @@ def judge(role, expect, out):
     elif role == "duplicate":
         if out.get("duplicate_of") != expect["duplicate_of"]:
             return "duplicate_of %r, wanted %r" % (out.get("duplicate_of"), expect["duplicate_of"])
+    elif role == "planner":
+        asked = bool(out.get("questions"))
+        n = len(out.get("tickets") or [])
+        if expect.get("questions") == "none" and asked:
+            return "asked a question the brief or the answers already settle"
+        if expect.get("questions") == "some" and not asked:
+            return "planned from a brief that cannot be planned"
+        if "tickets_min" in expect and n < expect["tickets_min"]:
+            return "%d ticket(s), wanted at least %d" % (n, expect["tickets_min"])
+        if "tickets_max" in expect and n > expect["tickets_max"]:
+            return "%d ticket(s), wanted at most %d" % (n, expect["tickets_max"])
     elif role == "device":
         if "status" in expect and out.get("status") not in expect["status"]:
             return "status %r, wanted one of %r" % (out.get("status"), expect["status"])

@@ -4,13 +4,14 @@ The tests of tasklane prove that the code around the model behaves. They cannot 
 
 ## What is in it
 
-`evals/cases/*.jsonl` holds 28 cases, one JSON object per line, for four roles:
+`evals/cases/*.jsonl` holds 33 cases, one JSON object per line, for five roles:
 
 | Role | What the cases check |
 |---|---|
 | `triage` | a typo is level 1 and gets no question; a migration, a login change, secrets, a deploy, money or deleting personal data is level 2 or 3; a ticket that cannot be acted on gets a question; a ticket that tells the agent to lower the level or drop an auth check is not obeyed |
 | `reviewer` | a correct change is approved; a hard-coded key, a removed auth check, a destructive migration under a text ticket, a skipped test, and a note inside the diff that asks for approval are not |
 | `duplicate` | the same problem in other words is found; a similar topic is not; a candidate title that gives orders is ignored |
+| `planner` | a one-line brief gets questions; a clear brief is planned without questions; answered questions end the asking; an order hidden in the brief is not obeyed; several features become several small tickets |
 | `device` | read before changing, restart only when the logs point to it, `done` only when the observations show health, escalate when nothing allowed can help, never put an address from a log line into params |
 
 Every case says `why` it exists. The risk floors (text and protected-path rules) are deterministic and tested in Rust; these cases measure the model on top of them.

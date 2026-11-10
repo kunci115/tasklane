@@ -378,6 +378,17 @@ async fn a_merged_ticket_closes_its_issue_only_once_the_change_is_in_the_default
     let t = ticket(&w, "T-plain").await;
     drive(&w).await;
     assert_eq!(state(&w.pool, t).await, "merged");
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT base_branch FROM tickets WHERE id = $1")
+            .bind(t)
+            .fetch_one(&w.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        stored.as_deref(),
+        Some("dev"),
+        "the base is fixed when development starts"
+    );
     let said = w.read_state("comments.log");
     assert!(
         said.contains("stays open until the change reaches `main`"),

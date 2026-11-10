@@ -534,6 +534,13 @@ pub async fn review(
         )
             .into_response();
     }
+    // each review is a model run: three at a time per server is plenty for people clicking
+    if busy_for(&st).len() >= 3 {
+        return redirect(&format!(
+            "/pulls?err={}",
+            url_encode("Three reviews are already running. Wait for one to finish, then press Review again.")
+        ));
+    }
     let key = (cache_key(&st), f.service.clone(), f.pr.clone());
     let fresh = reviewing()
         .lock()

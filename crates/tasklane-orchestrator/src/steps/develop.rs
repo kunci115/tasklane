@@ -217,6 +217,12 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
     }
 
     let base = t.base_branch();
+    // from here on this ticket's pull request goes to this branch, whatever the setting becomes
+    sqlx::query("UPDATE tickets SET base_branch = $2 WHERE id = $1 AND base_branch IS NULL")
+        .bind(t.id)
+        .bind(&base)
+        .execute(&o.pool)
+        .await?;
     let branch = t.work_branch();
     let read_token = o.run_token(&t, &["contents:read"]).await?;
     let url = o.repo_url(&t, Some(&read_token)).await?;
