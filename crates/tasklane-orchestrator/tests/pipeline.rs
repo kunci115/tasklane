@@ -1117,6 +1117,55 @@ async fn tools_reach_only_the_roles_and_repositories_they_were_granted_for_and_t
     assert_eq!(granted[0]["base_url"], "https://own.example.com");
 }
 
+#[tokio::test]
+async fn a_message_reaches_the_next_run_once_and_a_stopped_run_starts_again_without_using_an_attempt(
+) {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    let t = ticket(&w, "T-cancelme").await;
+    w.orch
+        .add_message(t, "github:alice", "Use the existing helper")
+        .await
+        .unwrap();
+    assert!(w.orch.add_message(t, "github:alice", "   ").await.is_err());
+    w.arm("cancelled");
+    drive(&w).await;
+    assert_eq!(
+        state(&w.pool, t).await,
+        "merged",
+        "after the stop the work goes on"
+    );
+    let runs: Vec<serde_json::Value> = w
+        .read_state("profile.log")
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    let triage: Vec<&serde_json::Value> = runs.iter().filter(|o| o["role"] == "triage").collect();
+    assert_eq!(triage.len(), 2, "the stopped run and its restart");
+    for r in &triage {
+        assert_eq!(r["messages"][0]["from"], "github:alice");
+        assert_eq!(r["messages"][0]["body"], "Use the existing helper");
+        assert_eq!(r["run_key"], format!("t{t}"));
+    }
+    // delivered once the restart succeeded: later runs do not get it again
+    let dev = runs.iter().find(|o| o["role"] == "dev").unwrap();
+    assert!(dev["messages"].as_array().unwrap().is_empty(), "{dev}");
+    let pending: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM ticket_messages WHERE delivered_at IS NULL")
+            .fetch_one(&w.pool)
+            .await
+            .unwrap();
+    assert_eq!(pending, 0);
+    let attempts: i16 = sqlx::query_scalar("SELECT dev_attempts FROM tickets WHERE id = $1")
+        .bind(t)
+        .fetch_one(&w.pool)
+        .await
+        .unwrap();
+    assert_eq!(attempts, 1, "stopping a run did not use up an attempt");
+}
+
 fn read_state_contains(w: &World, name: &str, needle: &str) -> bool {
     w.read_state(name).contains(needle)
 }

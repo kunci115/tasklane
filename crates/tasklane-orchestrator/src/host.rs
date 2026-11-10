@@ -110,6 +110,11 @@ impl PluginClient {
         })
     }
 
+    /// The command and environment the plug-in was started with (to run a one-shot helper of the same program).
+    pub fn spec(&self) -> PluginSpec {
+        self.spec.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
     /// Replace the plug-in's command or environment (for example after the user connected an account
     /// in the console) and start it again with the new settings. In-flight calls to the old process fail.
     pub async fn reconfigure(&self, spec: PluginSpec) -> Result<(), CallError> {

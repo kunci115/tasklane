@@ -48,6 +48,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
             None
         }
     };
+    let pending = o.pending_messages(t.id).await;
     let out = o
         .engine
         .call(
@@ -59,6 +60,8 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
                 "profile": o.profile_for(&t).await,
                 "account_owner": o.account_owner(t.id, &super::text_of(&item, "author")).await,
                 "references": o.references_for(&t.service).await,
+                "messages": pending.0,
+                "run_key": format!("t{}", t.id),
                 "tools": o.tools_for(&t.service, "triage").await,
                 "workspace": workspace.as_ref().map(|p| p.worktree.clone()),
                 "budget": {"max_secs": o.cfg.call_timeout.as_secs(), "max_tokens": 100000},
@@ -72,6 +75,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
     }
     let out = out?;
     o.record_run(job, "triage", &out).await?;
+    o.mark_messages_delivered(&pending.1).await;
     let out: TriageOutput =
         serde_json::from_value(out).map_err(|e| Error::BadOutput(e.to_string()))?;
     let suggestion = Level::try_from(out.level).map_err(Error::BadOutput)?;

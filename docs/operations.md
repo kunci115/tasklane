@@ -290,6 +290,10 @@ Anyone in a registered group can read what `/ask` can read from that repository.
 - **`readyz` fails:** the database is unreachable.
 - **Nothing happens after installing the App:** check the repository's mode, that the issue is new (not older than the install), and the daemon log for `sync:` lines.
 
+## Talking to an agent that is working
+
+Every unfinished ticket has a **Message to the agent** box (owners and team approvers). **Send** keeps the message with your name and gives it to the next run on the ticket. **Stop and restart now** (shown while a run may be going on) ends the run and starts it again at once with the message; the stopped run's unsaved work is dropped and no attempt is used up. The agent cannot be spoken to in the middle of a run: a run is one request to the model, so a message always takes effect at the start of a run. The message never overrides the safety rules, and the agent is told who wrote it.
+
 ## People and their model accounts
 
 Under **People** an owner can create a console sign-in for each person (a token shown once). They sign in with it, see the work, approve what their role allows (their name is recorded as the approver) and add their own Claude account under **My account**. Work that a person approved runs on their account first, then on the shared accounts if theirs is used up; nobody's account is used for somebody else's work. Owners keep the settings (Repositories, People, Model accounts, Connections). The admin token still exists and acts as the console admin.

@@ -23,6 +23,10 @@ def once(name):
     return False
 
 
+class Cancelled(Exception):
+    """A person stopped the run (what engine-claude reports after a cancel)."""
+
+
 class UsedUp(Exception):
     """Every model account is used up (what engine-claude reports when its pool is empty)."""
 
@@ -69,7 +73,7 @@ def _run(params):
     role = params.get("role", "triage")
     with open(os.path.join(STATE, "profile.log"), "a") as f:
         f.write(json.dumps({"role": role, "system": (params.get("profile") or {}).get("system", ""),
-                            "owner": params.get("account_owner"),
+                            "owner": params.get("account_owner"), "messages": params.get("messages"), "run_key": params.get("run_key"),
                             "references": [r["name"] for r in params.get("references") or []],
                             "tools": [{"name": t["name"], "header": t.get("header_value")} for t in params.get("tools") or []]}) + "\n")
     ref = params["ticket"]["ref"]
@@ -98,6 +102,8 @@ def _run(params):
             time.sleep(2.5)
         if "usedup" in ref and once("used_up"):
             raise UsedUp()
+        if "cancelme" in ref and once("cancelled"):
+            raise Cancelled()
         if "crash" in ref:
             os._exit(1)
         if "badjson" in ref:
@@ -351,6 +357,8 @@ for line in sys.stdin:
         resp = {"id": req["id"], "ok": True, "result": handle(req["op"], req.get("params") or {})}
     except KeyError as e:
         resp = {"id": req["id"], "ok": False, "error": {"kind": "permanent", "message": f"unknown op {e}"}}
+    except Cancelled:
+        resp = {"id": req["id"], "ok": False, "error": {"kind": "transient", "message": "cancelled by a person"}}
     except UsedUp:
         resp = {"id": req["id"], "ok": False, "error": {"kind": "rate_limited", "message": "every model account is used up", "retry_after_secs": 60}}
     except ValueError as e:

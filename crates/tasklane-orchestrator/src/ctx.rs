@@ -375,6 +375,17 @@ impl Orchestrator {
                     Err(e) => Err(e.into()),
                 }
             }
+            // A person stopped the run to start it again with a message: back to the queue at once,
+            // and the attempt does not count.
+            Err(Error::Plugin(crate::host::CallError::Plugin(e)))
+                if e.message == "cancelled by a person" =>
+            {
+                match self.queue.defer(&job, 0.0).await {
+                    Ok(()) => Ok(RunResult::Waiting),
+                    Err(tasklane_queue::Error::LeaseLost) => Ok(RunResult::LeaseLost),
+                    Err(e) => Err(e.into()),
+                }
+            }
             Err(e @ (Error::Plugin(_) | Error::BadOutput(_) | Error::Git(_))) => {
                 eprintln!("job {} ({}): {e}", job.id, job.kind);
                 match self.queue.fail(&job).await {

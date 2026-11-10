@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Message to the agent** on every ticket that is not finished (owners and team approvers): the message is kept with your name and given to the next run on the ticket (triage, development or review) as a team message that the agent follows in addition to the issue but that never overrides the safety rules. **Stop and restart now** ends the run that is going on (a one-shot `--cancel` of the engine plug-in; the run reports "cancelled by a person") and puts the job back in the queue at once without using up an attempt; what the run had written so far is dropped. New table `ticket_messages`; engine `run` takes `messages` and `run_key`.
+
 ## 0.1.0-alpha.3 (2026-11-10)
 
 - **Tools the agents may use** (Knowledge page): an owner grants a read-only tool per repository and per agent role (triage and reviewer by default, the developer only if ticked): a name, a base address, an optional credential header and a call limit. While it works the agent can look things up (for example an API's description or a schema service) through an MCP shim that talks to a broker on the host over a Unix socket; the broker does the GET below the base address with the credential and returns text. No network or secret is added to the sandbox (the image already has node). Calls are counted per tool; the Try button runs one the way the agent would. New engine operation `tool_test`; new file `tl_mcp_shim.js`; threat T13 in the threat model.

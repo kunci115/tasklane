@@ -707,6 +707,12 @@ pub async fn detail(
             icon("refresh")
         ));
     }
+    if !matches!(
+        d.state.as_str(),
+        "merged" | "closed_done" | "closed_rejected" | "closed_stale" | "closed_duplicate"
+    ) {
+        b.push_str(&message_card(&st, id, &d.state, &sess.csrf).await);
+    }
     // layout
     b.push_str("<div class=\"grid\" style=\"grid-template-columns:minmax(0,2fr) minmax(0,1fr);align-items:start\"><div>");
     if let Some(plan) = &d.plan {
@@ -1098,4 +1104,100 @@ mod tests {
         assert_eq!(who("console:admin"), "you");
         assert_eq!(who("orchestrator"), "tasklane");
     }
+}
+
+/// Send the agent a message (given to its next run), or stop the run that is going on and start it again
+/// with the message. Only for people who can approve.
+async fn message_card(st: &AppState, id: i64, state: &str, csrf: &str) -> String {
+    let rows: Vec<(String, String, bool)> = sqlx::query_as(
+        "SELECT author, body, delivered_at IS NOT NULL FROM ticket_messages WHERE ticket_id = $1 ORDER BY id DESC LIMIT 5",
+    )
+    .bind(id)
+    .fetch_all(st.orch.pool())
+    .await
+    .unwrap_or_default();
+    // states in which a model run may be going on right now
+    let running = matches!(state, "new" | "developing" | "reviewing");
+    let mut h =
+        String::from("<div class=\"card\" style=\"margin:1rem 0\"><h2>Message to the agent</h2>");
+    h.push_str(if running {
+        "<p class=\"hint\">The agent is working or about to. <strong>Send</strong> gives it your message at its next step. <strong>Stop and restart now</strong> ends the run that is going on and starts it again at once with your message (what it had written so far is dropped; no attempt is used up).</p>"
+    } else {
+        "<p class=\"hint\">Your message is given to the next run on this ticket (after approval, or when you try again). It comes with your name; the agent follows it in addition to the issue, but it never overrides the safety rules.</p>"
+    });
+    for (body, delivered) in rows.iter().map(|r| (format!("{}: {}", r.0, r.1), r.2)) {
+        h.push_str(&format!(
+            "<p class=\"small\">{} <span class=\"pill {}\">{}</span></p>",
+            esc(&body),
+            if delivered { "ok" } else { "warn" },
+            if delivered {
+                "given"
+            } else {
+                "waiting for the next run"
+            }
+        ));
+    }
+    h.push_str(&format!(
+        "<form method=\"post\" action=\"/tickets/{id}/message\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><div class=\"field\"><textarea name=\"body\" rows=\"3\" maxlength=\"2000\" required placeholder=\"For example: use the existing date helper in utils/, and do not touch the schema.\"></textarea></div><div class=\"btns\"><button class=\"btn primary\" name=\"now\" value=\"0\">Send</button>{}</div></form></div>",
+        esc(csrf),
+        if running {
+            "<button class=\"btn danger\" name=\"now\" value=\"1\" data-confirm=\"Stop the run that is going on and start it again with this message?\">Stop and restart now</button>"
+        } else {
+            ""
+        }
+    ));
+    h
+}
+
+#[derive(Deserialize)]
+pub struct MessageIn {
+    csrf: String,
+    body: String,
+    now: Option<String>,
+}
+
+pub async fn send_message(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Form(f): Form<MessageIn>,
+) -> Response {
+    let sess = match guard(&st, &headers).await {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    if !csrf_ok(&st, &headers, &f.csrf).await {
+        return forbidden();
+    }
+    if !matches!(sess.role.as_str(), "owner" | "team_approver") {
+        return forbidden();
+    }
+    let state: Option<String> = sqlx::query_scalar("SELECT state FROM tickets WHERE id = $1")
+        .bind(id)
+        .fetch_optional(st.orch.pool())
+        .await
+        .ok()
+        .flatten();
+    let Some(state) = state else {
+        return (StatusCode::NOT_FOUND, "no such ticket").into_response();
+    };
+    if state.starts_with("closed_") || state == "merged" {
+        return (StatusCode::CONFLICT, "That ticket is finished.").into_response();
+    }
+    let author = format!("{}:{}", sess.channel, sess.reference);
+    if let Err(e) = st.orch.add_message(id, &author, &f.body).await {
+        return (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()).into_response();
+    }
+    let mut stopped = false;
+    if f.now.as_deref() == Some("1") && matches!(state.as_str(), "new" | "developing" | "reviewing")
+    {
+        stopped = st.orch.stop_running(id).await;
+    }
+    let _ = sqlx::query("INSERT INTO audit_events (actor, action, ticket_id, detail) VALUES ($1, 'ticket.message', $2, $3)")
+        .bind(&author)
+        .bind(id)
+        .bind(serde_json::json!({"restart": f.now.as_deref() == Some("1"), "stopped_a_run": stopped}))
+        .execute(st.orch.pool())
+        .await;
+    redirect(&format!("/tickets/{id}"))
 }

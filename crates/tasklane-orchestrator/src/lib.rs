@@ -18,6 +18,7 @@ mod duplicates;
 mod feedback;
 pub mod host;
 pub mod memory;
+mod messages;
 mod ownership;
 mod pulls;
 mod references;

@@ -233,6 +233,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         .checkpoint(job, &json!({"stage": "workspace"}))
         .await?;
 
+    let pending = o.pending_messages(t.id).await;
     let out = o
         .engine
         .call(
@@ -243,6 +244,8 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
                 "profile": o.profile_for(&t).await,
                 "account_owner": o.account_owner(t.id, &super::text_of(&item, "author")).await,
                 "references": o.references_for(&t.service).await,
+                "messages": pending.0,
+                "run_key": format!("t{}", t.id),
                 "tools": o.tools_for(&t.service, "dev").await,
                 "workspace": prepared.worktree,
                 "feedback": t.last_error,
@@ -260,6 +263,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         }
     };
     o.record_run(job, "dev", &out).await?;
+    o.mark_messages_delivered(&pending.1).await;
     let summary = out
         .get("summary")
         .and_then(Value::as_str)

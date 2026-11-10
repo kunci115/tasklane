@@ -3230,6 +3230,110 @@ async fn reference_documents_are_added_read_and_removed_and_their_credential_sta
 }
 
 #[tokio::test]
+async fn people_who_can_approve_send_the_agent_a_message_and_others_cannot() {
+    let Some(e) = env().await else { return };
+    let t = seed_ticket(&e, "71", "Working on it", "developing", 1).await;
+    let post = |cookie: &str, csrf: &str, body: &str| {
+        form(
+            &format!("/tickets/{t}/message"),
+            format!("csrf={csrf}&{body}"),
+            Some(cookie.to_string()),
+        )
+    };
+    let (_, _, page) = send(
+        &e.app,
+        get(&format!("/tickets/{t}"), Some(e.cookie.clone())),
+    )
+    .await;
+    assert!(page.contains("Message to the agent") && page.contains("Stop and restart now"));
+    let (st, _, _) = send(&e.app, post(&e.cookie, "nope", "body=hi&now=0")).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, _, _) = send(&e.app, post(&e.cookie, &e.csrf, "body=+++&now=0")).await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    let (st, _, _) = send(
+        &e.app,
+        post(
+            &e.cookie,
+            &e.csrf,
+            "body=Use+the+existing+%3Cb%3Ehelper%3C%2Fb%3E&now=1",
+        ),
+    )
+    .await;
+    assert!(st.is_redirection());
+    let (author, body): (String, String) =
+        sqlx::query_as("SELECT author, body FROM ticket_messages WHERE ticket_id = $1")
+            .bind(t)
+            .fetch_one(&e.pool)
+            .await
+            .unwrap();
+    assert_eq!(author, "console:admin");
+    assert!(body.contains("existing <b>helper"));
+    let (_, _, page) = send(
+        &e.app,
+        get(&format!("/tickets/{t}"), Some(e.cookie.clone())),
+    )
+    .await;
+    assert!(page.contains("existing &lt;b&gt;helper") && page.contains("waiting for the next run"));
+    let acts: Vec<String> = sqlx::query_scalar(
+        "SELECT action FROM audit_events WHERE ticket_id = $1 AND action = 'ticket.message'",
+    )
+    .bind(t)
+    .fetch_all(&e.pool)
+    .await
+    .unwrap();
+    assert_eq!(acts.len(), 1);
+    // a member cannot; a team approver can
+    for (who, role, ok) in [("mia", "member", false), ("tom", "team_approver", true)] {
+        let (id,): (i64,) = sqlx::query_as(
+            "INSERT INTO principals (channel, ref, role) VALUES ('github', $1, $2) RETURNING id",
+        )
+        .bind(who)
+        .bind(role)
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+        let (_, _, shown) = send(
+            &e.app,
+            form(
+                &format!("/people/{id}/token"),
+                format!("csrf={}", e.csrf),
+                Some(e.cookie.clone()),
+            ),
+        )
+        .await;
+        let token = shown
+            .split("<code")
+            .nth(1)
+            .and_then(|x| x.split('>').nth(1))
+            .and_then(|x| x.split('<').next())
+            .unwrap()
+            .to_string();
+        let cookie = sign_in(&e, &token).await.unwrap();
+        let csrf: String =
+            sqlx::query_scalar("SELECT csrf FROM console_sessions WHERE principal_id = $1")
+                .bind(id)
+                .fetch_one(&e.pool)
+                .await
+                .unwrap();
+        let (st, _, _) = send(&e.app, post(&cookie, &csrf, "body=from+me&now=0")).await;
+        assert_eq!(st.is_redirection(), ok, "{who}");
+        assert_eq!(st == StatusCode::FORBIDDEN, !ok, "{who}");
+    }
+    // a finished ticket takes none
+    let done = seed_ticket(&e, "72", "Done", "merged", 1).await;
+    let (st, _, _) = send(
+        &e.app,
+        form(
+            &format!("/tickets/{done}/message"),
+            format!("csrf={}&body=late", e.csrf),
+            Some(e.cookie.clone()),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CONFLICT);
+}
+
+#[tokio::test]
 async fn the_admin_token_can_be_changed_in_the_console_and_the_old_one_stops_working() {
     let Some(e) = env().await else { return };
     let other = sign_in(&e, ADMIN).await.expect("a second admin session");

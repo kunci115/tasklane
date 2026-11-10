@@ -49,6 +49,7 @@ pub fn routes(st: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/tickets/{id}", get(tickets::detail))
         .route("/fragments/ticket/{id}", get(tickets::live_fragment))
         .route("/tickets/{id}/decide", post(tickets::decide_form))
+        .route("/tickets/{id}/message", post(tickets::send_message))
         .route("/tickets/{id}/retry", post(tickets::retry_form))
         .route("/tickets/{id}/duplicate", post(tickets::duplicate_form))
         .route("/services", get(repos::page))
@@ -146,7 +147,10 @@ fn allowed_for_member(method: &axum::http::Method, path: &str) -> bool {
             | (true, ["manifest.webmanifest"])
             | (true, ["login"])
             | (false, ["logout"])
-            | (false, ["tickets", _, "decide" | "retry" | "duplicate"])
+            | (
+                false,
+                ["tickets", _, "decide" | "retry" | "duplicate" | "message"]
+            )
             | (false, ["me", "account"] | ["me", "account", "remove"])
     )
 }
