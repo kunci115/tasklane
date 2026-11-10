@@ -105,4 +105,93 @@ impl Orchestrator {
         }
         out
     }
+
+    fn tool_secret(&self, id: i64) -> Option<String> {
+        std::fs::read_to_string(self.cfg.data_dir.join("secrets").join(format!("tool_{id}")))
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// The tools the owner granted for a run of `role` in `service`: the grants for every repository and
+    /// for this one that name the role. The credential goes to the engine's broker, never to the agent.
+    pub async fn tools_for(&self, service: &str, role: &str) -> Vec<Value> {
+        #[allow(clippy::type_complexity)]
+        let rows: Vec<(i64, String, String, String, Option<String>, bool, i32)> = sqlx::query_as(
+            "SELECT t.id, t.name, t.description, t.base_url, t.header_name, t.has_secret, t.max_calls
+             FROM agent_tools t LEFT JOIN services s ON s.id = t.service_id
+             WHERE t.enabled AND $3 = ANY(t.roles) AND (t.service_id IS NULL OR (s.source = $1 AND s.external_id = $2))
+             ORDER BY t.service_id NULLS FIRST, t.id LIMIT 12",
+        )
+        .bind(&self.cfg.source_name)
+        .bind(service)
+        .bind(role)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default();
+        let mut seen = std::collections::HashSet::new();
+        let mut out = vec![];
+        // a repository's own grant of the same name replaces the global one
+        for (id, name, description, base_url, header_name, has_secret, max_calls) in
+            rows.into_iter().rev()
+        {
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            let value = if has_secret {
+                self.tool_secret(id)
+            } else {
+                None
+            };
+            out.push(json!({"id": id, "name": name, "description": description, "base_url": base_url,
+                            "header_name": header_name, "header_value": value, "max_calls": max_calls}));
+        }
+        out.reverse();
+        out
+    }
+
+    /// Count the calls an engine run reported (`usage.tool_calls`: grant id to calls).
+    pub(crate) async fn count_tool_calls(&self, out: &Value) {
+        let Some(calls) = out.pointer("/usage/tool_calls").and_then(Value::as_object) else {
+            return;
+        };
+        for (id, n) in calls {
+            if let (Ok(id), Some(n)) = (id.parse::<i64>(), n.as_i64()) {
+                let _ = sqlx::query(
+                    "UPDATE agent_tools SET calls_total = calls_total + $2 WHERE id = $1",
+                )
+                .bind(id)
+                .bind(n.clamp(0, 1000))
+                .execute(&self.pool)
+                .await;
+            }
+        }
+    }
+
+    /// Try a tool as the agent would, with one path. Returns the text or the reason it failed.
+    pub async fn test_tool(&self, id: i64, path: &str) -> Result<String, String> {
+        let row: Option<(String, Option<String>, bool)> = sqlx::query_as(
+            "SELECT base_url, header_name, has_secret FROM agent_tools WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| e.to_string())?;
+        let Some((base_url, header_name, has_secret)) = row else {
+            return Err("unknown tool".into());
+        };
+        let value = if has_secret {
+            self.tool_secret(id)
+        } else {
+            None
+        };
+        self.engine_call_with(
+            "tool_test",
+            json!({"base_url": base_url, "header_name": header_name, "header_value": value, "path": path}),
+            Duration::from_secs(30),
+        )
+        .await
+        .map(|v| v.get("text").and_then(Value::as_str).unwrap_or("").to_string())
+        .map_err(|e| e.to_string().chars().take(300).collect())
+    }
 }

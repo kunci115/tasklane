@@ -1,6 +1,6 @@
 # Agent access to other services
 
-Status: **step one is built** (reference documents, below). Interactive tools (MCP servers the agent calls while it works) are still a proposal.
+Status: **built in two steps**: reference documents (the daemon hands the text over once) and read-only tools (the agent asks while it works, through a broker). Servers that speak MCP themselves, writing tools and database drivers are still not supported.
 
 ## Built: reference documents
 
@@ -8,9 +8,17 @@ The owner lists documents on the Knowledge page (an internal wiki page, an API d
 
 Limits: up to 8 documents (300 000 characters) per run; the agent reads them as background and cannot query a service. What a document says is untrusted: point only at pages your own people write.
 
-## Not built: interactive tools
+## Built: read-only tools through a broker
 
-Status of the rest: **proposal.** Nothing below is implemented. Today the Claude engine runs with `--strict-mcp-config` and no MCP configuration, a fixed tool list (Read, Grep, Glob; for the developer Edit, Write and a few git commands plus the repository's test command) and an egress proxy that allows only the model API. That is deliberate: an agent that reads untrusted ticket text must not be able to reach anything else.
+On the Knowledge page an owner grants a tool: a name, a base address, an optional credential header, the agents allowed to use it (triage and reviewer by default, the developer only if ticked), a repository or all, and a call limit. For each run the engine plug-in (on the host) starts a broker listening on a Unix socket in a private directory and writes an MCP configuration that points the agent's CLI at `tl_mcp_shim.js`, a small MCP server that runs next to the agent (in the sandbox, the script and the socket directory are mounted read-only; no network is added) and forwards each call to the broker. The broker checks the per-run token, then does a GET below the base address with the credential, and returns text. The shim has no credential and no network. The per-run token sits in a file in the broker's private directory (never on a command line); the directory and socket are private to the daemon's user when the sandbox runs as that user (the normal case), and otherwise can be entered but not listed. Use is counted per tool and shown on the page.
+
+What the agent can do: call the tools granted for this run, with a `path`; nothing else. The rules in the list above hold: only the owner writes grants; per repository and role; read only; no secret in the agent; counted; answers are data.
+
+Unsupported: tools that write, drivers (a database is reached through an HTTP service that you put in front of it), MCP servers started by the repository, and anything that needs a network inside the sandbox.
+
+## Original proposal (kept for the reasoning)
+
+Status of what follows: superseded by the broker above. Today the Claude engine runs with `--strict-mcp-config` and no MCP configuration, a fixed tool list (Read, Grep, Glob; for the developer Edit, Write and a few git commands plus the repository's test command) and an egress proxy that allows only the model API. That is deliberate: an agent that reads untrusted ticket text must not be able to reach anything else.
 
 ## The need
 

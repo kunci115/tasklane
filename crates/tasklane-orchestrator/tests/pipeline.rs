@@ -1041,6 +1041,82 @@ async fn reference_documents_reach_the_agents_are_cached_and_survive_a_failing_a
     assert!(status.starts_with("failed"), "{status}");
 }
 
+#[tokio::test]
+async fn tools_reach_only_the_roles_and_repositories_they_were_granted_for_and_their_use_is_counted(
+) {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    std::fs::create_dir_all(w.dir.path().join("data/secrets")).unwrap();
+    // global for triage; this repository's own for reviewer (with a credential); one that is off;
+    // and one for another repository
+    sqlx::query("INSERT INTO agent_tools (name, base_url, roles) VALUES ('wiki', 'https://wiki.example.com', '{triage}')")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    let id: i64 = sqlx::query_scalar("INSERT INTO agent_tools (name, base_url, roles, header_name, has_secret, service_id) SELECT 'db_schema', 'https://api.example.com/v1', '{reviewer}', 'Authorization', true, id FROM services RETURNING id")
+        .fetch_one(&w.pool)
+        .await
+        .unwrap();
+    std::fs::write(
+        w.dir.path().join(format!("data/secrets/tool_{id}")),
+        "Bearer s3\n",
+    )
+    .unwrap();
+    sqlx::query("INSERT INTO agent_tools (name, base_url, roles, enabled) VALUES ('off_one', 'https://x.example.com', '{triage,dev,reviewer}', false)")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    let other: i64 = sqlx::query_scalar("INSERT INTO services (kind, source, external_id, mode) VALUES ('repo','test','org/other','full') RETURNING id")
+        .fetch_one(&w.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO agent_tools (name, base_url, roles, service_id) VALUES ('elsewhere', 'https://z.example.com', '{triage,dev,reviewer}', $1)")
+        .bind(other)
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    let t = ticket(&w, "T-plain").await;
+    drive(&w).await;
+    assert_eq!(state(&w.pool, t).await, "merged");
+    let runs: Vec<serde_json::Value> = w
+        .read_state("profile.log")
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    let names = |role: &str| -> Vec<String> {
+        runs.iter().find(|o| o["role"] == role).unwrap()["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(names("triage"), vec!["wiki"]);
+    assert_eq!(names("reviewer"), vec!["db_schema"]);
+    assert!(names("dev").is_empty(), "the developer was granted nothing");
+    let reviewer = runs.iter().find(|o| o["role"] == "reviewer").unwrap();
+    assert_eq!(
+        reviewer["tools"][0]["header"], "Bearer s3",
+        "the engine's broker gets the credential"
+    );
+    let calls: i64 =
+        sqlx::query_scalar("SELECT calls_total FROM agent_tools WHERE name = 'db_schema'")
+            .fetch_one(&w.pool)
+            .await
+            .unwrap();
+    assert_eq!(calls, 2, "the engine's report of calls is counted");
+    // a repository's own tool of the same name replaces the global one
+    sqlx::query("INSERT INTO agent_tools (name, base_url, roles, service_id) SELECT 'wiki', 'https://own.example.com', '{triage}', id FROM services WHERE external_id = 'org/repo'")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    let granted = w.orch.tools_for("org/repo", "triage").await;
+    assert_eq!(granted.len(), 1);
+    assert_eq!(granted[0]["base_url"], "https://own.example.com");
+}
+
 fn read_state_contains(w: &World, name: &str, needle: &str) -> bool {
     w.read_state(name).contains(needle)
 }

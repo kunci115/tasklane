@@ -443,6 +443,7 @@ impl Orchestrator {
         .bind(usage)
         .execute(&self.pool)
         .await?;
+        self.count_tool_calls(out).await;
         self.charge(job.ticket_id, out).await
     }
 

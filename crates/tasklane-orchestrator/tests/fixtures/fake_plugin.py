@@ -58,11 +58,20 @@ def item(ref):
 
 
 def run(params):
+    out = _run(params)
+    tools = params.get("tools") or []
+    if tools and isinstance(out, dict):
+        out.setdefault("usage", {})["tool_calls"] = {str(tools[0]["id"]): 2}
+    return out
+
+
+def _run(params):
     role = params.get("role", "triage")
     with open(os.path.join(STATE, "profile.log"), "a") as f:
         f.write(json.dumps({"role": role, "system": (params.get("profile") or {}).get("system", ""),
                             "owner": params.get("account_owner"),
-                            "references": [r["name"] for r in params.get("references") or []]}) + "\n")
+                            "references": [r["name"] for r in params.get("references") or []],
+                            "tools": [{"name": t["name"], "header": t.get("header_value")} for t in params.get("tools") or []]}) + "\n")
     ref = params["ticket"]["ref"]
     if role == "planner":
         t = params["ticket"]
@@ -271,6 +280,12 @@ def handle(op, params):
         if "fail" in params["url"]:
             raise ValueError("the address answered 500")
         return {"text": "Doc from " + params["url"], "bytes": 10, "cut": False}
+    if op == "tool_test":
+        with open(os.path.join(STATE, "tool_test.log"), "a") as f:
+            f.write(json.dumps({"base": params["base_url"], "path": params["path"], "value": params.get("header_value")}) + "\n")
+        if "bad" in params["path"]:
+            raise ValueError("the address answered 500")
+        return {"text": "Tool answer for " + params["path"], "cut": False}
     if op == "branch_exists":
         return {"exists": params["branch"] not in read_json("missing_branches.json", [])}
     if op == "in_branch":

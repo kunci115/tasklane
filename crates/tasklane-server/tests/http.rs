@@ -3050,6 +3050,100 @@ async fn a_person_signs_in_with_their_own_token_and_acts_as_themselves() {
 }
 
 #[tokio::test]
+async fn tools_for_the_agents_are_granted_per_repository_and_role_and_their_credential_stays_secret(
+) {
+    let Some(e) = env().await else { return };
+    let post = |path: &str, body: String| form(path, body, Some(e.cookie.clone()));
+    let add = |extra: &str| post("/knowledge/tools", format!("csrf={}&{extra}", e.csrf));
+    for bad in [
+        "name=Bad+Name&url=https%3A%2F%2Fapi.example.com%2Fv1&role_triage=on",
+        "name=schema&url=ftp%3A%2F%2Fx%2Fy&role_triage=on",
+        "name=schema&url=https%3A%2F%2Fu%3Ap%40api.example.com%2Fv1&role_triage=on",
+        "name=schema&url=https%3A%2F%2Fapi.example.com%2Fv1",
+        "name=schema&url=https%3A%2F%2Fapi.example.com%2Fv1&role_triage=on&header_name=Authorization",
+        "name=schema&url=https%3A%2F%2Fapi.example.com%2Fv1&role_triage=on&service_id=abc",
+    ] {
+        let (st, _, _) = send(&e.app, add(bad)).await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
+    }
+    let repo: i64 = sqlx::query_scalar("SELECT id FROM services WHERE external_id = 'org/repo'")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    let (st, _, _) = send(
+        &e.app,
+        add(&format!("name=db_schema&description=Tables+of+the+orders+database&url=https%3A%2F%2Fapi.example.com%2Fv1&service_id={repo}&header_name=Authorization&header_value=Bearer+tool-secret-9&role_triage=on&role_dev=on&max_calls=5")),
+    )
+    .await;
+    assert!(st.is_redirection());
+    let id: i64 = sqlx::query_scalar("SELECT id FROM agent_tools WHERE name = 'db_schema'")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    let roles: Vec<String> =
+        sqlx::query_scalar("SELECT unnest(roles) FROM agent_tools WHERE id = $1 ORDER BY 1")
+            .bind(id)
+            .fetch_all(&e.pool)
+            .await
+            .unwrap();
+    assert_eq!(roles, vec!["dev", "triage"]);
+    let secret = e.dir.path().join("secrets").join(format!("tool_{id}"));
+    assert_eq!(
+        std::fs::read_to_string(&secret).unwrap().trim(),
+        "Bearer tool-secret-9"
+    );
+    let (_, _, page) = send(&e.app, get("/knowledge", Some(e.cookie.clone()))).await;
+    assert!(
+        page.contains("db_schema")
+            && page.contains("api.example.com/v1")
+            && page.contains("org/repo")
+    );
+    assert!(
+        !page.contains("tool-secret-9"),
+        "the credential is never shown again"
+    );
+    // the same name twice for one repository is refused
+    let (st, _, _) = send(
+        &e.app,
+        add(&format!(
+            "name=db_schema&url=https%3A%2F%2Fother.example.com&service_id={repo}&role_triage=on"
+        )),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    // trying it goes through the engine with the credential and shows the answer
+    let (_, _, tried) = send(
+        &e.app,
+        post(
+            &format!("/knowledge/tools/{id}/test"),
+            format!("csrf={}&path=%2Ftables", e.csrf),
+        ),
+    )
+    .await;
+    assert!(tried.contains("Tool answer for /tables"), "{tried}");
+    let log = std::fs::read_to_string(e.dir.path().join("state/tool_test.log")).unwrap();
+    assert!(log.contains("Bearer tool-secret-9") && log.contains("api.example.com/v1"));
+    let (_, _, failed) = send(
+        &e.app,
+        post(
+            &format!("/knowledge/tools/{id}/test"),
+            format!("csrf={}&path=%2Fbad", e.csrf),
+        ),
+    )
+    .await;
+    assert!(failed.contains("failed"));
+    send(
+        &e.app,
+        post(
+            &format!("/knowledge/tools/{id}/delete"),
+            format!("csrf={}", e.csrf),
+        ),
+    )
+    .await;
+    assert!(!secret.exists());
+}
+
+#[tokio::test]
 async fn reference_documents_are_added_read_and_removed_and_their_credential_stays_secret() {
     let Some(e) = env().await else { return };
     let post = |path: &str, body: String| form(path, body, Some(e.cookie.clone()));

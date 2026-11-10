@@ -2,6 +2,7 @@ import json
 import re
 import os
 import subprocess
+import shutil
 import sys
 import tempfile
 import unittest
@@ -28,6 +29,19 @@ import json, os, sys, time
 d = os.path.dirname(os.path.abspath(__file__))
 cfg = json.load(open(os.path.join(d, "behavior.json")))
 rec = {{"argv": sys.argv[1:], "cwd": os.getcwd(), "env": dict(os.environ), "stdin": sys.stdin.read()}}
+if cfg.get("mcp_call") and "--mcp-config" in sys.argv:
+    import subprocess as sp
+    conf = json.load(open(sys.argv[sys.argv.index("--mcp-config") + 1]))["mcpServers"]["tasklane"]
+    env = dict(os.environ, **conf["env"])
+    pr = sp.Popen([conf["command"]] + conf["args"], stdin=sp.PIPE, stdout=sp.PIPE, env=env, text=True)
+    def rpc(m):
+        pr.stdin.write(json.dumps(m) + "\\n"); pr.stdin.flush()
+        return json.loads(pr.stdout.readline())
+    rpc({{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {{}}}})
+    rec["mcp_tools"] = rpc({{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}})["result"]["tools"]
+    rec["mcp_answer"] = rpc({{"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                              "params": {{"name": "schema", "arguments": {{"path": cfg["mcp_call"]}}}}}})["result"]
+    pr.stdin.close(); pr.wait(timeout=10)
 json.dump(rec, open(os.path.join(d, "record.json"), "w"))
 if cfg.get("sleep"):
     time.sleep(cfg["sleep"])
@@ -148,6 +162,36 @@ class Roles(Fixture):
         r = self.run_role("ask")
         self.assertEqual(r["result"]["answer"], "because")
         self.assertIn("<question>", self.record()["stdin"])
+
+    @unittest.skipUnless(shutil.which("node"), "node is needed for the MCP shim")
+    def test_granted_tools_reach_the_agent_through_a_broker_that_lasts_for_the_run(self):
+        import test_tool_broker as ttb
+        srv = ttb.http.server.HTTPServer(("127.0.0.1", 0), ttb.Docs)
+        ttb.threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            base = "http://127.0.0.1:%d/api" % srv.server_port
+            self.behave(result='{"verdict": "approve", "notes": "ok"}', mcp_call="/tables")
+            tools = [{"id": 5, "name": "schema", "description": "Database schema", "base_url": base,
+                      "header_name": "Authorization", "header_value": "Bearer s3cret", "max_calls": 3}]
+            r = self.run_role("reviewer", extra={"tools": tools})
+            self.assertTrue(r["ok"], r)
+            rec = self.record()
+            argv = rec["argv"]
+            self.assertIn("--strict-mcp-config", argv)
+            self.assertNotIn("TL_TOKEN", " ".join(argv), "the per-run token is never on a command line")
+            self.assertIn("mcp__tasklane__schema", flag(argv, "--allowedTools"))
+            self.assertEqual(flag(argv, "--tools"), "Read,Grep,Glob", "built-in tools are unchanged")
+            self.assertIn("mcp__tasklane__", flag(argv, "--append-system-prompt"))
+            self.assertEqual([t["name"] for t in rec["mcp_tools"]], ["schema"])
+            self.assertIn("orders", rec["mcp_answer"]["content"][0]["text"])
+            self.assertEqual(r["result"]["usage"]["tool_calls"], {"5": 1}, "the daemon gets the count")
+            self.assertNotIn("s3cret", json.dumps(rec["mcp_answer"]))
+            # no tools granted: no MCP at all, as before
+            self.behave(result='{"verdict": "approve", "notes": "ok"}')
+            self.run_role("reviewer")
+            self.assertNotIn("--mcp-config", self.record()["argv"])
+        finally:
+            srv.shutdown()
 
     def test_the_planner_asks_first_then_proposes_tickets_and_is_held_to_its_limits(self):
         self.behave(result='{"summary": "s", "questions": ["Which stack?", "Who logs in?"], "tickets": [{"title": "t", "body": "b"}]}')
@@ -685,3 +729,20 @@ class Reference(unittest.TestCase):
                                        "references": [{"name": "Deploy guide!", "text": evil}]})
         self.assertIn('<reference name="Deploy guide">', p)
         self.assertEqual(p.count("</reference>"), 1)
+
+
+class SandboxTools(unittest.TestCase):
+    def test_in_the_sandbox_only_the_shim_and_the_socket_directory_are_mounted_read_only(self):
+        b = ev.broker_mod.Broker([{"id": 1, "name": "schema", "base_url": "http://127.0.0.1:9/api"}])
+        try:
+            mcp = ev.mcp_for(b, "docker")
+            self.assertEqual(mcp["config"]["mcpServers"]["tasklane"]["env"]["TL_SOCK"], "/tl/sock/b.sock")
+            env = {"TASKLANE_SANDBOX_NETWORK": "tl-net", "TASKLANE_SANDBOX_IMAGE": "img", "PATH": "/usr/bin"}
+            argv = ev.docker_command("reviewer", ["-p"], None, "tasklane-abc", env=env, mounts=mcp["mounts"])
+            vols = [argv[i + 1] for i, a in enumerate(argv) if a == "-v"]
+            self.assertEqual(sorted(v.split(":")[1] for v in vols), ["/tl/shim.js", "/tl/sock"])
+            self.assertTrue(all(v.endswith(":ro") for v in vols))
+            self.assertIn("--read-only", argv)
+            self.assertEqual(argv[argv.index("--network") + 1], "tl-net", "no network is added for the tools")
+        finally:
+            b.close()

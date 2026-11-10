@@ -64,6 +64,11 @@ pub fn routes(st: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/knowledge", get(knowledge::page))
         .route("/knowledge/notes", post(knowledge::add_global))
         .route("/knowledge/sources", post(knowledge::add_source))
+        .route("/knowledge/tools", post(knowledge::add_tool))
+        .route(
+            "/knowledge/tools/{id}/{action}",
+            post(knowledge::tool_action),
+        )
         .route(
             "/knowledge/sources/{id}/{action}",
             post(knowledge::source_action),

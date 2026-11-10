@@ -91,6 +91,7 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
                 "profile": o.profile_for(&t).await,
                 "account_owner": o.account_owner(t.id, &super::text_of(&item, "author")).await,
                 "references": o.references_for(&t.service).await,
+                "tools": o.tools_for(&t.service, "reviewer").await,
                 "diff": diff,
                 "budget": {"max_secs": o.cfg.call_timeout.as_secs(), "max_tokens": 100000},
                 "read_only": true
