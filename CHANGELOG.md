@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Disconnecting GitHub in the console now archives the repositories that came through it (their tickets and history stay) and resets the sync cursor, so nothing lingers on the Repositories page; connecting again brings them back.
+- **Review with AI** button on the Pull requests page: a read-only reviewer reads the pull request's diff (forks included) and posts its opinion as a comment on the pull request; the list shows running and last verdict. It never approves, merges or pushes, and it refuses repositories in watch mode.
+
 - New **Pull requests** page: the open pull requests in every watched repository, whoever opened them (draft, author, branch, who is tasklane). Read only; opens at once and fills in, refreshed at most once a minute. New optional source operation `list_pulls`.
 
 - Connect GitHub: the organization box accepts a pasted link (`https://github.com/Acme`) or `@Acme`, a name typed there means an organization even if the radio was left on personal, and the error messages say which field is wrong.

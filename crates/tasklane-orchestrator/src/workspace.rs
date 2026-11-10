@@ -484,6 +484,35 @@ impl Workspaces {
         Ok(())
     }
 
+    /// The change a pull request proposes: the base branch and the pull request's head (also for a
+    /// fork, through GitHub's `refs/pull/<n>/head`), compared in the mirror. Nothing is checked out.
+    pub async fn pull_diff(
+        &self,
+        service: &str,
+        url: &str,
+        base: &str,
+        pr: &str,
+    ) -> Result<(String, Vec<String>), Error> {
+        if pr.is_empty() || !pr.bytes().all(|b| b.is_ascii_digit()) {
+            return Err(Error::Fatal("a pull request number is digits only".into()));
+        }
+        let mirror = self.ensure_mirror(service).await?;
+        let (clean, creds) = split_credentials(url);
+        git_net(
+            &mirror,
+            &[
+                "fetch",
+                "-q",
+                &clean,
+                &format!("+refs/heads/{base}:refs/remotes/origin/{base}"),
+                &format!("+refs/pull/{pr}/head:refs/heads/pull-{pr}"),
+            ],
+            creds,
+        )
+        .await?;
+        self.diff(service, base, &format!("pull-{pr}")).await
+    }
+
     pub async fn push(&self, service: &str, url: &str, branch: &str) -> Result<(), Error> {
         let mirror = self.mirror_path(service);
         let (clean, creds) = split_credentials(url);

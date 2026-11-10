@@ -559,3 +559,53 @@ async fn attribution_can_be_switched_off_and_a_missing_id_only_costs_the_credit(
     assert_eq!(an, "tasklane");
     assert!(msg.contains("Requested-by: nabil"), "{msg}");
 }
+
+#[tokio::test]
+async fn a_pull_request_somebody_opened_gets_a_read_only_review_posted_as_a_comment() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    // a pull request as GitHub exposes it: the head lives under refs/pull/<n>/head, not a branch
+    let seed = w.dir.path().join("seed");
+    sh(
+        &seed,
+        &format!(
+            "git checkout -q -b feature && echo more >> README && git commit -qam change && git push -q {0} feature:refs/pull/7/head && git checkout -q main",
+            w.remote().display()
+        ),
+    );
+    let r = w.orch.review_pull("org/repo", "7", "tester").await.unwrap();
+    assert_eq!(
+        (r.verdict.as_str(), r.notes.as_str()),
+        ("approve", "looks fine")
+    );
+    let comments = w.read_state("comments.log");
+    assert!(
+        comments.contains("\"ref\": \"7\"")
+            && comments.contains("looks fine")
+            && comments.contains("tasklane"),
+        "{comments}"
+    );
+    let n: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit_events WHERE action = 'pull.reviewed'")
+            .fetch_one(&w.pool)
+            .await
+            .unwrap();
+    assert_eq!(n, 1);
+    // watch mode means nothing happens, and a bad number never reaches git
+    sqlx::query("UPDATE services SET mode = 'watch'")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    assert!(w.orch.review_pull("org/repo", "7", "tester").await.is_err());
+    sqlx::query("UPDATE services SET mode = 'triage'")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    assert!(w
+        .orch
+        .review_pull("org/repo", "7; rm", "tester")
+        .await
+        .is_err());
+}

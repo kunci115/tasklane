@@ -38,6 +38,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/tickets", get(tickets::list))
         .route("/pulls", get(pulls::page))
         .route("/fragments/pulls", get(pulls::fragment))
+        .route("/pulls/review", post(pulls::review))
         .route("/tickets/{id}", get(tickets::detail))
         .route("/fragments/ticket/{id}", get(tickets::live_fragment))
         .route("/tickets/{id}/decide", post(tickets::decide_form))

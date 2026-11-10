@@ -2535,3 +2535,49 @@ async fn the_pull_requests_page_lists_open_pull_requests_of_watched_repositories
     );
     assert!(page.contains("draft") && page.contains(">tasklane<"));
 }
+
+#[tokio::test]
+async fn the_review_button_needs_a_session_a_clean_number_and_a_repository_that_is_not_in_watch_mode(
+) {
+    let Some(e) = env().await else { return };
+    let post = |body: String, cookie: Option<String>| form("/pulls/review", body, cookie);
+    assert_eq!(
+        send(
+            &e.app,
+            post(
+                "csrf=bad&service=org/repo&pr=5".into(),
+                Some(e.cookie.clone())
+            )
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    for pr in ["", "5%3Bx", "1234567890"] {
+        let body = format!("csrf={}&service=org%2Frepo&pr={pr}", e.csrf);
+        assert_eq!(
+            send(&e.app, post(body, Some(e.cookie.clone()))).await.0,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{pr}"
+        );
+    }
+    let watched = format!("csrf={}&service=org%2Fwatched&pr=5", e.csrf);
+    assert_eq!(
+        send(&e.app, post(watched, Some(e.cookie.clone()))).await.0,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "watch mode means nothing happens"
+    );
+    let ok = format!("csrf={}&service=org%2Frepo&pr=5", e.csrf);
+    assert_eq!(
+        send(&e.app, post(ok, Some(e.cookie.clone()))).await.0,
+        StatusCode::SEE_OTHER
+    );
+    // the list offers the button on a pull request
+    std::fs::write(
+        e.dir.path().join("state/pulls_org_repo.json"),
+        r#"[{"number":"9","title":"x","author":"a","bot":false,"draft":false,"branch":"b","base":"main","url":"https://github.com/org/repo/pull/9","updated_at":"t","ours":false}]"#,
+    )
+    .unwrap();
+    let (_, _, list) = send(&e.app, get("/fragments/pulls", Some(e.cookie.clone()))).await;
+    assert!(list.contains("/pulls/review") && list.contains("Review with AI"));
+}
