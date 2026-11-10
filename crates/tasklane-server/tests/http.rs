@@ -2625,9 +2625,11 @@ async fn the_merge_button_appears_only_for_an_approved_commit_in_a_switched_on_r
         }
     };
     pr("dev", "aaa");
+    let off = list("off").await;
+    assert!(!off.contains("/pulls/merge"), "off until switched on");
     assert!(
-        !list("off").await.contains("/pulls/merge"),
-        "off until switched on"
+        off.contains("No Merge button") && off.contains("not in full mode"),
+        "it says why: {off}"
     );
     // the switch needs full mode, a session and a clean answer
     assert_eq!(

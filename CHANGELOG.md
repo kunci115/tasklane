@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Disconnecting GitHub in the console now archives the repositories that came through it (their tickets and history stay) and resets the sync cursor, so nothing lingers on the Repositories page; connecting again brings them back.
+- Pull requests: when the AI approved a pull request but there is no Merge button, the row says why (default branch, repository not in full mode, or merging from here not switched on) and links to the switch, which is now open by default.
+
 - **New project** page: start from nothing. tasklane creates a repository in an organization the GitHub App is installed on (private by default; README, a `.gitignore` for the template, and a `.tasklane.yml` that keeps `.github/` behind a person), registers it in triage mode and turns your brief into the first ticket, whose plan then waits for approval. It needs the App's **Administration** permission (write), which tasklane does not request by default; the error says what to change. New optional source operation `create_repo`.
 
 - **Merge** button on the Pull requests page: it appears only for a pull request the AI approved at its latest commit, in a repository that is in full mode and switched on under "Merging from here" (off by default), and never when the pull request goes into the default branch. The orchestrator checks all of it again and GitHub merges only if the head is still that commit and its checks pass. Every press is in the audit log.

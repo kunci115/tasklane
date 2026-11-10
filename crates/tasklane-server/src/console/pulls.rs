@@ -180,8 +180,8 @@ pub async fn fragment(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Re
 type Key = (String, String);
 /// What the AI said about a pull request: verdict (or `failed`), its notes, the commit it looked at.
 type Review = (String, String, String);
-/// Per repository: may a person merge from here, and which branch is the default one.
-type MergeRules = HashMap<String, (bool, String)>;
+/// Per repository: is it in full mode, is merging from here switched on, and which branch is the default one.
+type MergeRules = HashMap<String, (bool, bool, String)>;
 
 /// Reviews that are running right now, so a second press does not start a second one. Each entry
 /// belongs to one running server (the address of its state), like the list cache.
@@ -407,10 +407,11 @@ fn list_html(
                     }
                     None => String::new(),
                 };
-                let (allowed, default) = rules
+                let (full, on, default) = rules
                     .get(&r.repo)
-                    .map(|(a, d)| (*a, d.as_str()))
-                    .unwrap_or((false, "main"));
+                    .map(|(f, o, d)| (*f, *o, d.as_str()))
+                    .unwrap_or((false, false, "main"));
+                let allowed = full && on;
                 let merge = match verdicts.get(&key) {
                     Some((v, _, head))
                         if v == "approve"
@@ -429,10 +430,22 @@ fn list_html(
                             esc(&head.chars().take(7).collect::<String>())
                         )
                     }
-                    Some((v, _, head))
-                        if v == "approve" && allowed && head != text(p, "head_sha") =>
-                    {
+                    Some((v, _, head)) if v == "approve" && head != text(p, "head_sha") => {
                         "<span class=\"pill warn\">changed since review</span> ".to_string()
+                    }
+                    // approved, but the Merge button is held back: say why and where to change it
+                    Some((v, _, _)) if v == "approve" => {
+                        let why = if text(p, "base") == default {
+                            format!(
+                                "it goes into {}, the default branch: merge it on GitHub",
+                                esc(default)
+                            )
+                        } else if !full {
+                            "this repository is not in full mode: set it on <a href=\"/services\">Repositories</a>, then switch merging on below".to_string()
+                        } else {
+                            "merging from here is off for this repository: <a href=\"#merging\">switch it on below</a>".to_string()
+                        };
+                        format!("<div class=\"muted small\" style=\"margin:.3rem 0\"><strong>No Merge button:</strong> {why}.</div>")
                     }
                     _ => String::new(),
                 };
@@ -556,7 +569,7 @@ async fn merge_rules(st: &AppState) -> MergeRules {
         let def: Option<String> = r.get("def");
         (
             r.get::<String, _>("external_id"),
-            (mode == "full" && on_.as_deref() == Some("true"), def.unwrap_or_else(|| "main".into())),
+            (mode == "full", on_.as_deref() == Some("true"), def.unwrap_or_else(|| "main".into())),
         )
     })
     .collect()
@@ -644,7 +657,7 @@ async fn switches_html(st: &AppState, csrf: &str) -> String {
     .fetch_all(st.orch.pool())
     .await
     .unwrap_or_default();
-    let mut h = String::from("<details class=\"card\" style=\"margin-top:1rem\"><summary><strong>Merging from here</strong> <span class=\"muted small\">off for every repository until you switch it on</span></summary><p class=\"small muted\">A Merge button appears only for a pull request the AI approved at its latest commit, in a repository that is in full mode and switched on here, and only when the pull request does not go into the repository's default branch. Merging into the default branch stays a person's job on GitHub.</p><div class=\"scroll\"><table><tbody>");
+    let mut h = String::from("<details id=\"merging\" class=\"card\" style=\"margin-top:1rem\" open><summary><strong>Merging from here</strong> <span class=\"muted small\">off for every repository until you switch it on</span></summary><p class=\"small muted\">A Merge button appears only for a pull request the AI approved at its latest commit, in a repository that is in full mode and switched on here, and only when the pull request does not go into the repository's default branch. Merging into the default branch stays a person's job on GitHub.</p><div class=\"scroll\"><table><tbody>");
     for r in rows {
         let name: String = r.get("external_id");
         let mode: String = r.get("mode");
