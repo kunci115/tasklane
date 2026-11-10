@@ -1519,8 +1519,13 @@ async fn starting_the_github_app_hands_the_browser_to_github_with_a_manifest_and
     // an organization goes to the organization's page
     let (_, html) = start_github(&e, "&org=my-company").await;
     assert!(
-        !html.contains("/organizations/"),
-        "owner_type user ignores the organization"
+        html.contains("/organizations/my-company/settings/apps/new"),
+        "a name typed in the organization box means an organization"
+    );
+    let (_, html) = start_github(&e, "&org=https%3A%2F%2Fgithub.com%2FAquila-Team-Group").await;
+    assert!(
+        html.contains("/organizations/Aquila-Team-Group/settings/apps/new"),
+        "a pasted link works too"
     );
     let body = format!(
         "csrf={}&name=tasklane-test&owner_type=org&org=my-company",
@@ -1581,14 +1586,14 @@ async fn starting_needs_a_valid_form_a_session_and_a_sane_name() {
             &e.app,
             form(
                 "/connect/github/start",
-                format!("csrf={}&name=abc&owner_type=org&org=a%2Fb", e.csrf),
+                format!("csrf={}&name=abc&owner_type=org&org=a%20b", e.csrf),
                 Some(e.cookie.clone())
             )
         )
         .await
         .0,
         StatusCode::UNPROCESSABLE_ENTITY,
-        "no slash in an organization name"
+        "no spaces in an organization name"
     );
 }
 

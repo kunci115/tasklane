@@ -69,6 +69,14 @@ pub fn manifest(name: &str, base: &str) -> Value {
     m
 }
 
+/// The organization as people paste it: `Acme`, `@Acme`, `github.com/Acme` or `https://github.com/Acme/repo`.
+fn org_name(raw: &str) -> String {
+    let s = raw.trim();
+    let s = s.split_once("github.com/").map_or(s, |(_, rest)| rest);
+    let s = s.trim_start_matches('@').trim_matches('/');
+    s.split('/').next().unwrap_or("").trim().to_string()
+}
+
 fn clean_name(raw: &str) -> String {
     let s: String = raw
         .trim()
@@ -230,7 +238,7 @@ pub async fn github_form(State(st): State<Arc<AppState>>, headers: HeaderMap) ->
 <div class=\"field\"><label for=\"nm\">Name of the App</label><input id=\"nm\" type=\"text\" name=\"name\" maxlength=\"34\" value=\"tasklane-{}\" required><div class=\"hint\">GitHub names are unique. Letters, numbers and hyphens.</div></div>\
 <div class=\"field\"><label>Create it under</label><label style=\"font-weight:400\"><input type=\"radio\" name=\"owner_type\" value=\"user\" checked> my personal account</label>\
 <label style=\"font-weight:400\"><input type=\"radio\" name=\"owner_type\" value=\"org\"> an organization</label></div>\
-<div class=\"field\"><label for=\"org\">Organization name (only if you chose organization)</label><input id=\"org\" type=\"text\" name=\"org\" maxlength=\"60\" placeholder=\"my-company\"></div>\
+<div class=\"field\"><label for=\"org\">Organization name (only if you chose organization)</label><input id=\"org\" type=\"text\" name=\"org\" maxlength=\"60\" placeholder=\"my-company or https://github.com/my-company\"></div>\
 <button class=\"btn primary\">{} Continue to GitHub</button></form></div>\
 <div class=\"card\"><h2>What happens</h2><ol class=\"small\" style=\"padding-left:1.2rem;margin:0\"><li>GitHub opens with the App already filled in. You press <strong>Create GitHub App</strong>.</li><li>You come back here. tasklane stores the App's credentials on the server.</li><li>GitHub asks where to install it. Choose <strong>only the repositories</strong> tasklane should work on.</li></ol>\
 <p class=\"hint\">The App gets: issues, pull requests and code (read and write), checks and statuses (read). It does <strong>not</strong> get permission to change CI workflow files. {}</p>\
@@ -264,14 +272,20 @@ pub async fn github_start(
         return forbidden();
     }
     let name = clean_name(&f.name);
-    let org = f.org.as_deref().map(str::trim).unwrap_or("");
-    if name.len() < 3
-        || (f.owner_type == "org"
-            && (org.is_empty() || !org.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')))
-    {
+    let org = org_name(f.org.as_deref().unwrap_or(""));
+    // a name typed in the organization box means an organization, even if the radio was left alone
+    let for_org = f.owner_type == "org" || !org.is_empty();
+    if name.len() < 3 {
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
-            "Check the name (3 or more letters, numbers or hyphens) and the organization.",
+            "The App name needs 3 or more letters, numbers or hyphens.",
+        )
+            .into_response();
+    }
+    if for_org && (org.is_empty() || !org.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')) {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "The organization name is only letters, numbers and hyphens, for example Aquila-Team-Group.",
         )
             .into_response();
     }
@@ -290,7 +304,7 @@ pub async fn github_start(
     }
     let base = base_url(&st, &headers);
     let manifest = manifest(&name, &base).to_string();
-    let target = if f.owner_type == "org" {
+    let target = if for_org {
         format!("https://github.com/organizations/{org}/settings/apps/new?state={state}")
     } else {
         format!("https://github.com/settings/apps/new?state={state}")
@@ -910,5 +924,24 @@ mod tests {
         for bad in ["--privileged", "a b", "a;b", "$(x)", "-v", "a\nb"] {
             assert!(!safe_ref(bad), "{bad}");
         }
+    }
+}
+
+#[cfg(test)]
+mod org_name_tests {
+    use super::org_name;
+
+    #[test]
+    fn an_organization_can_be_pasted_as_a_name_or_a_link() {
+        for raw in [
+            "Aquila-Team-Group",
+            " @Aquila-Team-Group ",
+            "https://github.com/Aquila-Team-Group",
+            "https://github.com/Aquila-Team-Group/",
+            "github.com/Aquila-Team-Group/some-repo",
+        ] {
+            assert_eq!(org_name(raw), "Aquila-Team-Group", "{raw}");
+        }
+        assert_eq!(org_name(""), "");
     }
 }

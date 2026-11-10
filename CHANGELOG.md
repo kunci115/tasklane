@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Disconnecting GitHub in the console now archives the repositories that came through it (their tickets and history stay) and resets the sync cursor, so nothing lingers on the Repositories page; connecting again brings them back.
+- Connect GitHub: the organization box accepts a pasted link (`https://github.com/Acme`) or `@Acme`, a name typed there means an organization even if the radio was left on personal, and the error messages say which field is wrong.
+
 - Tickets of an archived repository no longer show in the Tickets list, the Overview board or the needs-you badge; a direct link to a ticket still opens its history.
 
 - A repository the source no longer lists (you switched GitHub account or App, or access was removed) is archived on the next sync instead of staying on the board, and the Repositories page hides archived ones unless you press **Show archived**. They return by themselves when listed again.
