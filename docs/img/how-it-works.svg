@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 390" width="960" height="390" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#0f172a">
+<title>How tasklane handles an issue: triage, risk level, approval if needed, development, re-check, pull request, CI, review, merge</title>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#334155"/></marker></defs>
+<rect width="960" height="390" rx="12" fill="#ffffff" stroke="#cbd5e1"/>
+<rect x="20" y="40" width="160" height="64" rx="8" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.5"/><text x="100.0" y="78" text-anchor="middle" font-weight="600">GitHub issue</text>
+<rect x="210" y="40" width="160" height="64" rx="8" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.5"/><text x="290.0" y="68" text-anchor="middle" font-weight="600">Triage agent</text><text x="290.0" y="87" text-anchor="middle" font-size="12" fill="#475569">read-only</text>
+<rect x="400" y="40" width="160" height="64" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-width="1.5"/><text x="480.0" y="68" text-anchor="middle" font-weight="600">Risk level</text><text x="480.0" y="87" text-anchor="middle" font-size="12" fill="#475569">from fixed rules</text>
+<rect x="590" y="40" width="160" height="64" rx="8" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.5"/><text x="670.0" y="68" text-anchor="middle" font-weight="600">Developer agent</text><text x="670.0" y="87" text-anchor="middle" font-size="12" fill="#475569">isolated git worktree</text>
+<rect x="780" y="40" width="160" height="64" rx="8" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.5"/><text x="860.0" y="68" text-anchor="middle" font-weight="600">Re-check</text><text x="860.0" y="87" text-anchor="middle" font-size="12" fill="#475569">the real diff</text>
+<rect x="400" y="170" width="160" height="64" rx="8" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/><text x="480.0" y="198" text-anchor="middle" font-weight="600">Approval</text><text x="480.0" y="217" text-anchor="middle" font-size="12" fill="#475569">of the exact plan or diff</text>
+<rect x="780" y="300" width="160" height="64" rx="8" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.5"/><text x="860.0" y="338" text-anchor="middle" font-weight="600">Pull request</text>
+<rect x="590" y="300" width="160" height="64" rx="8" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.5"/><text x="670.0" y="338" text-anchor="middle" font-weight="600">Your CI</text>
+<rect x="400" y="300" width="160" height="64" rx="8" fill="#eef2ff" stroke="#4f46e5" stroke-width="1.5"/><text x="480.0" y="338" text-anchor="middle" font-weight="600">Reviewer agent</text>
+<rect x="210" y="300" width="160" height="64" rx="8" fill="#ecfdf5" stroke="#059669" stroke-width="1.5"/><text x="290.0" y="328" text-anchor="middle" font-weight="600">Merge</text><text x="290.0" y="347" text-anchor="middle" font-size="12" fill="#475569">the reviewed commit</text>
+<line x1="180" y1="72" x2="210" y2="72" stroke="#334155" stroke-width="1.6" marker-end="url(#a)"/>
+<line x1="370" y1="72" x2="400" y2="72" stroke="#334155" stroke-width="1.6" marker-end="url(#a)"/>
+<line x1="560" y1="72" x2="590" y2="72" stroke="#334155" stroke-width="1.6" marker-end="url(#a)"/><text x="575" y="64" text-anchor="middle" font-size="12" fill="#334155">low</text>
+<line x1="480.0" y1="104" x2="480.0" y2="170" stroke="#334155" stroke-width="1.6" marker-end="url(#a)"/><text x="532.0" y="144" text-anchor="middle" font-size="12" fill="#334155">needs a person</text>
+<line x1="560" y1="202" x2="670.0" y2="106" stroke="#334155" stroke-width="1.6" marker-end="url(#a)"/>
+<line x1="750" y1="72" x2="780" y2="72" stroke="#334155" stroke-width="1.6" marker-end="url(#a)"/>
+<line x1="860.0" y1="104" x2="860.0" y2="300" stroke="#334155" stroke-width="1.6" marker-end="url(#a)"/>
+<line x1="780" y1="332" x2="750" y2="332" stroke="#334155" stroke-width="1.6" marker-end="url(#a)"/>
+<line x1="590" y1="332" x2="560" y2="332" stroke="#334155" stroke-width="1.6" marker-end="url(#a)"/>
+<line x1="400" y1="332" x2="370" y2="332" stroke="#334155" stroke-width="1.6" marker-end="url(#a)"/>
+</svg>

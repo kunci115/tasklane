@@ -45,19 +45,7 @@ It is the orchestration layer around an agent, not another agent: a durable job 
 
 ## How it works
 
-```mermaid
-flowchart LR
-    I[GitHub issue] --> T[Triage agent<br/>read-only]
-    T --> R{Risk level<br/>from fixed rules}
-    R -- low --> D
-    R -- needs a person --> A[Approval of the<br/>exact plan or diff]
-    A --> D[Developer agent<br/>isolated git worktree]
-    D --> C[Re-check the real diff]
-    C --> P[Pull request]
-    P --> CI[Your CI]
-    CI --> V[Reviewer agent]
-    V --> M[Merge the<br/>reviewed commit]
-```
+![How tasklane handles an issue: triage, risk level, approval when needed, development, re-check, pull request, CI, review, merge](docs/img/how-it-works.svg)
 
 1. **Triage.** A read-only agent reads the issue and the code and writes a plan. Strangers' issues and anything near protected paths always wait for a person.
 2. **Develop.** After approval (or automatically for low-risk work in repositories you let it), the developer agent edits files in a throwaway git worktree. It cannot push.
