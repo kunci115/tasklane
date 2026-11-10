@@ -395,7 +395,7 @@ async fn a_merged_ticket_closes_its_issue_only_once_the_change_is_in_the_default
     w.orch.sync_once().await.unwrap();
     assert_eq!(state(&w.pool, t).await, "closed_done");
     assert_eq!(w.read_state("closed.log").trim(), "T-plain");
-    assert!(w.read_state("comments.log").contains("Closing this issue"));
+    assert!(w.read_state("comments.log").contains("Closed: the change"));
     w.orch.sync_once().await.unwrap();
     assert_eq!(w.read_state("closed.log").lines().count(), 1, "closed once");
 }
@@ -830,6 +830,81 @@ async fn a_pull_request_that_touches_protected_paths_is_not_merged_from_the_cons
         "{e}"
     );
     assert!(!w.state_dir().join("merged").exists());
+}
+
+#[tokio::test]
+async fn merged_tickets_waiting_for_the_default_branch_do_not_starve_the_newer_ones() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    for n in 1..=25 {
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO tickets (service_id, external_ref, state) SELECT id, $1, 'merged' FROM services RETURNING id",
+        )
+        .bind(format!("m{n}"))
+        .fetch_one(&w.pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO audit_events (actor, action, ticket_id, detail) VALUES ('t', 'ticket.merged', $1, $2)")
+            .bind(id)
+            .bind(serde_json::json!({"merge_sha": format!("sha{n}"), "closes_on": "main"}))
+            .execute(&w.pool)
+            .await
+            .unwrap();
+    }
+    std::fs::write(
+        w.state_dir().join("services.json"),
+        r#"[{"external_id":"org/repo","default_branch":"main","archived":false,"private":true}]"#,
+    )
+    .unwrap();
+    // only the five newest reached main
+    std::fs::write(
+        w.state_dir().join("in_main.json"),
+        r#"["sha21","sha22","sha23","sha24","sha25"]"#,
+    )
+    .unwrap();
+    w.orch.sync_once().await.unwrap();
+    w.orch.sync_once().await.unwrap();
+    let closed: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM tickets WHERE state = 'closed_done'")
+            .fetch_one(&w.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        closed, 5,
+        "the second pass reaches the tickets the first one left"
+    );
+}
+
+#[tokio::test]
+async fn an_issue_that_cannot_be_closed_stays_merged_and_gets_no_closing_note() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO tickets (service_id, external_ref, state) SELECT id, 'x1', 'merged' FROM services RETURNING id",
+    )
+    .fetch_one(&w.pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO audit_events (actor, action, ticket_id, detail) VALUES ('t', 'ticket.merged', $1, $2)")
+        .bind(id)
+        .bind(serde_json::json!({"merge_sha": "sha1", "closes_on": "main"}))
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    std::fs::write(
+        w.state_dir().join("services.json"),
+        r#"[{"external_id":"org/repo","default_branch":"main","archived":false,"private":true}]"#,
+    )
+    .unwrap();
+    w.set_flag("in_branch");
+    w.set_flag("close_fail");
+    w.orch.sync_once().await.unwrap();
+    assert_eq!(state(&w.pool, id).await, "merged");
+    assert!(!w.read_state("comments.log").contains("Closed:"));
 }
 
 fn read_state_contains(w: &World, name: &str, needle: &str) -> bool {

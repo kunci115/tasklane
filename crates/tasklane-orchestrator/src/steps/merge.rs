@@ -41,6 +41,30 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
         .unwrap_or("unknown")
         .to_string();
 
+    // Closing the issue later needs the merge commit; ask for it when the merge answer lacked it.
+    let merge_sha = match r
+        .get("sha")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+    {
+        Some(sha) => Some(sha.to_string()),
+        None if merged => o
+            .source
+            .call(
+                "get_pull",
+                json!({"service": t.service, "pr": pr}),
+                o.cfg.call_timeout,
+            )
+            .await
+            .ok()
+            .and_then(|v| {
+                v.get("merge_sha")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+            }),
+        None => None,
+    };
     let mut tx = o.begin(job).await?;
     if t.state == State::Queued {
         o.set_state(
@@ -65,10 +89,26 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
             &mut tx,
             t.id,
             "ticket.merged",
-            json!({"pr": pr, "head": head, "merge_sha": r.get("sha"), "into": t.base_branch(), "closes_on": t.default_branch()}),
+            json!({"pr": pr, "head": head, "merge_sha": merge_sha, "into": t.base_branch(), "closes_on": t.default_branch()}),
         )
         .await?;
         State::Merged
+    } else if (reason == "head_moved" || reason == "checks_failing")
+        && {
+            // a required check tasklane cannot see (or a head that keeps moving) would loop for ever
+            let refused: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM audit_events WHERE ticket_id = $1 AND action = 'ticket.merge_refused'",
+        )
+        .bind(t.id)
+        .fetch_one(&mut *tx)
+        .await?;
+            refused >= 3
+        }
+    {
+        tx.rollback().await?;
+        return Err(Error::Fatal(format!(
+            "the merge was refused three times ({reason}); a check that tasklane cannot see may be required, or the branch keeps changing"
+        )));
     } else if reason == "head_moved" || reason == "checks_failing" {
         // Something changed under us: look at CI again for the new head, then review again.
         o.set_state(

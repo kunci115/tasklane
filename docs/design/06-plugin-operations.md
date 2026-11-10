@@ -27,6 +27,7 @@ Errors use `kind`: `transient`, `permanent`, `unauthorized`, `rate_limited`. Exp
 | `get_user` | `{login}` | `{id, login}` (optional; a person's account only, never a bot or an organisation; used to credit people in the history) |
 | `create_repo` | `{owner, name, description, private, template}` | `{external_id, html_url, default_branch, private, seeded, seed_error}` (optional; a new repository for the New project page, seeded with a README, a .gitignore and `.tasklane.yml`) |
 | `get_pull` | `{service, pr}` | `{base, head_sha, state, draft, title, body}` (optional; the target branch is what a review compares against) |
+| `branch_exists` | `{service, branch}` | `{exists}` (optional; checked when the target branch is saved) |
 | `in_branch` | `{service, sha, branch}` | `{in_branch}` (optional; is the commit part of the branch, for closing issues after promotion) |
 | `close_item` | `{service, ref}` | `{closed}` (optional; closes the issue as completed) |
 | `list_open_issues` | `{service}` | `{refs: [string], more}` (optional; open issues without pull requests, oldest first, for the console's "Import open issues") |

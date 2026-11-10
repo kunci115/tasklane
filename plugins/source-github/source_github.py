@@ -947,6 +947,7 @@ def op_get_pull(params):
             "head_sha": str((d.get("head") or {}).get("sha") or ""),
             "state": str(d.get("state") or ""), "draft": bool(d.get("draft")),
             "title": str(d.get("title") or ""), "body": str(d.get("body") or ""),
+            "merge_sha": str(d.get("merge_commit_sha") or ""),
             "author_trusted": author_trusted(d),
             "from_fork": str(((d.get("head") or {}).get("repo") or {}).get("full_name") or "").lower() != svc.lower()}
 
@@ -1045,9 +1046,19 @@ def op_merge_pr(params):
         return out
     if d.get("state") == "closed":
         return {"merged": False, "reason": "not_mergeable"}
+    body = {"sha": expected}
     try:
-        r = api("PUT", f"/repos/{svc}/pulls/{pr}/merge", auth=tok,
-                body={"sha": expected}).data or {}
+        repo = api("GET", f"/repos/{svc}", auth=tok).data or {}
+        if repo.get("allow_merge_commit") is False:
+            # a repository that allows only squash or rebase refuses the default merge commit
+            if repo.get("allow_squash_merge"):
+                body["merge_method"] = "squash"
+            elif repo.get("allow_rebase_merge"):
+                body["merge_method"] = "rebase"
+    except PluginError:
+        pass
+    try:
+        r = api("PUT", f"/repos/{svc}/pulls/{pr}/merge", auth=tok, body=body).data or {}
     except PluginError as e:
         if e.status == 409:
             return {"merged": False, "reason": "head_moved"}
@@ -1055,6 +1066,8 @@ def op_merge_pr(params):
             low = e.message.lower()
             if "merge queue" in low:
                 reason = "merge_queue"
+            elif "not allowed" in low and "merge" in low:
+                reason = "merge_method_not_allowed"
             elif "conflict" in low:
                 reason = "conflict"
             elif "check" in low or "status" in low:
@@ -1084,6 +1097,19 @@ def op_in_branch(params):
             return {"in_branch": False}
         raise
     return {"in_branch": d.get("status") in ("behind", "identical")}
+
+
+def op_branch_exists(params):
+    svc, branch = p_service(params), p_str(params, "branch")
+    if not BRANCH_RE.fullmatch(branch):
+        raise permanent("invalid branch")
+    try:
+        app_api("GET", f"/repos/{svc}/branches/{q(branch)}")
+    except PluginError as e:
+        if e.status == 404:
+            return {"exists": False}
+        raise
+    return {"exists": True}
 
 
 def op_close_item(params):
@@ -1146,7 +1172,7 @@ def op_verify_webhook(params):
 
 OPS = {
     "describe": op_describe, "list_services": op_list_services,
-    "list_changes": op_list_changes, "list_open_issues": op_list_open_issues, "in_branch": op_in_branch, "close_item": op_close_item, "get_item": op_get_item,
+    "list_changes": op_list_changes, "list_open_issues": op_list_open_issues, "in_branch": op_in_branch, "branch_exists": op_branch_exists, "close_item": op_close_item, "get_item": op_get_item,
     "create_item": op_create_item, "comment": op_comment,
     "set_labels": op_set_labels, "detect_facts": op_detect_facts, "read_overrides": op_read_overrides,
     "repo_url": op_repo_url, "mint_run_token": op_mint_run_token,

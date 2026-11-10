@@ -131,6 +131,20 @@ impl Orchestrator {
         self.claim(service_id, external_id, "claim_repo").await
     }
 
+    /// Does the branch exist in the repository? `None` when the source cannot say.
+    pub async fn branch_exists(&self, service_id: i64, branch: &str) -> Option<bool> {
+        let ext = self.external_id(service_id).await.ok()?;
+        self.source
+            .call(
+                "branch_exists",
+                json!({"service": ext, "branch": branch}),
+                self.cfg.call_timeout,
+            )
+            .await
+            .ok()
+            .and_then(|v| v.get("exists").and_then(serde_json::Value::as_bool))
+    }
+
     /// A person decided this install takes the repository over from the other one.
     pub async fn take_over(&self, service_id: i64) -> Result<Owner, Error> {
         let ext = self.external_id(service_id).await?;

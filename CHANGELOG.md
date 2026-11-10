@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Closing issues after promotion is sturdier: tickets are checked in turn (a pile of changes still waiting on `dev` no longer starves newer ones), the issue is closed first and the note is posted only after it worked, the merge commit is looked up if the merge answer lacked it, and a merge refused three times stops with a person instead of looping.
+- Merge now picks squash or rebase when the repository allows no merge commits, and says so plainly when no method is allowed. The branch set under "Branch pull requests go to" must exist (new optional source operation `branch_exists`); `get_pull` also returns `merge_sha`.
 - Security: **Merge** on the Pull requests page now applies the same rules as tasklane's own work: a pull request from a fork or from someone without a role in the repository, or one that touches protected paths or is large, is never merged from the console ("a person merges it on the source"). Review and merge also respect another install's claim on the repository. `get_pull` now also returns `author_trusted` and `from_fork`.
 - Security: when a ticket stops with an error, the comment on the issue is a fixed sentence; the reason (git output, the agent's words) is shown only in the console, because the issue may be public.
 - Sign-in throttling is now per client address (five wrong tokens lock that address for five minutes, a ceiling of 50 for everybody) and a correct sign-in clears the client's count; behind a proxy on a private address the first `X-Forwarded-For` address counts.

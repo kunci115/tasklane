@@ -575,6 +575,13 @@ pub async fn set_profile(
         )
             .into_response();
     }
+    if !target.is_empty() && st.orch.branch_exists(id, target).await == Some(false) {
+        return (
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "that branch does not exist in the repository: create it first, or leave the field empty",
+        )
+            .into_response();
+    }
     let _ = sqlx::query("UPDATE services SET agent_profile = agent_profile || $2 WHERE id = $1")
         .bind(id)
         .bind(json!({"system": system, "test_command": cmd, "preview_command": pcmd, "preview_port": port, "target_branch": target}))

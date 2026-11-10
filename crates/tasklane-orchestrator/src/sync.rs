@@ -158,7 +158,7 @@ impl Orchestrator {
                            ORDER BY id DESC LIMIT 1) a ON true
              WHERE t.state = 'merged' AND s.source = $1 AND NOT s.archived
                AND coalesce(a.detail->>'merge_sha', '') <> '' AND coalesce(a.detail->>'closes_on', '') <> ''
-             ORDER BY t.updated_at LIMIT 20",
+             ORDER BY t.settle_checked_at NULLS FIRST, t.updated_at LIMIT 20",
         )
         .bind(&self.cfg.source_name)
         .fetch_all(&self.pool)
@@ -166,6 +166,11 @@ impl Orchestrator {
         .unwrap_or_default();
         for (id, service, reference, pr, sha, branch) in rows {
             let call = self.cfg.call_timeout;
+            // whatever the answer, the others get their turn before this one is asked again
+            let _ = sqlx::query("UPDATE tickets SET settle_checked_at = now() WHERE id = $1")
+                .bind(id)
+                .execute(&self.pool)
+                .await;
             let there = match self
                 .source
                 .call(
@@ -185,18 +190,10 @@ impl Orchestrator {
                 continue;
             }
             let said = format!(
-                "The change{} is now in `{branch}`. Closing this issue.",
+                "Closed: the change{} is now in `{branch}`.",
                 pr.map(|p| format!(" (pull request {p})"))
                     .unwrap_or_default()
             );
-            let _ = self
-                .source
-                .call(
-                    "comment",
-                    json!({"service": service, "ref": reference, "body": said}),
-                    call,
-                )
-                .await;
             if let Err(e) = self
                 .source
                 .call(
@@ -209,6 +206,14 @@ impl Orchestrator {
                 eprintln!("settle: closing {service}#{reference}: {e}");
                 continue;
             }
+            let _ = self
+                .source
+                .call(
+                    "comment",
+                    json!({"service": service, "ref": reference, "body": said}),
+                    call,
+                )
+                .await;
             if transition(State::Merged, State::ClosedDone, Actor::Runner).is_ok() {
                 let _ = sqlx::query("UPDATE tickets SET state = 'closed_done', updated_at = now() WHERE id = $1 AND state = 'merged'")
                     .bind(id)

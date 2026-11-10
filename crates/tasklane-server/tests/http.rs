@@ -2592,6 +2592,14 @@ async fn the_branch_pull_requests_go_to_is_set_per_repository_and_checked() {
     };
     let (st, _, _) = send(&e.app, form(&url, body("--evil"), Some(e.cookie.clone()))).await;
     assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    std::fs::write(
+        e.dir.path().join("state/missing_branches.json"),
+        r#"["nowhere"]"#,
+    )
+    .unwrap();
+    let (st, _, msg) = send(&e.app, form(&url, body("nowhere"), Some(e.cookie.clone()))).await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(msg.contains("does not exist"), "{msg}");
     let (st, _, _) = send(&e.app, form(&url, body("dev"), Some(e.cookie.clone()))).await;
     assert!(st.is_redirection());
     let t: String =

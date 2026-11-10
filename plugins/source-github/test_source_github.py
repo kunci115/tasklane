@@ -355,6 +355,13 @@ class Reading(Base):
         self.assertFalse(self.ok("in_branch", {"service": "acme/one", "sha": "abc1234", "branch": "main"})["in_branch"])
         self.assertEqual(self.err("in_branch", {"service": "acme/one", "sha": "x;y", "branch": "main"})["kind"], "permanent")
 
+    def test_branch_exists_says_yes_or_no(self):
+        R = self.fake.routes
+        R[("GET", "/repos/acme/one/branches/dev")] = (200, {}, {"name": "dev"})
+        self.assertTrue(self.ok("branch_exists", {"service": "acme/one", "branch": "dev"})["exists"])
+        R[("GET", "/repos/acme/one/branches/gone")] = (404, {}, {"message": "Branch not found"})
+        self.assertFalse(self.ok("branch_exists", {"service": "acme/one", "branch": "gone"})["exists"])
+
     def test_close_item_closes_the_issue_as_completed(self):
         self.fake.routes[("PATCH", "/repos/acme/one/issues/4")] = (200, {}, {"state": "closed"})
         self.assertTrue(self.ok("close_item", {"service": "acme/one", "ref": "4"})["closed"])
@@ -585,6 +592,15 @@ class RunTokens(Base):
         r = self.ok("merge_pr", {"service": "acme/one", "pr": "8", "expected_head_sha": "aaa", "token": PASSED_TOKEN})
         self.assertEqual(r, {"merged": False, "reason": "head_moved"})
         self.assertEqual(self.fake.seen("PUT", "/repos/acme/one/pulls/8/merge"), [])
+
+    def test_merge_pr_uses_squash_when_the_repository_allows_nothing_else(self):
+        self.pr_route("aaa")
+        self.fake.routes[("GET", "/repos/acme/one")] = (200, {}, {
+            "allow_merge_commit": False, "allow_squash_merge": True, "allow_rebase_merge": True})
+        self.fake.routes[("PUT", "/repos/acme/one/pulls/8/merge")] = (200, {}, {"merged": True, "sha": "mmm"})
+        self.ok("merge_pr", {"service": "acme/one", "pr": "8", "expected_head_sha": "aaa", "token": PASSED_TOKEN})
+        (put,) = self.fake.seen("PUT", "/repos/acme/one/pulls/8/merge")
+        self.assertEqual(put["body"], {"sha": "aaa", "merge_method": "squash"})
 
     def test_merge_pr_405_409_mapping(self):
         self.pr_route("aaa")

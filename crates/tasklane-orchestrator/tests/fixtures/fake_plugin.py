@@ -251,9 +251,14 @@ def handle(op, params):
         return read_json("pull_" + str(params["pr"]) + ".json", {"base": "main", "state": "open"})
     if op == "list_open_issues":
         return {"refs": read_json("open_issues_" + params.get("service", "").replace("/", "_") + ".json", []), "more": False}
+    if op == "branch_exists":
+        return {"exists": params["branch"] not in read_json("missing_branches.json", [])}
     if op == "in_branch":
-        return {"in_branch": flag("in_branch")}
+        listed = read_json("in_main.json", None)
+        return {"in_branch": flag("in_branch") if listed is None else params["sha"] in listed}
     if op == "close_item":
+        if flag("close_fail"):
+            raise ValueError("Resource not accessible by integration")
         with open(os.path.join(STATE, "closed.log"), "a") as f:
             f.write(params["ref"] + "\n")
         return {"closed": True}
