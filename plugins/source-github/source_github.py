@@ -25,11 +25,13 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import http.client
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 PROTOCOL_MAJOR = 1
@@ -311,17 +313,24 @@ def mint(body=None):
     return d["token"], d.get("expires_at", "")
 
 
+_token_lock = threading.Lock()
+
+
 def app_token():
-    """Installation token with default permissions, cached until 60 s before expiry."""
+    """Installation token with default permissions, cached until 60 s before expiry.
+    Requests run side by side, so the first ones must not each mint their own."""
     if _state["token"] and time.time() < _state["token_exp"] - 60:
         return _state["token"]
-    tok, exp = mint()
-    try:
-        _state["token_exp"] = parse_time(exp)
-    except ValueError:
-        _state["token_exp"] = time.time() + 300
-    _state["token"] = tok
-    return tok
+    with _token_lock:
+        if _state["token"] and time.time() < _state["token_exp"] - 60:
+            return _state["token"]
+        tok, exp = mint()
+        try:
+            _state["token_exp"] = parse_time(exp)
+        except ValueError:
+            _state["token_exp"] = time.time() + 300
+        _state["token"] = tok
+        return tok
 
 
 def app_api(method, path, **kw):
@@ -1076,19 +1085,33 @@ def handle(req):
             "kind": "permanent", "message": redact(f"internal error: {type(e).__name__}")}}
 
 
+WORKERS = 6
+
+
 def main():
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            req = json.loads(line)
-        except ValueError:
-            resp = {"id": None, "ok": False, "error": {"kind": "permanent", "message": "bad json"}}
-        else:
-            resp = handle(req)
-        sys.stdout.write(json.dumps(resp) + "\n")
-        sys.stdout.flush()
+    """Requests are answered as they finish, not in order: the caller matches them by `id`. A slow one
+    (the sync scanning every repository) must not make a person wait for a page behind it."""
+    out_lock = threading.Lock()
+
+    def send(resp):
+        with out_lock:
+            sys.stdout.write(json.dumps(resp) + "\n")
+            sys.stdout.flush()
+
+    def serve(req):
+        send(handle(req))
+
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                req = json.loads(line)
+            except ValueError:
+                send({"id": None, "ok": False, "error": {"kind": "permanent", "message": "bad json"}})
+            else:
+                pool.submit(serve, req)
 
 
 if __name__ == "__main__":

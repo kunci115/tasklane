@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Disconnecting GitHub in the console now archives the repositories that came through it (their tickets and history stay) and resets the sync cursor, so nothing lingers on the Repositories page; connecting again brings them back.
+- Fix: a long sync (every repository scanned after a reconnect) made pages that ask GitHub, such as Pull requests, wait behind it and time out. The GitHub plug-in now answers requests side by side (answers can arrive in any order; they carry the request `id`) and mints its installation token once.
+
 - Fix: the AI review compared a pull request with the repository's default branch instead of the branch the pull request goes into, so work already on that branch (for example `dev`) counted as part of the pull request. It now asks the source for the target branch (new optional operation `get_pull`) and refuses closed pull requests. The review is also readable in the list row, with what to do next.
 
 - **Review with AI** button on the Pull requests page: a read-only reviewer reads the pull request's diff (forks included) and posts its opinion as a comment on the pull request; the list shows running and last verdict. It never approves, merges or pushes, and it refuses repositories in watch mode.

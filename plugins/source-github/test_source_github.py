@@ -179,13 +179,36 @@ class Protocol(Base):
         out = talk({"GITHUB_API_URL": self.fake.url},
                    "not json", "[1,2]", {"id": 9, "op": "nope"}, {"id": 10, "op": "get_item", "params": []},
                    {"id": 11, "op": "describe"})
-        self.assertEqual([o["id"] for o in out], [None, None, 9, 10, 11])
-        self.assertEqual([o["ok"] for o in out], [False, False, False, False, True])
-        self.assertTrue(all(o["error"]["kind"] == "permanent" for o in out[:4]))
+        # answers come as they finish; the caller matches them by id
+        by = {o["id"]: o for o in out if o["id"] is not None}
+        self.assertEqual(sorted(by), [9, 10, 11])
+        self.assertEqual(len(out), 5)
+        self.assertEqual(sum(1 for o in out if o["id"] is None), 2)
+        self.assertEqual([by[i]["ok"] for i in (9, 10, 11)], [False, False, True])
+        self.assertTrue(all(o["error"]["kind"] == "permanent" for o in out if not o["ok"]))
 
     def test_missing_params_are_permanent(self):
         self.assertEqual(self.err("get_item", {"service": "o/r"})["kind"], "permanent")
         self.assertEqual(self.err("get_item", {"service": "../x", "ref": "1"})["kind"], "permanent")
+
+
+class Concurrency(unittest.TestCase):
+    def test_a_slow_request_does_not_hold_up_a_quick_one(self):
+        import importlib.util, io, json as j
+        spec = importlib.util.spec_from_file_location("source_github_conc", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.OPS["slow"] = lambda p: (time.sleep(0.6), {"n": 1})[1]
+        mod.OPS["quick"] = lambda p: {"n": 2}
+        lines = "\n".join(j.dumps(r) for r in ({"id": 1, "op": "slow"}, {"id": 2, "op": "quick"})) + "\n"
+        old_in, old_out = sys.stdin, sys.stdout
+        sys.stdin, sys.stdout = io.StringIO(lines), io.StringIO()
+        try:
+            mod.main()
+            got = [j.loads(l)["id"] for l in sys.stdout.getvalue().splitlines()]
+        finally:
+            sys.stdin, sys.stdout = old_in, old_out
+        self.assertEqual(got, [2, 1], "the quick answer comes first")
 
 
 class Reading(Base):
@@ -831,9 +854,10 @@ class ErrorMapping(Base):
                    {"id": 1, "op": "open_pr", "params": {"service": "acme/one", "branch": "f", "base": "m",
                                                          "title": "t", "token": PASSED_TOKEN}},
                    {"id": 2, "op": "repo_url", "params": {"service": "acme/one", "token": PASSED_TOKEN}})
-        self.assertNotIn(PASSED_TOKEN, json.dumps(out[0]))
-        self.assertFalse(out[0]["ok"])
-        self.assertEqual(out[0]["error"]["kind"], "permanent")
+        first = next(o for o in out if o["id"] == 1)
+        self.assertNotIn(PASSED_TOKEN, json.dumps(first))
+        self.assertFalse(first["ok"])
+        self.assertEqual(first["error"]["kind"], "permanent")
 
 
 @unittest.skipUnless(HAVE_OPENSSL, SKIP_MSG)
