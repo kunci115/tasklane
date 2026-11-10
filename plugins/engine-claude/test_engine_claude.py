@@ -149,6 +149,20 @@ class Roles(Fixture):
         self.assertEqual(r["result"]["answer"], "because")
         self.assertIn("<question>", self.record()["stdin"])
 
+    def test_the_planner_asks_first_then_proposes_tickets_and_is_held_to_its_limits(self):
+        self.behave(result='{"summary": "s", "questions": ["Which stack?", "Who logs in?"], "tickets": [{"title": "t", "body": "b"}]}')
+        r = self.run_role("planner", ticket={"service": "", "ref": "", "title": "my-app", "body": "a todo app", "comments": []})
+        self.assertEqual(r["result"]["questions"], ["Which stack?", "Who logs in?"])
+        self.assertEqual(r["result"]["tickets"], [], "questions come before the plan")
+        self.assertEqual(flag(self.record()["argv"], "--tools"), "Read,Grep,Glob")
+        many = ",".join('{"title": "T%d", "body": "b"}' % i for i in range(12))
+        self.behave(result='{"summary": "s", "questions": [], "tickets": [' + many + ']}')
+        out = self.run_role("planner", ticket={"service": "", "ref": "", "title": "x", "body": "y", "comments": []})["result"]
+        self.assertEqual(len(out["tickets"]), 8)
+        self.behave(result='{"summary": "s", "questions": [], "tickets": []}')
+        r = self.run_role("planner", ticket={"service": "", "ref": "", "title": "x", "body": "y", "comments": []})
+        self.assertFalse(r.get("ok", True), "neither questions nor tickets is not a plan")
+
     def test_the_model_the_cli_reports_is_passed_on_in_the_usage(self):
         self.behave(result='{"verdict": "approve", "notes": "ok"}', models=["claude-sonnet-5-5", "claude-haiku-5-5"])
         self.assertEqual(self.run_role("reviewer")["result"]["usage"]["model"], "claude-haiku-5-5,claude-sonnet-5-5")

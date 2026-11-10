@@ -296,6 +296,8 @@ The **Knowledge** page holds short notes that every agent is given (for example 
 
 ## Starting a new project
 
+Press **Plan it with the AI first** instead of creating straight away: the AI asks what it needs, then proposes a list of tickets (the first sets up the skeleton and the test command). Edit or untick them, and confirm to create the repository and those tickets. Each ticket is then triaged and waits for your approval like any other.
+
 **New project** in the console creates a repository, registers it in triage mode and opens a first ticket from your brief, so a project can start from an idea instead of an existing repository.
 
 GitHub only lets an App create repositories in an organization, and only with the **Administration** permission (write). tasklane does not ask for that when it creates the App, to keep the App's rights small. To use this page: open the App's settings on GitHub, under Permissions add Repository permissions, Administration, Read and write, and accept the change in the organization. Install the App with **All repositories** so the new repository is included by itself; with selected repositories the new one has to be added to the installation by hand. The seeded `.tasklane.yml` keeps `.github/` (workflows) behind a person, because the App cannot change workflow files anyway.

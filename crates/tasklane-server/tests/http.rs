@@ -2829,6 +2829,76 @@ async fn the_knowledge_page_holds_notes_for_every_repository_and_notes_can_be_ed
 }
 
 #[tokio::test]
+async fn a_new_project_can_be_planned_with_the_ai_before_anything_is_created() {
+    let Some(e) = env().await else { return };
+    let post = |path: &str, body: String| form(path, body, Some(e.cookie.clone()));
+    let base = format!(
+        "csrf={}&owner=acme&name=plan-app&template=blank&visibility=private",
+        e.csrf
+    );
+    // no brief, nothing to plan from
+    let (st, _, _) = send(&e.app, post("/projects/plan", base.clone())).await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    // the AI asks first
+    let (st, _, asked) = send(
+        &e.app,
+        post(
+            "/projects/plan",
+            format!("{base}&brief=askfirst+an+invoice+tool"),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(
+        asked.contains("Which stack?") && asked.contains("Answer and continue"),
+        "{asked}"
+    );
+    assert!(
+        !e.dir.path().join("state/created_repo.json").exists(),
+        "nothing created yet"
+    );
+    // with the answer it proposes tickets
+    let (_, _, planned) = send(
+        &e.app,
+        post(
+            "/projects/plan",
+            format!("{base}&brief=askfirst+an+invoice+tool&q0=Which+stack%3F&a0=Python"),
+        ),
+    )
+    .await;
+    assert!(
+        planned.contains("Project skeleton")
+            && planned.contains("Create the repository and 2 ticket(s)"),
+        "{planned}"
+    );
+    let log = std::fs::read_to_string(e.dir.path().join("state/planner.log")).unwrap();
+    assert!(log.contains("Answer: Python"), "{log}");
+    // creating takes the ticked tickets, the unticked one is left out
+    let (st, _, done) = send(
+        &e.app,
+        post(
+            "/projects/new",
+            format!(
+                "{base}&brief=an+invoice+tool&t0_on=on&t0_title=Project+skeleton&t0_body=Set+up&t1_title=First+feature&t1_body=Main+page"
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(
+        done.contains("Project skeleton") && !done.contains("First feature"),
+        "{done}"
+    );
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM tickets t JOIN services s ON s.id = t.service_id WHERE s.external_id = 'acme/plan-app'",
+    )
+    .fetch_one(&e.pool)
+    .await
+    .unwrap();
+    assert_eq!(n, 1);
+}
+
+#[tokio::test]
 async fn tickets_of_an_archived_repository_leave_the_lists_but_not_the_database() {
     let Some(e) = env().await else { return };
     let id = seed_ticket(&e, "7", "Old account work", "merged", 1).await;

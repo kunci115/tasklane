@@ -62,6 +62,15 @@ def run(params):
     with open(os.path.join(STATE, "profile.log"), "a") as f:
         f.write(json.dumps({"role": role, "system": (params.get("profile") or {}).get("system", "")}) + "\n")
     ref = params["ticket"]["ref"]
+    if role == "planner":
+        t = params["ticket"]
+        with open(os.path.join(STATE, "planner.log"), "a") as f:
+            f.write(json.dumps({"title": t["title"], "body": t["body"], "comments": t.get("comments")}) + "\n")
+        if "askfirst" in t["body"] and not t.get("comments"):
+            return {"summary": "need detail", "questions": ["Which stack?"], "tickets": []}
+        return {"summary": "A small app", "questions": [], "tickets": [
+            {"title": "Project skeleton", "body": "Set up the layout and the test command."},
+            {"title": "First feature", "body": "Add the main page."}]}
     if role == "duplicate":
         with open(os.path.join(STATE, "dup_calls.log"), "a") as f:
             f.write(ref + "\n")

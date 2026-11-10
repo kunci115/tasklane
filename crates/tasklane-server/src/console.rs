@@ -40,6 +40,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/tickets", get(tickets::list))
         .route("/pulls", get(pulls::page))
         .route("/projects/new", get(projects::page).post(projects::create))
+        .route("/projects/plan", post(projects::plan))
         .route("/fragments/pulls", get(pulls::fragment))
         .route("/pulls/review", post(pulls::review))
         .route("/pulls/merge", post(pulls::merge))

@@ -25,7 +25,7 @@ PROTOCOL_MAJOR = 1
 VERSION = "0.1.0"
 
 CRED_VARS = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
-ROLES = ("triage", "dev", "reviewer", "ask", "duplicate", "device")
+ROLES = ("triage", "dev", "reviewer", "ask", "duplicate", "device", "planner")
 DEFAULT_MAX_SECS = 900
 MAX_TEXT = 200_000  # characters of untrusted text accepted per field
 
@@ -65,6 +65,11 @@ Pick the single next step. Prefer reading and diagnosing before changing anythin
 Never invent an action, and never put an address, host or URL in params: the system supplies the device's address itself.
 Reply with ONLY one JSON object: {"status": "continue"|"done"|"escalate", "next_action": "<one action name>" or null, "params": {...}, "reason": "<one short sentence>"}.
 Use "done" only when the observations show the device is healthy again. Use "escalate" when nothing allowed is likely to help or a person should look.""",
+    "planner": """\
+Role: project planner (no repository exists yet, no tools needed). <ticket> holds the project name (title), the person's brief (body) and, in <comment> blocks, earlier questions you asked and the answers.
+Decide whether you can plan now. Ask at most 5 questions, and only what you cannot reasonably assume (the stack, who the users are, hard constraints); never ask something the brief already says. Once the answers are in, stop asking and plan.
+A plan is 1 to 8 tickets, in the order they should be done, each small enough for one pull request: the first sets up the project skeleton and its test command, later ones add one feature each. A ticket has a short "title" and a "body" that says what to build and how to know it works. "summary" is two sentences on what will be built.
+Reply with ONLY one JSON object: {"summary": "<text>", "questions": ["<question>", ...], "tickets": [{"title": "<title>", "body": "<text>"}, ...]}. Give questions OR tickets, not both.""",
     "ask": """\
 Role: question answering (read-only). Answer the question using the repository if useful.
 Reply with ONLY one JSON object: {"answer": "<answer text>"}""",
@@ -85,6 +90,11 @@ SCHEMAS = {
         "next_action": {"type": ["string", "null"]}, "params": {"type": "object"}, "reason": {"type": "string"}}},
     "ask": {"type": "object", "required": ["answer"], "properties": {
         "answer": {"type": "string"}}},
+    "planner": {"type": "object", "required": ["summary"], "properties": {
+        "summary": {"type": "string"},
+        "questions": {"type": "array", "items": {"type": "string"}},
+        "tickets": {"type": "array", "items": {"type": "object", "required": ["title", "body"], "properties": {
+            "title": {"type": "string"}, "body": {"type": "string"}}}}}},
 }
 
 READ_TOOLS = ["Read", "Grep", "Glob"]
@@ -405,6 +415,26 @@ def validate(role, obj):
             return None
         reason = obj.get("reason", "")
         return {"duplicate_of": d, "reason": reason if isinstance(reason, str) else ""}
+    if role == "planner":
+        summary = obj.get("summary", "")
+        q = obj.get("questions", [])
+        t = obj.get("tickets", [])
+        if not isinstance(summary, str) or not isinstance(q, list) or not isinstance(t, list):
+            return None
+        if not all(isinstance(x, str) and x.strip() for x in q):
+            return None
+        tickets = []
+        for x in t:
+            if not (isinstance(x, dict) and isinstance(x.get("title"), str) and x["title"].strip()
+                    and isinstance(x.get("body"), str)):
+                return None
+            tickets.append({"title": x["title"].strip()[:120], "body": x["body"].strip()[:3000]})
+        questions = [x.strip()[:300] for x in q][:5]
+        if not questions and not tickets:
+            return None
+        if questions:
+            tickets = []  # ask first; the plan comes after the answers
+        return {"summary": summary.strip()[:2000], "questions": questions, "tickets": tickets[:8]}
     if role == "ask":
         a = obj.get("answer")
         if not isinstance(a, str) or not a.strip():
