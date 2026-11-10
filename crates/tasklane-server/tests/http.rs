@@ -2965,6 +2965,20 @@ async fn a_person_signs_in_with_their_own_token_and_acts_as_themselves() {
         me.contains("github:alice") && !me.contains("/services"),
         "their menu is short"
     );
+    assert!(
+        !me.contains("action=\"/pause\""),
+        "pausing everything is for owners"
+    );
+    let (st, _, _) = send(
+        &e.app,
+        form(
+            "/me/admin-token",
+            "csrf=x&token=a&again=a".into(),
+            Some(cookie.clone()),
+        ),
+    )
+    .await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
     // they approve as themselves, within their role
     let t = seed_ticket(&e, "61", "Needs approval", "awaiting_approval", 2).await;
     sqlx::query("UPDATE tickets SET plan_hash = 'h1' WHERE id = $1")
@@ -3029,6 +3043,49 @@ async fn a_person_signs_in_with_their_own_token_and_acts_as_themselves() {
     let (st, _, _) = send(&e.app, get("/me", Some(cookie))).await;
     assert_ne!(st, StatusCode::OK);
     assert!(sign_in(&e, &token).await.is_none());
+}
+
+#[tokio::test]
+async fn the_admin_token_can_be_changed_in_the_console_and_the_old_one_stops_working() {
+    let Some(e) = env().await else { return };
+    let other = sign_in(&e, ADMIN).await.expect("a second admin session");
+    let post = |body: String| form("/me/admin-token", body, Some(e.cookie.clone()));
+    let new = "a-brand-new-admin-token-1234567890";
+    let (st, _, _) = send(
+        &e.app,
+        post(format!(
+            "csrf={}&token={new}&again=different-token-1234567890xx",
+            e.csrf
+        )),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "the two must match");
+    let (st, _, _) = send(
+        &e.app,
+        post(format!("csrf={}&token=short&again=short", e.csrf)),
+    )
+    .await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "too short");
+    let (st, _, _) = send(&e.app, post(format!("csrf=nope&token={new}&again={new}"))).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, _, _) = send(
+        &e.app,
+        post(format!("csrf={}&token={new}&again={new}", e.csrf)),
+    )
+    .await;
+    assert!(st.is_redirection());
+    assert!(sign_in(&e, ADMIN).await.is_none(), "the old token is dead");
+    assert!(sign_in(&e, new).await.is_some(), "the new one works");
+    let (st, _, _) = send(&e.app, get("/me", Some(e.cookie.clone()))).await;
+    assert_eq!(st, StatusCode::OK, "the session that made the change stays");
+    let (st, _, _) = send(&e.app, get("/me", Some(other))).await;
+    assert_ne!(st, StatusCode::OK, "other admin sessions ended");
+    // deleting the row brings the environment token back
+    sqlx::query("DELETE FROM sync_state WHERE key = 'admin_token_hash'")
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    assert!(sign_in(&e, ADMIN).await.is_some());
 }
 
 #[tokio::test]

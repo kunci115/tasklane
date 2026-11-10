@@ -957,6 +957,29 @@ async fn work_runs_on_the_account_of_the_person_who_approved_it_and_never_on_ano
     );
 }
 
+#[tokio::test]
+async fn before_anyone_approves_the_work_of_a_known_issue_author_uses_their_account() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    // the fake source says "nabil" opened any issue whose ref contains "credit"
+    sqlx::query("INSERT INTO principals (channel, ref, role) VALUES ('github', 'nabil', 'member')")
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    let t = ticket(&w, "T-credit-own").await;
+    drive(&w).await;
+    assert_eq!(state(&w.pool, t).await, "merged");
+    let first_triage = w
+        .read_state("profile.log")
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|o| o["role"] == "triage")
+        .unwrap();
+    assert_eq!(first_triage["owner"], "github:nabil");
+}
+
 fn read_state_contains(w: &World, name: &str, needle: &str) -> bool {
     w.read_state(name).contains(needle)
 }

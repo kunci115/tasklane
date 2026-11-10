@@ -113,6 +113,7 @@ pub fn routes(st: Arc<AppState>) -> Router<Arc<AppState>> {
         )
         .route("/me", get(me::page))
         .route("/me/account", post(me::add_account))
+        .route("/me/admin-token", post(me::change_admin_token))
         .route("/me/account/remove", post(me::remove_account))
         .route("/people/{id}/token", post(people::make_token))
         .route("/people/{id}/token/remove", post(people::remove_token))
@@ -326,6 +327,21 @@ fn client_key(peer: Option<std::net::SocketAddr>, headers: &HeaderMap) -> String
     ip.to_string()
 }
 
+/// The admin token: the one from the environment, until it has been changed in the console; from then on
+/// only the new one (its hash is kept in `sync_state`; deleting that row brings the environment token back).
+async fn admin_token_ok(st: &AppState, given: &str) -> bool {
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT value FROM sync_state WHERE key = 'admin_token_hash'")
+            .fetch_optional(st.orch.pool())
+            .await
+            .ok()
+            .flatten();
+    match stored {
+        Some(h) => ct_eq(&tasklane_orchestrator::sha256_hex(given), &h),
+        None => ct_eq(given, &st.admin_token),
+    }
+}
+
 async fn login(
     State(st): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -349,7 +365,8 @@ async fn login(
             .into_response();
     }
     // the admin token, or the token of one person
-    let person: Option<i64> = if ct_eq(&f.token, &st.admin_token) {
+    let admin = admin_token_ok(&st, &f.token).await;
+    let person: Option<i64> = if admin {
         None
     } else {
         sqlx::query_scalar("SELECT id FROM principals WHERE console_token_hash = $1")
@@ -359,7 +376,7 @@ async fn login(
             .ok()
             .flatten()
     };
-    if person.is_none() && !ct_eq(&f.token, &st.admin_token) {
+    if person.is_none() && !admin {
         st.login_throttle
             .lock()
             .unwrap_or_else(|e| e.into_inner())

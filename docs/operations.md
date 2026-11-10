@@ -294,6 +294,8 @@ Anyone in a registered group can read what `/ask` can read from that repository.
 
 Under **People** an owner can create a console sign-in for each person (a token shown once). They sign in with it, see the work, approve what their role allows (their name is recorded as the approver) and add their own Claude account under **My account**. Work that a person approved runs on their account first, then on the shared accounts if theirs is used up; nobody's account is used for somebody else's work. Owners keep the settings (Repositories, People, Model accounts, Connections). The admin token still exists and acts as the console admin.
 
+Triage of an issue (before anybody approved it) runs on the account of the person who opened it when they are listed under People with their GitHub login (the login in the GitHub column, or a `github` person with that name); otherwise on the shared accounts. The admin token can be changed under My account when you are signed in with it.
+
 Not included (planned for a managed edition): single sign-on, groups and finer roles than owner, team approver and member.
 
 ## Telling the agents what the team knows

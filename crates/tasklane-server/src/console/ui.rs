@@ -273,13 +273,25 @@ pub async fn render(
         ]
     }
     .join("");
+    // pausing everything is for owners
+    let pause = if member {
+        String::new()
+    } else {
+        format!(
+            "<form method=\"post\" action=\"{}\"><input type=\"hidden\" name=\"csrf\" value=\"{csrf}\"><button class=\"btn small {}\" style=\"width:100%\" {}>{} {}</button></form>",
+            if paused { "/resume" } else { "/pause" },
+            if paused { "ok" } else { "warn" },
+            if paused { "" } else { "data-confirm=\"Stop all work? Running steps finish, nothing new starts.\"" },
+            icon(if paused { "play" } else { "pause" }),
+            if paused { "Resume work" } else { "Pause all work" },
+        )
+    };
     Html(format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
 <title>{t} - tasklane</title><meta name=\"theme-color\" content=\"#03040a\"><link rel=\"icon\" href=\"/static/icon.svg\"><link rel=\"manifest\" href=\"/manifest.webmanifest\">\
 <link rel=\"stylesheet\" href=\"/static/app.css?v={v}\"></head><body><div class=\"app\">\
 <aside class=\"side\"><div class=\"brand\"><span class=\"logo\">{logo}</span>tasklane</div><nav class=\"nav\" aria-label=\"Main\">{nav}</nav><div class=\"grow\"></div>\
-<div class=\"foot\"><form method=\"post\" action=\"{pa}\"><input type=\"hidden\" name=\"csrf\" value=\"{c}\">\
-<button class=\"btn small {pb}\" style=\"width:100%\" {confirm}>{pi} {pl}</button></form>\
+<div class=\"foot\">{pause}\
 <div class=\"runstate\"><span class=\"dot{pc}\"></span>{rs}</div>\
 <div class=\"row tight\" style=\"gap:.4rem\"><button class=\"btn small\" data-theme-toggle type=\"button\" title=\"Light or dark\">{moon}</button>\
 <form method=\"post\" action=\"/logout\"><input type=\"hidden\" name=\"csrf\" value=\"{c}\"><button class=\"btn small\" title=\"Sign out\">{lo}</button></form></div></div></aside>\
@@ -288,12 +300,8 @@ pub async fn render(
         v = asset_key(),
         logo = MARK_SVG,
         nav = nav,
-        pa = if paused { "/resume" } else { "/pause" },
+        pause = pause,
         c = csrf,
-        confirm = if paused { String::new() } else { "data-confirm=\"Stop all work? Running steps finish, nothing new starts.\"".to_string() },
-        pb = if paused { "ok" } else { "warn" },
-        pi = icon(if paused { "play" } else { "pause" }),
-        pl = if paused { "Resume work" } else { "Pause all work" },
         pc = if paused { " paused" } else { "" },
         rs = if paused { "Paused" } else { "Running" },
         moon = icon("moon"),

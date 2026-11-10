@@ -37,6 +37,16 @@ pub async fn page(State(st): State<Arc<AppState>>, headers: HeaderMap) -> Respon
             ""
         }
     ));
+    if sess.channel == "console" {
+        b.push_str(&format!(
+            "<div class=\"card\" style=\"margin-top:1rem\"><h2>Admin token</h2><form method=\"post\" action=\"/me/admin-token\" autocomplete=\"off\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><div class=\"row\">\
+<div><label for=\"nt\">New token</label><input id=\"nt\" type=\"password\" name=\"token\" required minlength=\"24\" maxlength=\"200\" autocomplete=\"new-password\" style=\"width:20rem\"></div>\
+<div><label for=\"nt2\">Again</label><input id=\"nt2\" type=\"password\" name=\"again\" required minlength=\"24\" maxlength=\"200\" autocomplete=\"new-password\" style=\"width:20rem\"></div>\
+<div class=\"row tight\"><button class=\"btn primary\" data-confirm=\"Change the admin token? Other admin sessions end.\">Change</button></div></div>\
+<p class=\"hint\">At least 24 characters. After the change only the new token signs in as admin (the one in the server's environment stops working). Only a hash is kept. If you lose it, delete the row <code>admin_token_hash</code> from <code>sync_state</code> in the database and the environment token works again.</p></form></div>",
+            sess.csrf
+        ));
+    }
     if sess.channel != "console" {
         let rows = st
             .orch
@@ -190,4 +200,56 @@ pub async fn remove_account(
         )
             .into_response(),
     }
+}
+
+#[derive(Deserialize)]
+pub struct TokenIn {
+    csrf: String,
+    token: String,
+    again: String,
+}
+
+/// Change the admin token. Only the admin session may; every other admin session ends.
+pub async fn change_admin_token(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Form(f): Form<TokenIn>,
+) -> Response {
+    let sess = match guard(&st, &headers).await {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    if !csrf_ok(&st, &headers, &f.csrf).await {
+        return forbidden();
+    }
+    if sess.channel != "console" {
+        return forbidden();
+    }
+    if f.token != f.again {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "The two tokens are not the same.",
+        )
+            .into_response();
+    }
+    if f.token.chars().count() < 24 || f.token.chars().count() > 200 {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "The token needs at least 24 characters (and at most 200).",
+        )
+            .into_response();
+    }
+    let hash = tasklane_orchestrator::sha256_hex(&f.token);
+    let _ = sqlx::query("INSERT INTO sync_state (key, value) VALUES ('admin_token_hash', $1) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()")
+        .bind(&hash)
+        .execute(st.orch.pool())
+        .await;
+    let _ = sqlx::query("DELETE FROM console_sessions WHERE principal_id IS NULL AND csrf <> $1")
+        .bind(&sess.csrf)
+        .execute(st.orch.pool())
+        .await;
+    let _ = sqlx::query("INSERT INTO audit_events (actor, action, detail) VALUES ('console:admin', 'admin.token_changed', '{}')")
+        .execute(st.orch.pool())
+        .await;
+    redirect("/me")
 }

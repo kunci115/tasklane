@@ -165,10 +165,10 @@ async fn approvers(o: &Orchestrator, ticket_id: i64) -> Result<Vec<String>, Erro
 
 impl Orchestrator {
     /// Whose model account does the work on this ticket: the person who approved it last (as
-    /// `channel:ref`), else the person who opened the issue when the system knows them. The console
+    /// `channel:ref`), else the person who opened the issue when the system knows them (a principal with that GitHub login). The console
     /// admin token and unknown people give `None`: shared accounts only. A person's own account is
     /// never used for somebody else's work.
-    pub(crate) async fn account_owner(&self, ticket_id: i64) -> Option<String> {
+    pub(crate) async fn account_owner(&self, ticket_id: i64, author: &str) -> Option<String> {
         let approver: Option<String> = sqlx::query_scalar(
             "SELECT a.approver FROM approvals a JOIN principals p ON a.approver = p.channel || ':' || p.ref
              WHERE a.ticket_id = $1 AND a.decision = 'approve' ORDER BY a.id DESC LIMIT 1",
@@ -178,7 +178,25 @@ impl Orchestrator {
         .await
         .ok()
         .flatten();
-        approver.filter(|a| a != "console:admin" && valid_owner(a))
+        if let Some(a) = approver.filter(|a| a != "console:admin" && valid_owner(a)) {
+            return Some(a);
+        }
+        // nobody approved yet: the person who opened the issue, when the system knows them
+        if !valid_login(author) {
+            return None;
+        }
+        let who: Option<String> = sqlx::query_scalar(
+            "SELECT channel || ':' || ref FROM principals
+             WHERE (lower(github_login) = lower($1) OR (channel = 'github' AND lower(ref) = lower($1)))
+               AND NOT (channel = 'console' AND ref = 'admin')
+             ORDER BY (channel = 'github') DESC, id LIMIT 1",
+        )
+        .bind(author)
+        .fetch_optional(self.pool())
+        .await
+        .ok()
+        .flatten();
+        who.filter(|w| valid_owner(w))
     }
 
     /// Who to name for a ticket. `author` is the login that opened it. Never fails a job: if something
