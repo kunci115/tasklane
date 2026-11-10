@@ -239,6 +239,14 @@ def handle(op, params):
         return {"event": json.loads(base64.b64decode(params["body_b64"]))}
     if op == "list_services":
         return {"services": read_json("services.json", [])}
+    if op == "create_repo":
+        if flag("create_denied"):
+            raise ValueError("the GitHub App may not create repositories: give it the Administration permission")
+        full = params["owner"] + "/" + params["name"]
+        with open(os.path.join(STATE, "created_repo.json"), "w") as f:
+            f.write(json.dumps(params))
+        return {"external_id": full, "html_url": "https://github.com/" + full, "default_branch": "main",
+                "private": params.get("private", True), "seeded": ["README.md", ".tasklane.yml"], "seed_error": ""}
     if op == "get_pull":
         return read_json("pull_" + str(params["pr"]) + ".json", {"base": "main", "state": "open"})
     if op == "list_pulls":

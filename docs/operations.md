@@ -286,3 +286,9 @@ Anyone in a registered group can read what `/ask` can read from that repository.
 - **Stuck job?** The reaper returns jobs whose worker died; a ticket that waits too long shows in the console. A paused system shows "paused" on the home page.
 - **`readyz` fails:** the database is unreachable.
 - **Nothing happens after installing the App:** check the repository's mode, that the issue is new (not older than the install), and the daemon log for `sync:` lines.
+
+## Starting a new project
+
+**New project** in the console creates a repository, registers it in triage mode and opens a first ticket from your brief, so a project can start from an idea instead of an existing repository.
+
+GitHub only lets an App create repositories in an organization, and only with the **Administration** permission (write). tasklane does not ask for that when it creates the App, to keep the App's rights small. To use this page: open the App's settings on GitHub, under Permissions add Repository permissions, Administration, Read and write, and accept the change in the organization. Install the App with **All repositories** so the new repository is included by itself; with selected repositories the new one has to be added to the installation by hand. The seeded `.tasklane.yml` keeps `.github/` (workflows) behind a person, because the App cannot change workflow files anyway.

@@ -8,6 +8,7 @@ mod connect;
 mod dashboard;
 mod map;
 mod people;
+mod projects;
 mod pulls;
 mod repos;
 mod system;
@@ -37,6 +38,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/logout", post(logout))
         .route("/tickets", get(tickets::list))
         .route("/pulls", get(pulls::page))
+        .route("/projects/new", get(projects::page).post(projects::create))
         .route("/fragments/pulls", get(pulls::fragment))
         .route("/pulls/review", post(pulls::review))
         .route("/pulls/merge", post(pulls::merge))

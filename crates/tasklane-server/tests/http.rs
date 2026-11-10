@@ -2756,3 +2756,74 @@ async fn the_live_map_ties_pull_requests_to_their_repository_ticket_and_review()
     );
     assert_eq!(by("10")["state"], "open");
 }
+
+#[tokio::test]
+async fn a_new_project_is_created_registered_in_triage_and_gets_a_first_ticket() {
+    let Some(e) = env().await else { return };
+    let (st, _, _) = send(&e.app, get("/projects/new", None)).await;
+    assert_ne!(st, StatusCode::OK, "needs a session");
+    let (st, _, page) = send(&e.app, get("/projects/new", Some(e.cookie.clone()))).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(page.contains("Create the project") && page.contains("Administration"));
+    let post = |body: String| form("/projects/new", body, Some(e.cookie.clone()));
+    assert_eq!(
+        send(&e.app, post("csrf=bad&owner=acme&name=app".into()))
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    for bad in [
+        "owner=ac%2Fme&name=app",
+        "owner=acme&name=..%2Fx",
+        "owner=acme&name=app&template=rust",
+        "owner=acme&name=x.git",
+        "owner=&name=app",
+    ] {
+        let (st, _, _) = send(&e.app, post(format!("csrf={}&{bad}", e.csrf))).await;
+        assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
+    }
+    // GitHub refusing (no Administration permission) says why and registers nothing
+    std::fs::write(e.dir.path().join("state/create_denied"), "").unwrap();
+    let (st, _, denied) = send(&e.app, post(format!("csrf={}&owner=acme&name=app", e.csrf))).await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(denied.contains("Administration") && denied.contains("Not created"));
+    std::fs::remove_file(e.dir.path().join("state/create_denied")).unwrap();
+    let body = format!(
+        "csrf={}&owner=acme&name=new-app&description=A+thing&template=python&visibility=private&brief=Build+a+small+invoice+tool",
+        e.csrf
+    );
+    let (st, _, ok) = send(&e.app, post(body)).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(
+        ok.contains("created") && ok.contains("acme/new-app") && ok.contains("First ticket"),
+        "{ok}"
+    );
+    let made = std::fs::read_to_string(e.dir.path().join("state/created_repo.json")).unwrap();
+    assert!(
+        made.contains("\"private\": true") && made.contains("python"),
+        "{made}"
+    );
+    let (mode, source): (String, String) =
+        sqlx::query_as("SELECT mode, source FROM services WHERE external_id = 'acme/new-app'")
+            .fetch_one(&e.pool)
+            .await
+            .unwrap();
+    assert_eq!(mode, "triage", "a project starts asking first");
+    assert_eq!(source, "test");
+    let tickets: i64 = sqlx::query_scalar("SELECT count(*) FROM tickets t JOIN services s ON s.id = t.service_id WHERE s.external_id = 'acme/new-app'")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(tickets, 1);
+    let jobs: i64 = sqlx::query_scalar("SELECT count(*) FROM jobs j JOIN tickets t ON t.id = j.ticket_id JOIN services s ON s.id = t.service_id WHERE s.external_id = 'acme/new-app' AND j.kind = 'triage'")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(jobs, 1, "the brief goes straight to a plan");
+    let audited: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit_events WHERE action = 'project.created'")
+            .fetch_one(&e.pool)
+            .await
+            .unwrap();
+    assert_eq!(audited, 1);
+}

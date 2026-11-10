@@ -627,6 +627,64 @@ def op_create_item(params):
     return {"ref": str(d["number"])}
 
 
+OWNER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$")
+REPO_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
+TEMPLATES = {
+    "blank": "",
+    "python": "__pycache__/\n*.pyc\n.venv/\n.pytest_cache/\n.env\n",
+    "node": "node_modules/\ndist/\n.env\n*.log\n",
+}
+
+
+def put_file(svc, path, text, message):
+    app_api("PUT", f"/repos/{svc}/contents/{path}", body={
+        "message": message, "content": base64.b64encode(text.encode()).decode()})
+
+
+def op_create_repo(params):
+    """A new repository in an organization the App is installed on, with a README, a .gitignore and a
+    `.tasklane.yml` that keeps workflow files behind a person. Creating repositories needs the App's
+    Administration permission, which tasklane does not ask for by default; the error says how to give it."""
+    owner, name = p_str(params, "owner"), p_str(params, "name")
+    if not OWNER_RE.match(owner) or not REPO_NAME_RE.match(name) or name in (".", "..") or name.endswith(".git"):
+        raise permanent("owner or name is not acceptable")
+    if org_filter() and owner.lower() != org_filter():
+        raise permanent("owner is outside the configured GITHUB_ORG")
+    template = p_str(params, "template", required=False) or "blank"
+    if template not in TEMPLATES:
+        raise permanent("unknown template")
+    desc = (p_str(params, "description", required=False) or "")[:350].replace("\n", " ")
+    private = params.get("private") is not False
+    try:
+        d = app_api("POST", f"/orgs/{owner}/repos", body={
+            "name": name, "description": desc, "private": private, "has_issues": True}).data or {}
+    except PluginError as e:
+        if e.status == 404:
+            raise permanent("the owner is not an organization the App is installed on (an App cannot create repositories on a personal account)")
+        if e.status == 403:
+            raise permanent("the GitHub App may not create repositories: in the App's settings give it the Administration permission (write), then accept the change in the organization")
+        if e.status == 422:
+            raise permanent("a repository with that name already exists, or the name is refused")
+        raise
+    full = d.get("full_name") or f"{owner}/{name}"
+    seeded, problem = [], ""
+    title = name.replace("-", " ").replace("_", " ")
+    files = [("README.md", f"# {title}\n\n{desc}\n".rstrip() + "\n", "Start the project")]
+    if TEMPLATES[template]:
+        files.append((".gitignore", TEMPLATES[template], "Add .gitignore"))
+    files.append((OVERRIDE_FILE, "protected_paths:\n  - .github/\n", "Keep CI files behind a person"))
+    for path, text, msg in files:
+        try:
+            put_file(full, path, text, msg)
+            seeded.append(path)
+        except PluginError as e:
+            problem = f"could not add {path}: {e.message}"[:300]
+            break
+    return {"external_id": full, "html_url": d.get("html_url") or f"https://github.com/{full}",
+            "default_branch": d.get("default_branch") or "main", "private": bool(d.get("private", private)),
+            "seeded": seeded, "seed_error": problem}
+
+
 def op_comment(params):
     svc, ref = p_service(params), p_num(params, "ref")
     d = app_api("POST", f"/repos/{svc}/issues/{ref}/comments",
@@ -1055,7 +1113,7 @@ OPS = {
     "create_item": op_create_item, "comment": op_comment,
     "set_labels": op_set_labels, "detect_facts": op_detect_facts, "read_overrides": op_read_overrides,
     "repo_url": op_repo_url, "mint_run_token": op_mint_run_token,
-    "open_pr": op_open_pr, "get_checks": op_get_checks, "get_user": op_get_user, "list_pulls": op_list_pulls, "get_pull": op_get_pull,
+    "open_pr": op_open_pr, "get_checks": op_get_checks, "get_user": op_get_user, "list_pulls": op_list_pulls, "get_pull": op_get_pull, "create_repo": op_create_repo,
     "merge_pr": op_merge_pr, "list_pr_feedback": op_list_pr_feedback, "verify_webhook": op_verify_webhook,
     "app_manifest_convert": op_app_manifest_convert, "list_installations": op_list_installations,
     "claim_repo": op_claim_repo, "release_repo": op_release_repo, "takeover_repo": op_takeover_repo,

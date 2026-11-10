@@ -346,6 +346,31 @@ class Reading(Base):
         r = self.ok("get_pull", {"service": "acme/one", "pr": "5"})
         self.assertEqual((r["base"], r["head_sha"], r["state"], r["body"]), ("dev", "abc", "open", ""))
 
+    def test_create_repo_makes_the_repository_and_seeds_three_files(self):
+        R = self.fake.routes
+        R[("POST", "/orgs/acme/repos")] = (201, {}, {"full_name": "acme/new-app", "html_url": "https://github.com/acme/new-app",
+                                                       "default_branch": "main", "private": True})
+        for f in ("README.md", ".gitignore", ".tasklane.yml"):
+            R[("PUT", f"/repos/acme/new-app/contents/{f}")] = (201, {}, {"content": {}})
+        r = self.ok("create_repo", {"owner": "acme", "name": "new-app", "description": "A thing", "template": "python"})
+        self.assertEqual(r["external_id"], "acme/new-app")
+        self.assertEqual(r["seeded"], ["README.md", ".gitignore", ".tasklane.yml"])
+        self.assertEqual(r["seed_error"], "")
+        body = self.fake.seen("POST", "/orgs/acme/repos")[-1]["body"]
+        self.assertTrue(body["private"], "private unless said otherwise")
+
+    def test_create_repo_explains_a_missing_permission_and_refuses_bad_names(self):
+        R = self.fake.routes
+        R[("POST", "/orgs/acme/repos")] = (403, {}, {"message": "Resource not accessible by integration"})
+        e = self.err("create_repo", {"owner": "acme", "name": "x"})
+        self.assertEqual(e["kind"], "permanent")
+        self.assertIn("Administration", e["message"])
+        R[("POST", "/orgs/me/repos")] = (404, {}, {"message": "Not Found"})
+        self.assertIn("organization", self.err("create_repo", {"owner": "me", "name": "x"})["message"])
+        for bad in ({"owner": "a/b", "name": "x"}, {"owner": "acme", "name": "../x"}, {"owner": "acme", "name": "x.git"},
+                    {"owner": "acme", "name": "x", "template": "rust"}):
+            self.assertEqual(self.err("create_repo", bad)["kind"], "permanent", bad)
+
     def test_get_user_gives_the_id_behind_a_login_and_only_for_people(self):
         R = self.fake.routes
         R[("GET", "/users/nabil")] = (200, {}, {"id": 4242, "login": "Nabil", "type": "User"})
