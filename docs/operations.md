@@ -207,6 +207,8 @@ The console covers everything a normal install needs. Environment variables are 
 | `TASKLANE_DEV_TIMEOUT_SECS` | no | Wall time one development run may take, default 1800 (limits 60 to 86400). A run that exceeds it is stopped and counts as an attempt. |
 | `TASKLANE_CI_TIMEOUT_SECS` | no | How long a pull request's checks may stay pending before the ticket fails, default 3600. |
 | `TASKLANE_MAX_IN_CI` | no | No new development starts while this many pull requests are waiting for CI, default 5. |
+| `TASKLANE_ALERT_SECRET` | no | Turns on `POST /api/v1/alerts`, where a SIEM or scanner sends signed alerts that become tickets (16 characters or more; see the security pipeline guide). |
+| `TASKLANE_SIEM_TOKEN` | no | Turns on `GET /api/v1/audit`, the hash-chained audit log a SIEM collector polls (16 characters or more, bearer token). |
 | `TASKLANE_METRICS_TOKEN` | no | Turns on `/metrics` (Prometheus text format: tickets by state, queue jobs by status, repositories by mode, model tokens and runs, and outcomes: tickets merged, merged on the first try, failed, reviewer verdicts, red CI runs, tokens per role). Needs 16 characters or more; a scraper sends it as `Authorization: Bearer <token>`. Without it the endpoint does not exist. |
 | `TASKLANE_DUPLICATE_MODEL` | no | `1` also asks the model whether a new ticket repeats one of the 30 most recent tickets of the repository, when the word match found nothing. It can only name a listed ticket and a person still decides. Costs a small model run per new ticket; off by default. |
 | `TASKLANE_MAX_DEV` | no | Development runs at once, default 1. Raise it only after you measure your CI capacity. |

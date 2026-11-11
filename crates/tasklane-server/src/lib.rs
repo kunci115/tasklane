@@ -8,6 +8,7 @@ pub mod connections;
 pub mod console;
 pub mod doctor;
 pub mod runtime;
+pub mod siem;
 pub mod tickets;
 
 use std::collections::HashMap;
@@ -33,6 +34,10 @@ pub struct AppState {
     pub public_url: Option<String>,
     /// `/metrics` is served only when this is set, and only to a caller that sends it as a bearer token.
     pub metrics_token: Option<String>,
+    /// Alerts are accepted only when this is set, signed with it (HMAC-SHA256 of the body).
+    pub alert_secret: Option<String>,
+    /// The audit log can be read by a SIEM only when this is set, as a bearer token.
+    pub siem_token: Option<String>,
 }
 
 pub fn now_unix() -> i64 {

@@ -1159,6 +1159,30 @@ async fn pictures_from_the_issue_reach_triage_and_the_developer_and_are_removed_
 }
 
 #[tokio::test]
+async fn a_ticket_made_from_a_security_alert_waits_for_a_person_at_the_alert_s_level() {
+    let Some(pool) = test_pool().await else {
+        return;
+    };
+    let w = world(pool, |_| {}).await;
+    let t = ticket(&w, "T-alert").await;
+    sqlx::query("UPDATE tickets SET require_approval = true, min_level = 3 WHERE id = $1")
+        .bind(t)
+        .execute(&w.pool)
+        .await
+        .unwrap();
+    drive(&w).await;
+    assert_eq!(state(&w.pool, t).await, "awaiting_approval");
+    let (level, why): (i16, serde_json::Value) =
+        sqlx::query_as("SELECT level, level_reasons FROM tickets WHERE id = $1")
+            .bind(t)
+            .fetch_one(&w.pool)
+            .await
+            .unwrap();
+    assert_eq!(level, 3);
+    assert!(why.to_string().contains("security alert"), "{why}");
+}
+
+#[tokio::test]
 async fn a_message_reaches_the_next_run_once_and_a_stopped_run_starts_again_without_using_an_attempt(
 ) {
     let Some(pool) = test_pool().await else {

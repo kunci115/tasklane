@@ -97,10 +97,23 @@ pub(crate) async fn run(o: &Orchestrator, job: &ClaimedJob) -> Result<RunResult,
     if always_ask {
         why.push("this repository asks for approval on every ticket");
     }
+    // A ticket made from a security alert: the alert's severity is a floor, and a person always decides.
+    let (alert_floor, alert_asks): (i16, bool) =
+        sqlx::query_as("SELECT min_level, require_approval FROM tickets WHERE id = $1")
+            .bind(t.id)
+            .fetch_one(&o.pool)
+            .await
+            .unwrap_or((1, false));
+    let floor = Level::try_from(u8::try_from(alert_floor).unwrap_or(1))
+        .map(|f| f.max(floor))
+        .unwrap_or(floor);
+    if alert_asks {
+        why.push("made from a security alert: a person decides");
+    }
     let level = Level::with_model_suggestion(floor, suggestion);
     let to = if !out.questions.is_empty() {
         State::NeedsInfo
-    } else if level.needs_human() || t.mode != "full" || untrusted || always_ask {
+    } else if level.needs_human() || t.mode != "full" || untrusted || always_ask || alert_asks {
         State::AwaitingApproval
     } else {
         State::Queued

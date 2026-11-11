@@ -20,6 +20,11 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/healthz", get(|| async { "ok" }))
         .route("/readyz", get(ready))
         .route("/metrics", get(metrics))
+        .route("/api/v1/audit", get(crate::siem::audit_export))
+        .route(
+            "/api/v1/alerts",
+            post(crate::siem::alert).layer(DefaultBodyLimit::max(64 * 1024)),
+        )
         .route(
             "/api/v1/report",
             post(report).layer(DefaultBodyLimit::max(64 * 1024)),

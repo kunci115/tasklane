@@ -111,6 +111,8 @@ async fn run(cmd: &str) -> Result<(), Box<dyn std::error::Error>> {
         base_engine: s.engine.clone(),
         public_url: s.public_url.clone(),
         metrics_token: s.metrics_token.clone(),
+        alert_secret: s.alert_secret.clone(),
+        siem_token: s.siem_token.clone(),
     });
     let app = api::routes()
         .merge(console::routes(state.clone()))

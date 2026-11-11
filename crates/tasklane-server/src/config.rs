@@ -26,6 +26,8 @@ pub struct Settings {
     pub max_dev_parallel: i64,
     pub max_tokens_per_ticket: i64,
     pub metrics_token: Option<String>,
+    pub alert_secret: Option<String>,
+    pub siem_token: Option<String>,
     pub max_in_ci: i64,
     pub duplicate_model: bool,
     pub dev_timeout_secs: u64,
@@ -190,6 +192,8 @@ impl Settings {
             max_tokens_per_ticket: num(vars, "TASKLANE_MAX_TOKENS_PER_TICKET", 3_000_000i64)?
                 .max(10_000),
             metrics_token: get(vars, "TASKLANE_METRICS_TOKEN").filter(|t| t.len() >= 16),
+            alert_secret: get(vars, "TASKLANE_ALERT_SECRET").filter(|t| t.len() >= 16),
+            siem_token: get(vars, "TASKLANE_SIEM_TOKEN").filter(|t| t.len() >= 16),
             duplicate_model: get(vars, "TASKLANE_DUPLICATE_MODEL").as_deref() == Some("1"),
             max_in_ci: num(vars, "TASKLANE_MAX_IN_CI", 5i64)?.max(1),
             dev_timeout_secs: num(vars, "TASKLANE_DEV_TIMEOUT_SECS", 1800u64)?.clamp(60, 86_400),

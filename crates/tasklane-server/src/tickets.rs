@@ -32,6 +32,46 @@ pub async fn create_ticket(
     via: &str,
     daily_limit: i64,
 ) -> Result<Created, CreateError> {
+    create_ticket_with(
+        orch,
+        service,
+        reporter,
+        title,
+        body,
+        via,
+        daily_limit,
+        TicketOpts::default(),
+    )
+    .await
+}
+
+/// What a ticket must go through whatever triage says: wait for a person, and a level it can not be below.
+#[derive(Debug, Clone, Copy)]
+pub struct TicketOpts {
+    pub require_approval: bool,
+    pub min_level: i16,
+}
+
+impl Default for TicketOpts {
+    fn default() -> Self {
+        TicketOpts {
+            require_approval: false,
+            min_level: 1,
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn create_ticket_with(
+    orch: &Orchestrator,
+    service: &str,
+    reporter: &str,
+    title: &str,
+    body: &str,
+    via: &str,
+    daily_limit: i64,
+    opts: TicketOpts,
+) -> Result<Created, CreateError> {
     let title = title.trim();
     if title.is_empty() || title.chars().count() > 200 {
         return Err(CreateError::BadTitle);
@@ -94,14 +134,17 @@ pub async fn create_ticket(
 
     let mut tx = pool.begin().await.map_err(|_| CreateError::Db)?;
     let inserted: Option<bool> = sqlx::query_scalar(
-        "INSERT INTO tickets (service_id, external_ref, reporter_ref, title) VALUES ($1,$2,$3,$4)
-         ON CONFLICT (service_id, external_ref) DO UPDATE SET reporter_ref = COALESCE(tickets.reporter_ref, $3), title = COALESCE(tickets.title, $4)
+        "INSERT INTO tickets (service_id, external_ref, reporter_ref, title, require_approval, min_level) VALUES ($1,$2,$3,$4,$5,$6)
+         ON CONFLICT (service_id, external_ref) DO UPDATE SET reporter_ref = COALESCE(tickets.reporter_ref, $3), title = COALESCE(tickets.title, $4),
+           require_approval = tickets.require_approval OR $5, min_level = GREATEST(tickets.min_level, $6)
          RETURNING (xmax = 0)",
     )
     .bind(service_id)
     .bind(&reference)
     .bind(reporter)
     .bind(title)
+    .bind(opts.require_approval)
+    .bind(opts.min_level)
     .fetch_optional(&mut *tx)
     .await
     .map_err(|_| CreateError::Db)?;
