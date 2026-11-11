@@ -142,6 +142,8 @@ def _run(params):
             raise ValueError("model down")
         with open(os.path.join(STATE, "ask_calls.log"), "a") as f:
             f.write(json.dumps({"q": params.get("question"), "ws": params.get("workspace")}) + "\n")
+        if "Write an issue for the development team" in (params.get("question") or ""):
+            return {"answer": "Add CSV export\n\nWanted: a CSV export of the report.\n\n- [ ] export button"}
         return {"answer": "The answer is 42."}
     if role == "reviewer":
         with open(os.path.join(STATE, "review_diffs.log"), "a") as f:

@@ -252,6 +252,7 @@ pub async fn render(
             item("map", "/map", "network", "Live map", None),
             item("tickets", "/tickets", "list", "Tickets", None),
             item("pulls", "/pulls", "merge", "Pull requests", None),
+            item("ask", "/ask", "chat", "Ask the AI", None),
             item("me", "/me", "users", "My account", None),
         ]
     } else {
@@ -260,6 +261,7 @@ pub async fn render(
             item("map", "/map", "network", "Live map", None),
             item("tickets", "/tickets", "list", "Tickets", None),
             item("repos", "/services", "repo", "Repositories", None),
+            item("ask", "/ask", "chat", "Ask the AI", None),
             item("projects", "/projects/new", "plus", "New project", None),
             item("pulls", "/pulls", "merge", "Pull requests", None),
             item("connections", "/connections", "plug", "Connections", None),

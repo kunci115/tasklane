@@ -9,6 +9,11 @@ impl Orchestrator {
     /// Answer `question` about `service` (a registry `external_id`). `asker` is
     /// only recorded in the audit log.
     pub async fn ask(&self, service: &str, question: &str, _asker: &str) -> Result<String, Error> {
+        self.ask_run(service, question).await
+    }
+
+    /// One read-only run on the repository's code; the question may carry earlier messages of a conversation.
+    pub(crate) async fn ask_run(&self, service: &str, question: &str) -> Result<String, Error> {
         let row: Option<(i64, Value, Value)> = sqlx::query_as("SELECT id, facts, agent_profile FROM services WHERE source = $1 AND external_id = $2 AND NOT archived")
             .bind(&self.cfg.source_name)
             .bind(service)
@@ -58,6 +63,7 @@ impl Orchestrator {
                     "role": "ask",
                     "ticket": {"service": service, "ref": "", "title": "", "body": "", "comments": []},
                     "question": question,
+                    "references": self.references_for(service).await,
                     "profile": crate::memory::with_notes(&self.pool, &self.cfg.source_name, service, &profile).await.unwrap_or(profile.clone()),
                     "workspace": prepared.worktree,
                     "budget": {"max_secs": self.cfg.call_timeout.as_secs(), "max_tokens": 100000},

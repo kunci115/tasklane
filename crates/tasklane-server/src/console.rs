@@ -14,6 +14,7 @@ mod projects;
 mod pulls;
 mod repos;
 mod system;
+mod talk;
 mod tickets;
 mod ui;
 
@@ -84,6 +85,11 @@ pub fn routes(st: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/people/{id}/credit", post(people::set_credit))
         .route("/accounts", get(accounts::page).post(accounts::add))
         .route("/accounts/action", post(accounts::action))
+        .route("/ask", get(talk::page))
+        .route("/ask/new", post(talk::new))
+        .route("/ask/{id}/say", post(talk::say))
+        .route("/ask/{id}/draft", post(talk::draft))
+        .route("/ask/{id}/issue", post(talk::issue))
         .route("/chat", get(chat_page))
         .route("/chat/groups", post(add_group))
         .route("/chat/groups/{id}/delete", post(delete_group))
@@ -141,7 +147,14 @@ fn allowed_for_member(method: &axum::http::Method, path: &str) -> bool {
         (true, [""])
             | (true, ["fragments", "overview" | "pulls"])
             | (true, ["fragments", "ticket", _])
-            | (true, ["tickets"] | ["tickets", _] | ["pulls"] | ["me"])
+            | (
+                true,
+                ["tickets"] | ["tickets", _] | ["pulls"] | ["me"] | ["ask"]
+            )
+            | (
+                false,
+                ["ask", "new"] | ["ask", _, "say" | "draft" | "issue"]
+            )
             | (true, ["map"] | ["map", "data" | "replay"])
             | (true, ["static", ..])
             | (true, ["manifest.webmanifest"])
@@ -608,4 +621,22 @@ async fn delete_group(
         .execute(st.orch.pool())
         .await;
     redirect("/chat")
+}
+
+#[cfg(test)]
+mod member_rules {
+    use super::allowed_for_member;
+    use axum::http::Method;
+
+    #[test]
+    fn a_member_can_talk_to_the_ai_but_not_reach_settings() {
+        assert!(allowed_for_member(&Method::GET, "/ask"));
+        assert!(allowed_for_member(&Method::POST, "/ask/new"));
+        assert!(allowed_for_member(&Method::POST, "/ask/12/say"));
+        assert!(allowed_for_member(&Method::POST, "/ask/12/draft"));
+        assert!(allowed_for_member(&Method::POST, "/ask/12/issue"));
+        assert!(!allowed_for_member(&Method::POST, "/ask/12/other"));
+        assert!(!allowed_for_member(&Method::GET, "/knowledge"));
+        assert!(!allowed_for_member(&Method::POST, "/services/1/profile"));
+    }
 }

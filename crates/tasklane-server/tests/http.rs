@@ -3913,3 +3913,145 @@ async fn looking_at_pictures_in_issues_is_on_by_default_and_can_be_switched_off_
     .unwrap();
     assert!(on);
 }
+
+#[tokio::test]
+async fn a_conversation_about_a_repository_carries_its_history_and_becomes_an_issue() {
+    let Some(e) = env().await else { return };
+    let id: i64 = sqlx::query_scalar("SELECT id FROM services WHERE external_id = 'org/repo'")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    // the repository the fake source points at: a bare repository with one commit on main
+    let work = e.dir.path().join("work");
+    let bare = e.dir.path().join("org/repo.git");
+    std::fs::create_dir_all(&work).unwrap();
+    std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
+    std::fs::write(work.join("README.md"), "export\n").unwrap();
+    let git = |dir: &std::path::Path, args: &[&str]| {
+        let ok = std::process::Command::new("git")
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "init.defaultBranch=main",
+            ])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap()
+            .status
+            .success();
+        assert!(ok, "git {args:?}");
+    };
+    git(&work, &["init", "-q"]);
+    git(&work, &["add", "."]);
+    git(&work, &["commit", "-q", "-m", "first"]);
+    git(
+        e.dir.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            work.to_str().unwrap(),
+            bare.to_str().unwrap(),
+        ],
+    );
+    let c = Some(e.cookie.clone());
+    let (_, _, page) = send(&e.app, get("/ask", c.clone())).await;
+    assert!(page.contains("org/repo") && page.contains("New conversation"));
+    let (st, h, _) = send(
+        &e.app,
+        form("/ask/new", format!("csrf={}&repo={id}", e.csrf), c.clone()),
+    )
+    .await;
+    assert!(st.is_redirection());
+    let conv: i64 = sqlx::query_scalar("SELECT id FROM conversations")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert!(h
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .ends_with(&format!("c={conv}")));
+    for q in ["How+does+export+work", "And+for+big+reports"] {
+        let (st, _, _) = send(
+            &e.app,
+            form(
+                &format!("/ask/{conv}/say"),
+                format!("csrf={}&text={q}", e.csrf),
+                c.clone(),
+            ),
+        )
+        .await;
+        assert!(st.is_redirection());
+    }
+    let calls = std::fs::read_to_string(e.dir.path().join("state/ask_calls.log")).unwrap();
+    let second: serde_json::Value = serde_json::from_str(calls.lines().nth(1).unwrap()).unwrap();
+    let q = second["q"].as_str().unwrap();
+    assert!(
+        q.contains("How does export work")
+            && q.contains("The answer is 42.")
+            && q.contains("And for big reports"),
+        "{q}"
+    );
+    let (_, _, page) = send(&e.app, get(&format!("/ask?c={conv}"), c.clone())).await;
+    assert!(page.contains("And for big reports") && page.contains("Draft the issue"));
+    // draft, edit, create
+    let (_, _, page) = send(
+        &e.app,
+        form(
+            &format!("/ask/{conv}/draft"),
+            format!("csrf={}", e.csrf),
+            c.clone(),
+        ),
+    )
+    .await;
+    assert!(
+        page.contains("value=\"Add CSV export\"") && page.contains("Wanted: a CSV export"),
+        "{page}"
+    );
+    let (_, _, page) = send(
+        &e.app,
+        form(
+            &format!("/ask/{conv}/issue"),
+            format!(
+                "csrf={}&title=Add+CSV+export&body=Wanted%3A+a+CSV+export",
+                e.csrf
+            ),
+            c.clone(),
+        ),
+    )
+    .await;
+    assert!(page.contains("Created issue #"), "{page}");
+    let made = std::fs::read_to_string(e.dir.path().join("state/created.json")).unwrap();
+    assert!(made.contains("Add CSV export") && made.contains("after a conversation with the AI"));
+    // a conversation belongs to the person who started it
+    sqlx::query("UPDATE conversations SET owner = 'github:someone'")
+        .execute(&e.pool)
+        .await
+        .unwrap();
+    let (st, h, _) = send(&e.app, get(&format!("/ask?c={conv}"), c.clone())).await;
+    assert!(st.is_redirection() && h.get("location").unwrap() == "/ask");
+    let (st, _, _) = send(
+        &e.app,
+        form(
+            &format!("/ask/{conv}/say"),
+            format!("csrf={}&text=hi", e.csrf),
+            c,
+        ),
+    )
+    .await;
+    assert!(
+        st.is_redirection(),
+        "an unknown conversation goes back to the start page"
+    );
+    let after: i64 = sqlx::query_scalar("SELECT count(*) FROM conversation_messages")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    assert_eq!(after, 4, "nothing is added to somebody else's conversation");
+}
