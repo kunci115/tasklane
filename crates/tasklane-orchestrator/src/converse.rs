@@ -4,10 +4,10 @@
 
 use crate::{Error, Orchestrator};
 
-const MAX_QUESTION: usize = 2000;
-const DAILY_QUESTIONS: i64 = 40;
-const HISTORY_MESSAGES: i64 = 12;
-const HISTORY_CHARS: usize = 12_000;
+// Sizes only keep one run's prompt a sensible length; there is no limit on how much a person may ask.
+const MAX_QUESTION: usize = 20_000;
+const HISTORY_MESSAGES: i64 = 24;
+const HISTORY_CHARS: usize = 60_000;
 
 fn clip(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
@@ -74,22 +74,10 @@ impl Orchestrator {
             )));
         }
         let service = self.conv_service(conv, owner).await?;
-        let used: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM conversation_messages m JOIN conversations c ON c.id = m.conversation_id
-             WHERE c.owner = $1 AND m.role = 'person' AND m.created_at > date_trunc('day', now())",
-        )
-        .bind(owner)
-        .fetch_one(&self.pool)
-        .await?;
-        if used >= DAILY_QUESTIONS {
-            return Err(Error::Fatal(
-                "you have used your questions for today".into(),
-            ));
-        }
         let history = self.conv_history(conv, HISTORY_MESSAGES).await?;
         let prompt = format!(
             "This is a continuing conversation with a person who wants to understand this repository, or to work out what to ask the team for. Answer from the code and the notes; say so when you do not know. Earlier in the conversation:\n\n{}Their new question:\n{text}",
-            transcript(&history, 3000)
+            transcript(&history, 8000)
         );
         sqlx::query("INSERT INTO conversation_messages (conversation_id, role, body) VALUES ($1, 'person', $2)")
             .bind(conv)
@@ -115,7 +103,7 @@ impl Orchestrator {
     /// The conversation as the text of an issue: (title, body). Nothing is created.
     pub async fn conv_draft(&self, conv: i64, owner: &str) -> Result<(String, String), Error> {
         let service = self.conv_service(conv, owner).await?;
-        let history = self.conv_history(conv, 40).await?;
+        let history = self.conv_history(conv, 60).await?;
         if history.is_empty() {
             return Err(Error::Fatal(
                 "there is nothing to turn into an issue yet".into(),
@@ -123,7 +111,7 @@ impl Orchestrator {
         }
         let prompt = format!(
             "Write an issue for the development team from this conversation.\n\nFirst line: the title only, at most 100 characters, plain text.\nThen a blank line.\nThen the body in Markdown with these parts: what is wanted and why; what the conversation established that a developer needs (behaviour, files or areas of the code, constraints, decisions); acceptance criteria as a checklist; open questions, if any. Use only what was said or what you saw in the code; do not invent requirements.\n\nThe conversation:\n\n{}",
-            transcript(&history, 3000)
+            transcript(&history, 8000)
         );
         let answer = self.ask_run(&service, &prompt).await?;
         let mut lines = answer.trim().lines();
@@ -142,5 +130,45 @@ impl Orchestrator {
             return Err(Error::BadOutput("the draft had no title or no body".into()));
         }
         Ok((clip(&title, 200), clip(&body, 15_000)))
+    }
+
+    /// Hand a message from a conversation to the agent working on a ticket of the same repository,
+    /// and optionally stop the run that is going on so the work starts again with it. Returns whether
+    /// a run was stopped.
+    pub async fn conv_tell(
+        &self,
+        conv: i64,
+        owner: &str,
+        ticket_id: i64,
+        body: &str,
+        restart: bool,
+    ) -> Result<bool, Error> {
+        let service = self.conv_service(conv, owner).await?;
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT t.state FROM tickets t JOIN services s ON s.id = t.service_id
+             WHERE t.id = $1 AND s.external_id = $2 AND s.source = $3",
+        )
+        .bind(ticket_id)
+        .bind(&service)
+        .bind(&self.cfg.source_name)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some((state,)) = row else {
+            return Err(Error::Fatal("that ticket is not in this repository".into()));
+        };
+        if state.starts_with("closed_") || state == "merged" {
+            return Err(Error::Fatal("that ticket is finished".into()));
+        }
+        self.add_message(ticket_id, owner, body).await?;
+        let stopped = restart
+            && matches!(state.as_str(), "new" | "developing" | "reviewing")
+            && self.stop_running(ticket_id).await;
+        let _ = sqlx::query("INSERT INTO audit_events (actor, action, ticket_id, detail) VALUES ($1, 'ticket.message', $2, $3)")
+            .bind(owner)
+            .bind(ticket_id)
+            .bind(serde_json::json!({"restart": restart, "stopped_a_run": stopped, "from": "ask"}))
+            .execute(&self.pool)
+            .await;
+        Ok(stopped)
     }
 }

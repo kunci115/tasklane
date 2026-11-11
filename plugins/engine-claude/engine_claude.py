@@ -171,7 +171,7 @@ def build_prompt(role, params):
         for m in msgs[:10]:
             if isinstance(m, dict) and isinstance(m.get("body"), str) and m["body"].strip():
                 who = re.sub(r"[^A-Za-z0-9@._:-]", "", str(m.get("from", "")))[:60]
-                parts += ["", '<team_message from="%s">' % who, escape_untrusted(m["body"])[:3000], "</team_message>"]
+                parts += ["", '<team_message from="%s">' % who, escape_untrusted(m["body"])[:10000], "</team_message>"]
     refs = params.get("references")
     if isinstance(refs, list):
         for r in refs[:8]:

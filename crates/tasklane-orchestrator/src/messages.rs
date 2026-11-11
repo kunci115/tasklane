@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 
 use crate::{Error, Orchestrator};
 
-pub const MAX_CHARS: usize = 2000;
+pub const MAX_CHARS: usize = 10_000;
 
 impl Orchestrator {
     /// Record a message. `author` is `channel:ref`.

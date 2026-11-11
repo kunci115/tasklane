@@ -4029,6 +4029,49 @@ async fn a_conversation_about_a_repository_carries_its_history_and_becomes_an_is
     assert!(page.contains("Created issue #"), "{page}");
     let made = std::fs::read_to_string(e.dir.path().join("state/created.json")).unwrap();
     assert!(made.contains("Add CSV export") && made.contains("after a conversation with the AI"));
+    // the conversation can be sent to the agent working on that ticket, and can stop its run
+    let ticket: i64 = sqlx::query_scalar("SELECT id FROM tickets ORDER BY id DESC LIMIT 1")
+        .fetch_one(&e.pool)
+        .await
+        .unwrap();
+    let (_, _, page) = send(&e.app, get(&format!("/ask?c={conv}"), c.clone())).await;
+    assert!(
+        page.contains("Tell the agent working on a ticket"),
+        "{page}"
+    );
+    let (_, _, page) = send(
+        &e.app,
+        form(
+            &format!("/ask/{conv}/tell"),
+            format!(
+                "csrf={}&ticket={ticket}&body=Use+the+existing+helper&restart=1",
+                e.csrf
+            ),
+            c.clone(),
+        ),
+    )
+    .await;
+    assert!(page.contains("Sent."), "{page}");
+    let (who, body): (String, String) =
+        sqlx::query_as("SELECT author, body FROM ticket_messages WHERE ticket_id = $1")
+            .bind(ticket)
+            .fetch_one(&e.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        (who.as_str(), body.as_str()),
+        ("console:admin", "Use the existing helper")
+    );
+    let (_, _, page) = send(
+        &e.app,
+        form(
+            &format!("/ask/{conv}/tell"),
+            format!("csrf={}&ticket=999999&body=hello", e.csrf),
+            c.clone(),
+        ),
+    )
+    .await;
+    assert!(page.contains("not in this repository"), "{page}");
     // a conversation belongs to the person who started it
     sqlx::query("UPDATE conversations SET owner = 'github:someone'")
         .execute(&e.pool)

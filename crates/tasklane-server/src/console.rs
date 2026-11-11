@@ -90,6 +90,7 @@ pub fn routes(st: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/ask/{id}/say", post(talk::say))
         .route("/ask/{id}/draft", post(talk::draft))
         .route("/ask/{id}/issue", post(talk::issue))
+        .route("/ask/{id}/tell", post(talk::tell))
         .route("/chat", get(chat_page))
         .route("/chat/groups", post(add_group))
         .route("/chat/groups/{id}/delete", post(delete_group))
@@ -153,7 +154,7 @@ fn allowed_for_member(method: &axum::http::Method, path: &str) -> bool {
             )
             | (
                 false,
-                ["ask", "new"] | ["ask", _, "say" | "draft" | "issue"]
+                ["ask", "new"] | ["ask", _, "say" | "draft" | "issue" | "tell"]
             )
             | (true, ["map"] | ["map", "data" | "replay"])
             | (true, ["static", ..])

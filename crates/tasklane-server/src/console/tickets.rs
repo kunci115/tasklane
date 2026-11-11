@@ -1138,7 +1138,7 @@ async fn message_card(st: &AppState, id: i64, state: &str, csrf: &str) -> String
         ));
     }
     h.push_str(&format!(
-        "<form method=\"post\" action=\"/tickets/{id}/message\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><div class=\"field\"><textarea name=\"body\" rows=\"3\" maxlength=\"2000\" required placeholder=\"For example: use the existing date helper in utils/, and do not touch the schema.\"></textarea></div><div class=\"btns\"><button class=\"btn primary\" name=\"now\" value=\"0\">Send</button>{}</div></form></div>",
+        "<form method=\"post\" action=\"/tickets/{id}/message\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><div class=\"field\"><textarea name=\"body\" rows=\"3\" maxlength=\"10000\" required placeholder=\"For example: use the existing date helper in utils/, and do not touch the schema.\"></textarea></div><div class=\"btns\"><button class=\"btn primary\" name=\"now\" value=\"0\">Send</button>{}</div></form></div>",
         esc(csrf),
         if running {
             "<button class=\"btn danger\" name=\"now\" value=\"1\" data-confirm=\"Stop the run that is going on and start it again with this message?\">Stop and restart now</button>"

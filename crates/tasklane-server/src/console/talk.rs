@@ -124,6 +124,21 @@ async fn conversation(
         return redirect("/ask");
     };
     let repo: String = row.get("external_id");
+    let can_tell = matches!(sess.role.as_str(), "owner" | "team_approver");
+    let open: Vec<sqlx::postgres::PgRow> = if can_tell {
+        sqlx::query(
+            "SELECT t.id, t.external_ref, t.title, t.state FROM tickets t JOIN services s ON s.id = t.service_id
+             WHERE s.external_id = $1 AND s.source = $2 AND t.state NOT LIKE 'closed\\_%' AND t.state <> 'merged'
+             ORDER BY t.id DESC LIMIT 30",
+        )
+        .bind(&repo)
+        .bind(&st.orch.config().source_name)
+        .fetch_all(st.orch.pool())
+        .await
+        .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     let msgs = sqlx::query(
         "SELECT role, body FROM conversation_messages WHERE conversation_id = $1 ORDER BY id",
     )
@@ -157,6 +172,33 @@ async fn conversation(
         sess.csrf,
         icon("chat")
     ));
+    if !open.is_empty() {
+        let last_ai = msgs
+            .iter()
+            .rev()
+            .find(|m| m.get::<String, _>("role") == "ai")
+            .map(|m| m.get::<String, _>("body"))
+            .unwrap_or_default();
+        let mut opts = String::new();
+        for t in &open {
+            let id: i64 = t.get("id");
+            let r: String = t.get("external_ref");
+            let title: String = t.get("title");
+            let state: String = t.get("state");
+            opts.push_str(&format!(
+                "<option value=\"{id}\">#{} {} ({})</option>",
+                esc(&r),
+                esc(&title.chars().take(70).collect::<String>()),
+                esc(&state.replace('_', " "))
+            ));
+        }
+        b.push_str(&format!(
+            "<div class=\"card\" style=\"margin-top:1rem\"><h2>Tell the agent working on a ticket</h2><p class=\"hint\">Sends this message to the agent as a team message: the next run on the ticket reads it. Tick the box to stop the run that is going on now and start it again with the message.</p><form method=\"post\" action=\"/ask/{conv}/tell\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><div class=\"field\"><label for=\"tk\">Ticket</label><select id=\"tk\" name=\"ticket\">{opts}</select></div><div class=\"field\"><label for=\"tm\">Message (the latest answer is filled in; edit it)</label><textarea id=\"tm\" name=\"body\" rows=\"6\" maxlength=\"10000\" required>{}</textarea></div><div class=\"field\"><label><input type=\"checkbox\" name=\"restart\" value=\"1\"> Stop the run now and restart it with this message</label></div><button class=\"btn\" data-confirm=\"Send this to the agent?\">{} Send to the agent</button></form></div>",
+            sess.csrf,
+            esc(&last_ai.chars().take(10_000).collect::<String>()),
+            icon("chat")
+        ));
+    }
     if !msgs.is_empty() && draft.is_none() {
         b.push_str(&format!(
             "<div class=\"card\" style=\"margin-top:1rem\"><h2>Turn this into an issue</h2><p class=\"hint\">The AI writes a title, what is wanted, what the conversation found and acceptance criteria. You read and edit it before anything is created.</p><form method=\"post\" action=\"/ask/{conv}/draft\"><input type=\"hidden\" name=\"csrf\" value=\"{}\"><button class=\"btn\">{} Draft the issue</button></form></div>",
@@ -338,10 +380,53 @@ pub async fn issue(
                 CreateError::ReadOnlyService => {
                     "This repository is only being watched, so it takes no new issues."
                 }
-                CreateError::LimitReached => "You have reached your daily limit for new issues.",
                 _ => "The issue could not be created right now.",
             };
             conversation(&st, &sess, conv, msg, None).await
         }
     }
+}
+
+#[derive(Deserialize)]
+pub struct TellIn {
+    csrf: String,
+    ticket: i64,
+    #[serde(default)]
+    body: String,
+    #[serde(default)]
+    restart: Option<String>,
+}
+
+pub async fn tell(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(conv): Path<i64>,
+    Form(f): Form<TellIn>,
+) -> Response {
+    let sess = match guard(&st, &headers).await {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    if !csrf_ok(&st, &headers, &f.csrf).await {
+        return forbidden();
+    }
+    if !matches!(sess.role.as_str(), "owner" | "team_approver") {
+        return forbidden();
+    }
+    let restart = f.restart.as_deref() == Some("1");
+    let notice = match st
+        .orch
+        .conv_tell(conv, &who(&sess), f.ticket, &f.body, restart)
+        .await
+    {
+        Ok(true) => {
+            "Sent. The run that was going on was stopped and starts again with your message."
+                .to_string()
+        }
+        Ok(false) if restart => "Sent. No run was going on, so the next run reads it.".to_string(),
+        Ok(false) => "Sent. The next run on the ticket reads it.".to_string(),
+        Err(tasklane_orchestrator::Error::Fatal(m)) => m,
+        Err(_) => "The message could not be sent right now.".to_string(),
+    };
+    conversation(&st, &sess, conv, &notice, None).await
 }
